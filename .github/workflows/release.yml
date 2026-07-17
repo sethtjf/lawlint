@@ -13,6 +13,17 @@ on:
         description: "Release version without the leading v (for example, 1.2.3)"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version without the leading v (for example, 1.2.3)"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build (tag/sha). Empty = the triggering ref."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -43,6 +54,8 @@ jobs:
             archive: tar.gz
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
@@ -92,6 +105,8 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
