@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 env:
-  DOWNLOAD_BASE_URL: https://downloads.lawlint.dev
+  DOWNLOAD_BASE_URL: https://downloads.lawlint.com
   CARGO_TERM_COLOR: always
 
 jobs:

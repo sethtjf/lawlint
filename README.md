@@ -8,17 +8,17 @@ and offers practical suggestions for more human, direct writing.
 ## Quickstart
 
 ```sh
-curl -fsSL https://lawlint.dev/install.sh | sh
+curl -fsSL https://lawlint.com/install.sh | sh
 lawlint document.txt
 ```
 
 For Windows PowerShell:
 
 ```sh
-irm https://lawlint.dev/install.ps1 | iex
+irm https://lawlint.com/install.ps1 | iex
 ```
 
-The [download page](https://lawlint.dev/download) also has the unsigned desktop
+The [download page](https://lawlint.com/download) also has the unsigned desktop
 app for macOS and Windows, plus direct CLI archives for every supported
 platform. The installers place the CLI in a user-local bin directory and do
 not send documents anywhere.
@@ -49,7 +49,7 @@ let result = lint(
 ```
 
 `lawlint-core` is a pure Rust SDK and does not perform file or stdin I/O. The
-website's [playground](https://lawlint.dev/playground) uses the same engine
+website's [playground](https://lawlint.com/playground) uses the same engine
 compiled to WebAssembly.
 
 ## Monorepo layout
@@ -66,7 +66,7 @@ The CLI discovers `lawlint.config.json` from the current directory upward.
 ## Maintainer releases
 
 Pushing a `v*` tag runs the release workflow. It publishes versioned and
-`latest/` assets to the R2 bucket behind `https://downloads.lawlint.dev`, then
+`latest/` assets to the R2 bucket behind `https://downloads.lawlint.com`, then
 creates a GitHub Release whose notes point to those canonical download URLs.
 The workflow requires these repository secrets:
 

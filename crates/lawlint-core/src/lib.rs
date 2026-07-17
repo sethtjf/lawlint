@@ -128,7 +128,7 @@ fn compiled(pattern: &str) -> Regex {
 fn meta(id: &str, description: &str, severity: Severity, rationale: Option<&str>) -> RuleMeta {
     RuleMeta {
         description: description.into(),
-        docs_url: format!("https://lawlint.dev/rules/{id}"),
+        docs_url: format!("https://lawlint.com/rules/{id}"),
         rationale: rationale.map(str::to_string),
         severity: Some(severity),
         examples: None,

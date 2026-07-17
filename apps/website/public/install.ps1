@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$DownloadBaseUrl = if ($env:DOWNLOAD_BASE_URL) { $env:DOWNLOAD_BASE_URL.TrimEnd("/") } else { "https://downloads.lawlint.dev" }
+$DownloadBaseUrl = if ($env:DOWNLOAD_BASE_URL) { $env:DOWNLOAD_BASE_URL.TrimEnd("/") } else { "https://downloads.lawlint.com" }
 $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 if ($arch -ne "X64") {
   throw "lawlint currently publishes a Windows CLI for x64 only (detected $arch)."
