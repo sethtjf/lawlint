@@ -1,4 +1,3 @@
 {
-  "files": [],
-  "references": [{ "path": "./packages/lawlint/tsconfig.json" }]
+  "files": []
 }

@@ -46,7 +46,20 @@ import Layout from "../layouts/Layout.astro";
 </Layout>
 
 <script>
-  import { lint, type Diagnostic } from "lawlint/browser";
+  import init, { lint } from "../generated/wasm/lawlint_wasm.js";
+
+  type Diagnostic = {
+    ruleId: string;
+    severity: string;
+    message: string;
+    suggestion?: string;
+    line: number;
+    column: number;
+    endLine?: number;
+    endColumn?: number;
+  };
+
+  await init();
 
   const input = document.getElementById("input") as HTMLTextAreaElement;
   const marks = document.getElementById("marks") as HTMLDivElement;

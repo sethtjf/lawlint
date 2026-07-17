@@ -1,4 +1,6 @@
 {
+  // Deployment runs from .github/workflows/deploy.yml. Disable Cloudflare's
+  // dashboard Workers Build for this project; it cannot build Rust/WASM here.
   // Cloudflare Workers static-assets config for the fully static Astro docs site.
   // Build with `bun run --cwd apps/website build` (outputs ./dist), then `bunx wrangler deploy`.
   "name": "lawlint",
