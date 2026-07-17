@@ -182,7 +182,7 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
 
   async function loadFile(file: File) {
     input.value = await file.text();
-    if (/\.(md|markdown)$/i.test(file.name)) markdownToggle.checked = true;
+    markdownToggle.checked = /\.(md|markdown)$/i.test(file.name);
     run();
   }
 
