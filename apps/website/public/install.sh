@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL:-https://downloads.lawlint.dev}"
+DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL:-https://assets.lawlint.com/downloads}"
 DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL%/}"
 
 os="$(uname -s)"
