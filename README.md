@@ -8,26 +8,34 @@ and offers practical suggestions for more human, direct writing.
 ## Quickstart
 
 ```sh
-bun install
-bun run build
+curl -fsSL https://lawlint.dev/install.sh | sh
+lawlint document.txt
 ```
 
-Run the documentation website locally:
+For Windows PowerShell:
 
 ```sh
-bun run --cwd apps/website dev
-bun run --cwd apps/website build
+irm https://lawlint.dev/install.ps1 | iex
 ```
 
-Build and run the native CLI:
+The [download page](https://lawlint.dev/download) also has the unsigned desktop
+app for macOS and Windows, plus direct CLI archives for every supported
+platform. The installers place the CLI in a user-local bin directory and do
+not send documents anywhere.
+
+To work on the documentation website locally:
+
+```sh
+bun install
+bun run --cwd apps/website dev
+```
+
+To build the CLI from source instead:
 
 ```sh
 cargo build --release -p lawlint-cli
 ./target/release/lawlint document.txt
-cat document.md | ./target/release/lawlint - --format json
 ```
-
-One-line installers and a download page are planned for the next release.
 
 ## Rust SDK
 
@@ -51,8 +59,26 @@ compiled to WebAssembly.
 - `crates/lawlint-wasm` — browser binding used by the playground.
 - `apps/website` — Astro documentation website with generated rule reference pages.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
+- `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
 
 The CLI discovers `lawlint.config.json` from the current directory upward.
+
+## Maintainer releases
+
+Pushing a `v*` tag runs the release workflow. It publishes versioned and
+`latest/` assets to the R2 bucket behind `https://downloads.lawlint.dev`, then
+creates a GitHub Release whose notes point to those canonical download URLs.
+The workflow requires these repository secrets:
+
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_ACCOUNT_ID`
+- `R2_BUCKET`
+
+`GITHUB_TOKEN` is supplied automatically by GitHub Actions. The public download
+base is defined in `apps/website/src/config/downloads.ts` and mirrored in the
+release workflow and install scripts so the distribution domain can be changed
+in one reviewable place.
 
 ## License
 

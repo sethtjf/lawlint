@@ -1,0 +1,126 @@
+---
+import { downloadUrl } from "../config/downloads";
+import Layout from "../layouts/Layout.astro";
+
+const cliInstall = "curl -fsSL https://lawlint.dev/install.sh | sh";
+const cliAssets = {
+  macArm: downloadUrl("lawlint-aarch64-apple-darwin.tar.gz"),
+  macIntel: downloadUrl("lawlint-x86_64-apple-darwin.tar.gz"),
+  windows: downloadUrl("lawlint-x86_64-pc-windows-msvc.zip"),
+  linux: downloadUrl("lawlint-x86_64-unknown-linux-gnu.tar.gz"),
+};
+const desktopAssets = {
+  macArm: downloadUrl("lawlint-desktop-aarch64-apple-darwin.dmg"),
+  macIntel: downloadUrl("lawlint-desktop-x86_64-apple-darwin.dmg"),
+  windows: downloadUrl("lawlint-desktop-x86_64-pc-windows-msvc.exe"),
+};
+---
+<Layout title="Download" description="Install lawlint as a native desktop app or command-line tool.">
+  <section class="download-page">
+    <div class="eyebrow">Download / Native tools</div>
+    <h1>Bring lawlint closer to the draft.</h1>
+    <p class="intro">Choose the private desktop app for a visual review, or install the native CLI for terminals and automation. Both run locally—your documents stay on your machine.</p>
+
+    <div class="primary-card" id="primary-card">
+      <div>
+        <div class="card-label">Recommended for your device</div>
+        <h2 id="primary-title">lawlint for macOS</h2>
+        <p id="primary-copy">A focused desktop workspace with the complete rule engine built in.</p>
+      </div>
+      <div class="primary-actions">
+        <a class="button" id="desktop-link" href={desktopAssets.macArm}>Download desktop app</a>
+        <a class="text-link" id="cli-link" href={cliAssets.macArm}>Download CLI archive ↗</a>
+      </div>
+    </div>
+
+    <div class="install-card">
+      <div>
+        <div class="card-label">Fastest route to a terminal</div>
+        <h2>Install the CLI</h2>
+        <p>Works on supported macOS and Linux machines. The installer chooses the right architecture and places <code>lawlint</code> in your user bin.</p>
+      </div>
+      <pre>{cliInstall}</pre>
+    </div>
+
+    <div class="platforms rule">
+      <div class="section-label">All platforms</div>
+      <div class="platform-grid">
+        <article>
+          <h3>macOS</h3>
+          <p>Unsigned DMG installers for Apple silicon and Intel.</p>
+          <a href={desktopAssets.macArm}>Apple silicon DMG ↗</a>
+          <a href={desktopAssets.macIntel}>Intel DMG ↗</a>
+        </article>
+        <article>
+          <h3>Windows</h3>
+          <p>Install the desktop app with NSIS, or use the MSI package.</p>
+          <a href={desktopAssets.windows}>Desktop installer (.exe) ↗</a>
+          <a href={downloadUrl("lawlint-desktop-x86_64-pc-windows-msvc.msi")}>MSI installer ↗</a>
+        </article>
+        <article>
+          <h3>Linux</h3>
+          <p>Use the native CLI archive on x86_64 Linux systems.</p>
+          <a href={cliAssets.linux}>CLI archive (.tar.gz) ↗</a>
+        </article>
+      </div>
+    </div>
+    <p class="source-note">Looking for the source? <a href="https://github.com/sethtjf/lawlint">Build lawlint from GitHub ↗</a>. Releases are unsigned for now.</p>
+  </section>
+</Layout>
+<script define:vars={{ cliAssets, desktopAssets }}>
+  const platform = navigator.userAgent.toLowerCase();
+  const isWindows = platform.includes("windows");
+  const isMac = platform.includes("mac os") || platform.includes("macintosh");
+  const isLinux = platform.includes("linux");
+  const isArm = platform.includes("arm64") || platform.includes("aarch64");
+  const title = document.querySelector("#primary-title");
+  const copy = document.querySelector("#primary-copy");
+  const desktopLink = document.querySelector<HTMLAnchorElement>("#desktop-link");
+  const cliLink = document.querySelector<HTMLAnchorElement>("#cli-link");
+
+  if (isWindows) {
+    if (title) title.textContent = "lawlint for Windows";
+    if (copy) copy.textContent = "A native desktop workspace with an installer that fits your existing setup.";
+    if (desktopLink) desktopLink.href = desktopAssets.windows;
+    if (cliLink) cliLink.href = cliAssets.windows;
+  } else if (isLinux) {
+    if (title) title.textContent = "lawlint for Linux";
+    if (copy) copy.textContent = "The native CLI is the fastest way to lint locally on Linux.";
+    if (desktopLink) {
+      desktopLink.textContent = "Download CLI installer";
+      desktopLink.href = cliAssets.linux;
+    }
+    if (cliLink) cliLink.href = cliAssets.linux;
+  } else if (isMac && !isArm) {
+    if (title) title.textContent = "lawlint for Intel Mac";
+    if (desktopLink) desktopLink.href = desktopAssets.macIntel;
+    if (cliLink) cliLink.href = cliAssets.macIntel;
+  }
+</script>
+<style>
+  .download-page { padding: 6rem 0 3rem; }
+  .download-page h1 { max-width: 11ch; margin-top: 1rem; }
+  .intro { color: var(--muted); font-size: 1.25rem; max-width: 42rem; margin: 2rem 0 3rem; }
+  .primary-card, .install-card { display: grid; grid-template-columns: 1fr auto; gap: 2rem; align-items: center; padding: 2rem; border: 1px solid var(--line); background: #f8f4ed; }
+  .primary-card { border-left: 4px solid var(--oxblood); }
+  .install-card { margin-top: 1rem; background: transparent; }
+  .card-label, .section-label { color: var(--oxblood); font: 0.7rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
+  .primary-card h2, .install-card h2 { margin: .6rem 0 .7rem; font-size: 2rem; }
+  .primary-card p, .install-card p { margin: 0; color: var(--muted); }
+  .primary-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+  .text-link { font: .75rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .04em; }
+  .install-card pre { margin: 0; min-width: 24rem; }
+  .platforms { margin-top: 5rem; padding-top: 1rem; }
+  .platform-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.4rem; }
+  .platform-grid article { display: flex; flex-direction: column; gap: .7rem; min-height: 13rem; padding: 1.4rem; border-top: 1px solid var(--line); }
+  .platform-grid h3 { margin: 0; font-size: 1.5rem; }
+  .platform-grid p { flex: 1; margin: 0; color: var(--muted); font-size: .95rem; }
+  .platform-grid a, .source-note a { font: .72rem "IBM Plex Mono", monospace; }
+  .source-note { color: var(--muted); margin-top: 3rem; font-size: .9rem; }
+  @media (max-width: 700px) {
+    .download-page { padding: 4rem 0 2rem; }
+    .primary-card, .install-card { grid-template-columns: 1fr; }
+    .install-card pre { min-width: 0; font-size: .68rem; }
+    .platform-grid { grid-template-columns: 1fr; }
+  }
+</style>
