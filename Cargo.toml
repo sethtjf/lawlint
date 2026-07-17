@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/lawlint-core", "crates/lawlint-cli", "crates/lawlint-wasm"]
+members = [
+    "apps/desktop/src-tauri",
+    "crates/lawlint-core",
+    "crates/lawlint-cli",
+    "crates/lawlint-wasm",
+]
 resolver = "2"
 
 [workspace.package]

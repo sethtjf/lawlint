@@ -51,6 +51,8 @@ node_modules/
 target/
 crates/lawlint-wasm/pkg/
 apps/website/src/generated/
+apps/desktop/dist/
+apps/desktop/src-tauri/gen/
 .astro/
 jspm_packages/
 

@@ -13,6 +13,8 @@
     "rules:generate": "mkdir -p apps/website/src/generated && cargo run -q -p lawlint-cli -- rules --json > apps/website/src/generated/rules.json",
     "build": "bun run --cwd apps/website build",
     "dev": "bun run --cwd apps/website dev",
+    "desktop:dev": "bun run --cwd apps/desktop tauri dev",
+    "desktop:build": "bun run --cwd apps/desktop tauri build",
     "lint": "bunx biome check apps/website",
     "typecheck": "bun run wasm:build && bun run rules:generate && bunx tsc --noEmit -p apps/website/tsconfig.json",
     "test": "cargo test --workspace"

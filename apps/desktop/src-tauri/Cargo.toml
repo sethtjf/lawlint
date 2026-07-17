@@ -1,0 +1,25 @@
+[package]
+name = "lawlint-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Offline desktop application for lawlint"
+build = "build.rs"
+
+[lib]
+name = "lawlint_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lawlint-core = { path = "../../../crates/lawlint-core" }
+serde.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
