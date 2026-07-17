@@ -11,6 +11,10 @@ import Layout from "../layouts/Layout.astro";
       <button type="button" id="load-sample" class="tool-button">Load sample</button>
       <button type="button" id="open-file" class="tool-button">Open file…</button>
       <input type="file" id="file-input" accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
+      <span class="source-name" id="source-name">untitled</span>
+      <button type="button" id="export-markdown" class="tool-button" disabled>Download Markdown</button>
+      <button type="button" id="export-json" class="tool-button" disabled>Download JSON</button>
+      <button type="button" id="copy-json" class="tool-button" disabled>Copy JSON</button>
       <label class="toggle"><input type="checkbox" id="markdown-toggle" /> Treat as Markdown</label>
       <button type="button" id="clear" class="tool-button quiet">Clear</button>
     </div>
@@ -72,6 +76,10 @@ import Layout from "../layouts/Layout.astro";
   const statIssues = document.getElementById("stat-issues") as HTMLElement;
   const markdownToggle = document.getElementById("markdown-toggle") as HTMLInputElement;
   const fileInput = document.getElementById("file-input") as HTMLInputElement;
+  const sourceNameEl = document.getElementById("source-name") as HTMLElement;
+  const exportMarkdownButton = document.getElementById("export-markdown") as HTMLButtonElement;
+  const exportJsonButton = document.getElementById("export-json") as HTMLButtonElement;
+  const copyJsonButton = document.getElementById("copy-json") as HTMLButtonElement;
 
   const SAMPLE = `It is important to note that in today's fast-paced world, legal teams must delve into the landscape of regulatory obligations. Moreover, the aforementioned parties shall, pursuant to Section 4(b), cease and desist any and all conduct hereinafter described.
 
@@ -139,10 +147,120 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
   }
 
   let current: (Diagnostic & { start: number; end: number })[] = [];
+  let latestResult: ReturnType<typeof lint> | undefined;
+  let sourceName = "untitled";
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function setSourceName(name: string) {
+    sourceName = name || "untitled";
+    sourceNameEl.textContent = sourceName;
+    sourceNameEl.title = sourceName;
+  }
+
+  function setExportEnabled(enabled: boolean) {
+    exportMarkdownButton.disabled = !enabled;
+    exportJsonButton.disabled = !enabled;
+    copyJsonButton.disabled = !enabled;
+  }
+
+  function reportBaseName() {
+    const withoutExtension = sourceName.replace(/\.[^/.]+$/, "");
+    return (withoutExtension || "untitled").replace(/[^a-zA-Z0-9._-]+/g, "-");
+  }
+
+  function downloadReport(content: string, filename: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function markdownReport() {
+    if (!latestResult) return "";
+    const generatedAt = new Date().toISOString();
+    const { stats, diagnostics } = latestResult;
+    const source = sourceName.replace(/\r?\n/g, " ");
+    const lines = [
+      "# lawlint report",
+      "",
+      `- **Source:** ${source}`,
+      `- **Generated:** ${generatedAt}`,
+      `- **Summary:** ${stats.score}/100 score · ${stats.wordCount} words · ${stats.sentenceCount} sentences · ${diagnostics.length} issues`,
+      "",
+      "## Diagnostics",
+      "",
+    ];
+
+    if (diagnostics.length === 0) {
+      lines.push("No issues found.");
+    } else {
+      current.forEach((diagnostic, index) => {
+        lines.push(
+          `${index + 1}. **${diagnostic.severity}** \`${diagnostic.ruleId}\` at \`${diagnostic.line}:${diagnostic.column}\``,
+          `   - **Message:** ${diagnostic.message}`,
+        );
+        if (diagnostic.suggestion) lines.push(`   - **Suggestion:** ${diagnostic.suggestion}`);
+        lines.push("");
+      });
+    }
+
+    return `${lines.join("\n").trimEnd()}\n`;
+  }
+
+  function jsonReport() {
+    if (!latestResult) return "";
+    return JSON.stringify(
+      {
+        source: sourceName,
+        generatedAt: new Date().toISOString(),
+        options: { markdown: markdownToggle.checked },
+        stats: latestResult.stats,
+        diagnostics: latestResult.diagnostics,
+      },
+      null,
+      2,
+    );
+  }
+
+  async function copyJson() {
+    const report = jsonReport();
+    if (!report) return;
+    let copied = false;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(report);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    if (!copied) {
+      const fallback = document.createElement("textarea");
+      fallback.value = report;
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.select();
+      try {
+        copied = document.execCommand("copy");
+      } finally {
+        fallback.remove();
+      }
+    }
+    if (!copied) return;
+    clearTimeout(copyResetTimer);
+    copyJsonButton.textContent = "Copied";
+    copyResetTimer = setTimeout(() => {
+      copyJsonButton.textContent = "Copy JSON";
+    }, 1400);
+  }
 
   function run() {
     const text = input.value;
     const result = lint(text, markdownToggle.checked ? { markdown: true } : {});
+    latestResult = result;
     const starts = lineStartOffsets(text);
     current = result.diagnostics
       .map((d) => ({ ...d, ...toRange(d, starts, text.length) }))
@@ -153,6 +271,7 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
     statWords.textContent = String(result.stats.wordCount);
     statSentences.textContent = String(result.stats.sentenceCount);
     statIssues.textContent = String(current.length);
+    setExportEnabled(Boolean(text.trim()));
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -183,6 +302,7 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
 
   document.getElementById("load-sample")?.addEventListener("click", () => {
     input.value = SAMPLE;
+    setSourceName("untitled");
     markdownToggle.checked = false;
     run();
   });
@@ -195,6 +315,7 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
 
   async function loadFile(file: File) {
     input.value = await file.text();
+    setSourceName(file.name);
     markdownToggle.checked = /\.(md|markdown)$/i.test(file.name);
     run();
   }
@@ -204,6 +325,16 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
     if (file) void loadFile(file);
     fileInput.value = "";
   });
+
+  exportMarkdownButton.addEventListener("click", () => {
+    if (exportMarkdownButton.disabled) return;
+    downloadReport(markdownReport(), `${reportBaseName()}.lawlint.md`, "text/markdown;charset=utf-8");
+  });
+  exportJsonButton.addEventListener("click", () => {
+    if (exportJsonButton.disabled) return;
+    downloadReport(jsonReport(), `${reportBaseName()}.lawlint.json`, "application/json;charset=utf-8");
+  });
+  copyJsonButton.addEventListener("click", () => void copyJson());
 
   editor.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -217,6 +348,7 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
     if (file) void loadFile(file);
   });
 
+  setSourceName("untitled");
   run();
 </script>
 
@@ -228,8 +360,11 @@ The parties agree. The parties covenant. The parties acknowledge that this arran
   .toolbar { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; font: 0.75rem "IBM Plex Mono", monospace; }
   .tool-button { padding: 0.55rem 0.9rem; background: var(--ink); color: var(--paper); border: 1px solid var(--ink); font: 0.72rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; }
   .tool-button:hover { background: var(--oxblood); border-color: var(--oxblood); }
+  .tool-button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .tool-button:disabled:hover { background: var(--ink); border-color: var(--ink); }
   .tool-button.quiet { background: transparent; color: var(--ink); }
   .tool-button.quiet:hover { color: var(--oxblood); border-color: var(--oxblood); background: transparent; }
+  .source-name { color: var(--muted); max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toggle { display: inline-flex; align-items: center; gap: 0.45rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); cursor: pointer; margin-left: auto; }
   .toggle input { accent-color: var(--oxblood); }
 
