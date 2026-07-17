@@ -1,0 +1,25 @@
+---
+import { builtInRules } from "lawlint";
+import Layout from "../../layouts/Layout.astro";
+---
+<Layout title="Rules">
+  <section class="rules">
+    <div class="eyebrow">Rules / Index</div>
+    <h1>The rulebook.</h1>
+    <p class="intro">Small, opinionated checks for the patterns that make prose feel generated, padded, or needlessly formal.</p>
+    <div class="rule-list">
+      {builtInRules.map((rule, index) => <a class="rule-row" href={`/rules/${rule.id}`}><span>{String(index + 1).padStart(2, "0")}</span><strong>{rule.id}</strong><em>{rule.meta.description}</em></a>)}
+    </div>
+  </section>
+</Layout>
+<style>
+  .rules { padding: 6rem 0; }
+  .rules h1 { margin-top: 1rem; }
+  .intro { max-width: 35rem; color: var(--muted); font-size: 1.25rem; margin: 2rem 0 4rem; }
+  .rule-list { border-top: 1px solid var(--line); }
+  .rule-row { display: grid; grid-template-columns: 3rem 18rem 1fr; gap: 1rem; align-items: baseline; padding: 1.2rem 0; border-bottom: 1px solid var(--line); text-decoration: none; }
+  .rule-row > span { color: var(--oxblood); font: 0.72rem "IBM Plex Mono", monospace; }
+  .rule-row strong { font: 1rem "IBM Plex Mono", monospace; }
+  .rule-row em { color: var(--muted); font-style: normal; }
+  @media (max-width: 700px) { .rule-row { grid-template-columns: 2rem 1fr; } .rule-row em { grid-column: 2; } }
+</style>

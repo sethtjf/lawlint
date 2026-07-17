@@ -1,0 +1,39 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+<Layout title="SDK reference">
+  <article class="doc">
+    <div class="eyebrow">Docs / 03</div>
+    <h1>SDK reference</h1>
+    <p class="intro">Use the same rule engine inside editors, CI jobs, and document workflows.</p>
+    <h2>Lint text and files</h2>
+    <pre>import &#123; lint, lintFile &#125; from "lawlint";
+
+const result = lint(text, &#123;
+  disable: ["no-legalese"],
+  severity: &#123; "sentence-length": "error" &#125;,
+  thresholds: &#123; "no-hedging": 20 &#125;,
+&#125;);
+const fileResult = await lintFile("brief.md");</pre>
+    <h2>Custom rules</h2>
+    <pre>const rule = &#123;
+  id: "no-internal-jargon",
+  meta: &#123; description: "Flags internal jargon", docsUrl: "https://example.com" &#125;,
+  check: (context) =&gt; [
+    context.diagnostic(0, 4, "Use a reader-facing term"),
+  ],
+&#125;;
+lint(text, &#123; rules: [rule] &#125;);</pre>
+    <h2>Configuration</h2>
+    <p>Place <code>lawlint.config.json</code> in the working directory or any parent directory. It can define <code>enable</code>, <code>disable</code>, <code>severity</code>, and <code>thresholds</code>.</p>
+  </article>
+</Layout>
+<style>
+  .doc { max-width: 48rem; padding: 6rem 0; }
+  .doc h1 { max-width: 12ch; margin-top: 1rem; }
+  .doc h2 { font-size: 2rem; margin-top: 3.5rem; }
+  .intro { color: var(--muted); font-size: 1.25rem; margin: 2rem 0 4rem; }
+  .doc li { margin: 0.8rem 0; }
+  code { font: 0.86em "IBM Plex Mono", monospace; }
+  .doc pre { margin: 1.2rem 0; }
+</style>

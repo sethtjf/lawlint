@@ -1,0 +1,32 @@
+---
+import { builtInRules } from "lawlint";
+import Layout from "../../layouts/Layout.astro";
+
+export function getStaticPaths() {
+  return builtInRules.map((rule) => ({ params: { id: rule.id }, props: { rule } }));
+}
+const { rule } = Astro.props;
+---
+<Layout title={rule.id} description={rule.meta.description}>
+  <article class="rule-doc">
+    <div class="eyebrow">Rule / {rule.id}</div>
+    <h1>{rule.id}</h1>
+    <p class="intro">{rule.meta.description}</p>
+    <div class="rule-meta"><span>severity</span><strong>{rule.id === "no-doublets" ? "info" : "warning"}</strong><span>documentation</span><a href={rule.meta.docsUrl}>{rule.meta.docsUrl}</a></div>
+    <h2>What it catches</h2>
+    <p>{rule.meta.rationale ?? `This check looks for ${rule.meta.description.toLowerCase().replace(/^flags /, "")}.`}</p>
+    <h2>Guidance</h2>
+    <p>Prefer concrete language, vary your rhythm, and make the claim carry its own weight. The diagnostic includes a suggested alternative where one is useful.</p>
+    <p class="back"><a href="/rules">← All rules</a></p>
+  </article>
+</Layout>
+<style>
+  .rule-doc { max-width: 52rem; padding: 6rem 0; }
+  .rule-doc h1 { margin-top: 1rem; }
+  .intro { color: var(--muted); font-size: 1.35rem; margin: 2rem 0 3rem; }
+  .rule-doc h2 { font-size: 2rem; margin-top: 3rem; }
+  .rule-meta { display: grid; grid-template-columns: 8rem 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 1rem 0; gap: 0.5rem 1rem; font: 0.78rem "IBM Plex Mono", monospace; }
+  .rule-meta span { color: var(--muted); text-transform: uppercase; }
+  .rule-meta a { overflow-wrap: anywhere; }
+  .back { margin-top: 4rem; }
+</style>

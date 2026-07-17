@@ -1,0 +1,22 @@
+{
+  "name": "lawlint",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A linter for AI-generated legal and general text.",
+  "packageManager": "bun@1.3.14",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "bun run --cwd packages/lawlint build && bun run --cwd apps/website build",
+    "lint": "bunx biome check .",
+    "typecheck": "bunx tsc -b",
+    "test": "bunx vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
