@@ -1,0 +1,16 @@
+[package]
+name = "lawlint-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lawlint"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+colored.workspace = true
+lawlint-core = { path = "../lawlint-core" }
+serde.workspace = true
+serde_json.workspace = true

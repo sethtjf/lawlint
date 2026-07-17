@@ -15,8 +15,6 @@ pub struct Diagnostic {
     pub rule_id: String,
     pub severity: Severity,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggestion: Option<String>,
     pub line: usize,
     pub column: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -24,6 +22,8 @@ pub struct Diagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_column: Option<usize>,
     pub excerpt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
