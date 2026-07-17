@@ -8,22 +8,22 @@ and offers practical suggestions for more human, direct writing.
 ## Quickstart
 
 ```sh
-pnpm install
-pnpm build
-pnpm --filter lawlint exec lawlint document.txt
+bun install
+bun run build
+bunx lawlint document.txt
 ```
 
 Run the documentation website locally:
 
 ```sh
-pnpm --filter website dev
-pnpm --filter website build
+bun run --cwd apps/website dev
+bun run --cwd apps/website build
 ```
 
 Use JSON output or stdin:
 
 ```sh
-cat document.md | pnpm --filter lawlint exec lawlint - --format json
+cat document.md | bunx lawlint - --format json
 ```
 
 As an SDK:
