@@ -295,7 +295,7 @@ export const builtInRules: Rule[] = [
         "Add a comma before the closing “and” or “or”.",
       ),
     ],
-    "error",
+    "warning",
   ),
   phraseRule(
     "no-marketing-language",
