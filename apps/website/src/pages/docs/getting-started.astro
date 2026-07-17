@@ -1,0 +1,19 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+<Layout title="Getting started">
+  <article class="doc">
+    <div class="eyebrow">Docs / 01</div>
+    <h1>Getting started</h1>
+    <p class="intro">Install lawlint, point it at a document, and get a focused list of things worth revising.</p>
+    <h2>Install</h2>
+    <pre>npm i -D lawlint</pre>
+    <h2>Run the CLI</h2>
+    <pre>npx lawlint contract.md
+cat memo.txt | npx lawlint - --format json</pre>
+    <p>Markdown files automatically skip fenced code blocks. For piped Markdown, add <code>--markdown</code>.</p>
+    <h2>Exit codes</h2>
+    <ul><li><code>0</code> when no errors are found and the warning limit is not exceeded.</li><li><code>1</code> when an error is found or <code>--max-warnings</code> is exceeded.</li></ul>
+    <p><a href="/docs/cli">Next: CLI reference →</a></p>
+  </article>
+</Layout>

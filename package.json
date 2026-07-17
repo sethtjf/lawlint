@@ -1,0 +1,21 @@
+{
+  "name": "lawlint",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A linter for AI-generated legal and general text.",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm --filter lawlint build && pnpm --filter website build",
+    "lint": "biome check .",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
