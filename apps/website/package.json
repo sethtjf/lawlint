@@ -8,9 +8,21 @@
     "build": "bun run --cwd ../../ wasm:build && bun run --cwd ../../ rules:generate && astro build"
   },
   "dependencies": {
-    "astro": "^5.1.0"
+    "@astrojs/react": "4.3.0",
+    "astro": "^5.1.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "4.1.11",
+    "@types/react": "19.1.0",
+    "@types/react-dom": "19.1.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.3.0",
+    "tailwindcss": "4.1.11",
     "wrangler": "4.107.1"
   }
 }
