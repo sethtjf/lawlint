@@ -73,6 +73,22 @@ describe("built-in rules", () => {
       "This is important.",
     ],
     ["no-doublets", "The parties shall cease and desist.", "The parties shall stop."],
+    ["no-em-dash", "The clause — read narrowly — controls.", "The clause, read narrowly, controls."],
+    ["no-en-dash", "The pre–trial motion was denied.", "The range spans 2020–2024."],
+    ["no-semicolons", "One clause governs; another does not.", "One clause governs. Another does not."],
+    ["oxford-comma", "The parties are Alice, Bob and Carol.", "The parties are Alice, Bob, and Carol."],
+    [
+      "no-marketing-language",
+      "We leverage powerful, seamless tools.",
+      "We use two small tools.",
+    ],
+    ["no-sycophantic-openers", "Great question. The rule bars it.", "The rule bars it."],
+    [
+      "no-throat-clearing",
+      "Let me think about this. The rule bars it.",
+      "The rule bars it.",
+    ],
+    ["no-parenthetical-asides", "(one) (two) (three)", "A plain sentence."],
   ] satisfies [string, string, string][])("%s flags its target", (ruleId, bad, clean) => {
     expect(has(bad, ruleId)).toBe(true);
     expect(has(clean, ruleId)).toBe(false);
@@ -114,7 +130,7 @@ describe("built-in rules", () => {
     await writeFile(
       join(directory, "lawlint.config.json"),
       JSON.stringify({
-        disable: ["no-ai-cliches", "no-legalese"],
+        disable: ["no-ai-cliches", "no-legalese", "no-marketing-language"],
         severity: { "no-legalese": "error" },
       }),
     );
@@ -135,7 +151,13 @@ describe("built-in rules", () => {
     expect(result.diagnostics).toHaveLength(0);
   });
 
-  it("keeps the registry at twelve built-in rules", () => {
-    expect(builtInRules).toHaveLength(12);
+  it("keeps the registry at twenty built-in rules", () => {
+    expect(builtInRules).toHaveLength(20);
+  });
+
+  it("exposes an explicit severity for every built-in rule", () => {
+    for (const rule of builtInRules) {
+      expect(rule.meta.severity).toBeDefined();
+    }
   });
 });

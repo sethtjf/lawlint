@@ -21,6 +21,7 @@ export interface RuleMeta {
   description: string;
   docsUrl: string;
   rationale?: string;
+  severity?: Severity;
   examples?: { bad: string; good: string };
 }
 
