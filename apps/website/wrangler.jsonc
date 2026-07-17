@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers static-assets config for the fully static Astro docs site.
+  // Build with `pnpm --filter website build` (outputs ./dist), then `npx wrangler deploy`.
+  "name": "lawlint",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}
