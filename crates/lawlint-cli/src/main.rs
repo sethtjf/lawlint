@@ -349,7 +349,10 @@ pub(crate) fn format_pretty(result: &LintResult, quiet: bool, color: bool) -> St
 }
 
 fn pretty(result: &LintResult, quiet: bool) {
-    println!("{}", format_pretty(result, quiet, colors_enabled()));
+    if quiet {
+        return;
+    }
+    println!("{}", format_pretty(result, false, colors_enabled()));
 }
 
 fn machine_fix_count(diagnostics: &[Diagnostic]) -> usize {
