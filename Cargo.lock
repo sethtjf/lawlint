@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "include_dir",
  "pulldown-cmark",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lawlint-core",
  "serde",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-judge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axllm",
@@ -2792,7 +2792,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lawlint-core",
  "serde",
