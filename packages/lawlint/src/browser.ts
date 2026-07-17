@@ -55,15 +55,21 @@ function lintText(text: string, options: LintOptions): LintResult {
   const wordCount = text.match(/\b[\w’'-]+\b/g)?.length ?? 0;
   const sentenceCount = text.split(/[.!?]+/).filter((s) => s.trim()).length;
   const penalty = diagnostics.reduce(
-    (sum, d) => sum + (d.severity === "error" ? 5 : d.severity === "warning" ? 3 : 1),
+    (sum, d) =>
+      sum + (d.severity === "error" ? 5 : d.severity === "warning" ? 3 : 1) * (d.weight ?? 1),
     0,
   );
+  // Score decays with penalty density (penalty per 1,000 words), so length
+  // doesn't dilute issues and error-dense documents stay rankable instead of
+  // all clamping to zero. exp(-d/100) ≈ 1 - d/100 for clean text, so small
+  // densities read as simple point deductions.
+  const density = (penalty / Math.max(1, wordCount)) * 1000;
   return {
     diagnostics,
     stats: {
       wordCount,
       sentenceCount,
-      score: Math.max(0, Math.min(100, Math.round(100 - (penalty / Math.max(1, wordCount)) * 100))),
+      score: Math.round(100 * Math.exp(-density / 100)),
     },
   };
 }

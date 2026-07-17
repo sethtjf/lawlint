@@ -165,3 +165,65 @@ describe("built-in rules", () => {
     }
   });
 });
+
+describe("scoring", () => {
+  // Sentence openers must be distinct alphabetic words: the opener regex only
+  // captures [A-Za-z']+, so numbered filler like "w10" would read as "w" every time.
+  const openers = [
+    "Alpha",
+    "Bravo",
+    "Cedar",
+    "Delta",
+    "Ember",
+    "Fjord",
+    "Grove",
+    "Harbor",
+    "Inlet",
+    "Juniper",
+  ];
+  const filler = (i: number) => (i % 10 === 0 ? (openers[i / 10] ?? `Opener${i}`) : `w${i}`);
+
+  const sentences = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, s) => `${Array.from({ length: 10 }, (_, w) => filler(s * 10 + w)).join(" ")}.`,
+    ).join(" ");
+
+  // Swaps the first `count` non-opener filler words for "perhaps", which only
+  // the no-hedging density rule matches.
+  const hedged = (count: number) => {
+    let remaining = count;
+    return Array.from({ length: 100 }, (_, i) => {
+      const boundary = i === 99 ? "." : (i + 1) % 10 === 0 ? ". " : " ";
+      if (i % 10 !== 0 && remaining > 0) {
+        remaining--;
+        return `perhaps${boundary}`;
+      }
+      return `${filler(i)}${boundary}`;
+    }).join("");
+  };
+
+  it("gives clean text a perfect score", () => {
+    const result = lint(sentences(10));
+    expect(result.diagnostics).toHaveLength(0);
+    expect(result.stats.score).toBe(100);
+  });
+
+  it("charges penalty per 1,000 words, not per word", () => {
+    const result = lint(`${sentences(9)} We map the landscape of this matter briefly here today.`);
+    expect(result.diagnostics.map((d) => d.ruleId)).toEqual(["no-ai-cliches"]);
+    expect(result.stats.wordCount).toBe(100);
+    // One warning (3 penalty) per 100 words = density 30 -> 100 * e^-0.3.
+    expect(result.stats.score).toBe(74);
+  });
+
+  it("weights density diagnostics by how far past the threshold they run", () => {
+    const mild = lint(hedged(3));
+    const heavy = lint(hedged(12));
+    expect(mild.diagnostics.map((d) => d.ruleId)).toEqual(["no-hedging"]);
+    expect(mild.diagnostics[0]?.weight).toBe(2);
+    expect(heavy.diagnostics[0]?.weight).toBe(11);
+    expect(mild.stats.score).toBe(55);
+    expect(heavy.stats.score).toBe(4);
+  });
+});

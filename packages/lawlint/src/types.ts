@@ -5,6 +5,8 @@ export interface Diagnostic {
   severity: Severity;
   message: string;
   suggestion?: string;
+  /** Score-penalty multiplier, defaulting to 1. Density rules set it to the occurrences past their threshold. */
+  weight?: number;
   line: number;
   column: number;
   endLine?: number;

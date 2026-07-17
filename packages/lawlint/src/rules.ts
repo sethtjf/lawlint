@@ -72,7 +72,13 @@ const densityRule = (
     if ((count / words) * 1000 <= threshold || count === 0) return [];
     const match = matches[0];
     const start = match?.index ?? 0;
-    return [context.diagnostic(start, start + (match?.[0].length ?? 1), message)];
+    const diagnostic = context.diagnostic(
+      start,
+      start + (match?.[0].length ?? 1),
+      `${message} (${count} occurrences in ${words} words)`,
+    );
+    diagnostic.weight = Math.max(1, Math.ceil(count - (threshold * words) / 1000));
+    return [diagnostic];
   },
 });
 
