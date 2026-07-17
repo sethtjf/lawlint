@@ -4,11 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "bun run --cwd ../../packages/lawlint build && astro build"
+    "dev": "bun run --cwd ../../ wasm:build && bun run --cwd ../../ rules:generate && astro dev",
+    "build": "bun run --cwd ../../ wasm:build && bun run --cwd ../../ rules:generate && astro build"
   },
   "dependencies": {
-    "astro": "^5.1.0",
-    "lawlint": "workspace:*"
+    "astro": "^5.1.0"
   }
 }

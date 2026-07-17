@@ -16,6 +16,6 @@
     "lineWidth": 100
   },
   "files": {
-    "ignore": ["dist", "coverage", ".astro"]
+    "ignore": ["dist", "coverage", ".astro", "apps/website/src/generated"]
   }
 }

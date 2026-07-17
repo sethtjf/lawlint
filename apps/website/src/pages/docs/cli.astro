@@ -5,15 +5,17 @@ import Layout from "../../layouts/Layout.astro";
   <article class="doc">
     <div class="eyebrow">Docs / 02</div>
     <h1>CLI reference</h1>
-    <p class="intro">The CLI is intentionally small: a file or stdin, a format, and a handful of controls.</p>
-    <pre>lawlint &lt;file.txt|file.md|-&gt; [options]</pre>
+    <p class="intro">The native CLI is intentionally small: a file or stdin, a format, and a handful of controls.</p>
+    <pre>lawlint [options] &lt;file.txt|file.md|-&gt;
+lawlint rules --json</pre>
     <div class="table">
       <div><code>--format pretty|json</code><span>Choose human-readable or machine-readable output.</span></div>
       <div><code>--rules id,id</code><span>Run only the listed rules.</span></div>
       <div><code>--disable id,id</code><span>Disable selected rules.</span></div>
-      <div><code>--markdown</code><span>Strip fenced code blocks from stdin input.</span></div>
+      <div><code>--markdown</code><span>Strip fenced code blocks from the input. Markdown files enable this automatically.</span></div>
       <div><code>--max-warnings n</code><span>Exit 1 when warnings exceed n.</span></div>
       <div><code>--quiet</code><span>Suppress pretty output while preserving exit status.</span></div>
+      <div><code>rules --json</code><span>Print built-in rule metadata as JSON.</span></div>
     </div>
     <p><a href="/docs/sdk">Next: SDK reference →</a></p>
   </article>

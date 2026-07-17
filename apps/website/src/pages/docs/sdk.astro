@@ -5,27 +5,20 @@ import Layout from "../../layouts/Layout.astro";
   <article class="doc">
     <div class="eyebrow">Docs / 03</div>
     <h1>SDK reference</h1>
-    <p class="intro">Use the same rule engine inside editors, CI jobs, and document workflows.</p>
-    <h2>Lint text and files</h2>
-    <pre>import &#123; lint, lintFile &#125; from "lawlint";
+    <p class="intro">Use the same Rust rule engine inside editors, CI jobs, and document workflows.</p>
+    <h2>Lint text</h2>
+    <pre>use lawlint_core::&#123;lint, LintOptions&#125;;
 
-const result = lint(text, &#123;
-  disable: ["no-legalese"],
-  severity: &#123; "sentence-length": "error" &#125;,
-  thresholds: &#123; "no-hedging": 20 &#125;,
-&#125;);
-const fileResult = await lintFile("brief.md");</pre>
-    <h2>Custom rules</h2>
-    <pre>const rule = &#123;
-  id: "no-internal-jargon",
-  meta: &#123; description: "Flags internal jargon", docsUrl: "https://example.com" &#125;,
-  check: (context) =&gt; [
-    context.diagnostic(0, 4, "Use a reader-facing term"),
-  ],
-&#125;;
-lint(text, &#123; rules: [rule] &#125;);</pre>
+let result = lint(
+    text,
+    &amp;LintOptions &#123;
+        disable: Some(vec!["no-legalese".into()]),
+        ..Default::default()
+    &#125;,
+);</pre>
+    <p>Add <code>lawlint-core</code> as a path dependency from this repository in your Rust project. The SDK is pure Rust and does not perform file or stdin I/O.</p>
     <h2>Configuration</h2>
-    <p>Place <code>lawlint.config.json</code> in the working directory or any parent directory. It can define <code>enable</code>, <code>disable</code>, <code>severity</code>, and <code>thresholds</code>.</p>
+    <p>Configuration-file discovery belongs to the CLI. The core SDK accepts <code>LintOptions</code> directly, including <code>enable</code>, <code>disable</code>, <code>severity</code>, and <code>thresholds</code>.</p>
   </article>
 </Layout>
 <style>

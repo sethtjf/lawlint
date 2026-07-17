@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn fixture_parity() {
-        let bad = include_str!("../../../packages/lawlint/tests/fixtures/bad.md");
+        let bad = include_str!("../tests/fixtures/bad.md");
         let bad_result = lint(
             bad,
             &LintOptions {
@@ -572,7 +572,7 @@ mod tests {
                 "no-marketing-language",
             ]
         );
-        let clean = include_str!("../../../packages/lawlint/tests/fixtures/clean.txt");
+        let clean = include_str!("../tests/fixtures/clean.txt");
         let clean_result = lint(clean, &LintOptions::default());
         assert!(clean_result.diagnostics.is_empty());
         assert_eq!(

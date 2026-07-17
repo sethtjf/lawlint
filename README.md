@@ -10,7 +10,6 @@ and offers practical suggestions for more human, direct writing.
 ```sh
 bun install
 bun run build
-bunx lawlint document.txt
 ```
 
 Run the documentation website locally:
@@ -20,34 +19,40 @@ bun run --cwd apps/website dev
 bun run --cwd apps/website build
 ```
 
-Use JSON output or stdin:
+Build and run the native CLI:
 
 ```sh
-cat document.md | bunx lawlint - --format json
+cargo build --release -p lawlint-cli
+./target/release/lawlint document.txt
+cat document.md | ./target/release/lawlint - --format json
 ```
 
-As an SDK:
+One-line installers and a download page are planned for the next release.
 
-```ts
-import { lint, lintFile } from "lawlint";
+## Rust SDK
 
-const result = lint("It is important to note that we delve into the landscape.");
-console.log(result.stats.score, result.diagnostics);
-const fileResult = await lintFile("document.txt");
+```rust
+use lawlint_core::{lint, LintOptions};
+
+let result = lint(
+    "It is important to note that we delve into the landscape.",
+    &LintOptions::default(),
+);
 ```
 
-In browsers (or other environments without Node built-ins), import from
-`lawlint/browser` — same API minus `lintFile` and config discovery. The
-website's [playground](https://lawlint.dev/playground) is built on it.
+`lawlint-core` is a pure Rust SDK and does not perform file or stdin I/O. The
+website's [playground](https://lawlint.dev/playground) uses the same engine
+compiled to WebAssembly.
 
 ## Monorepo layout
 
-- `packages/lawlint` — published TypeScript SDK and `lawlint` CLI.
+- `crates/lawlint-core` — pure-Rust linting SDK.
+- `crates/lawlint-cli` — native CLI.
+- `crates/lawlint-wasm` — browser binding used by the playground.
 - `apps/website` — Astro documentation website with generated rule reference pages.
-- `.github/workflows/ci.yml` — Node 20/22 build, lint, typecheck, and test matrix.
+- `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
 
-Rules are modular and third-party rules can be supplied through SDK options. A
-`lawlint.config.json` file is discovered from the current directory upward.
+The CLI discovers `lawlint.config.json` from the current directory upward.
 
 ## License
 

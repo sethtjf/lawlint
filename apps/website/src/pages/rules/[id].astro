@@ -1,9 +1,9 @@
 ---
-import { builtInRules } from "lawlint";
+import rules from "../../generated/rules.json";
 import Layout from "../../layouts/Layout.astro";
 
 export function getStaticPaths() {
-  return builtInRules.map((rule) => ({ params: { id: rule.id }, props: { rule } }));
+  return rules.map((rule) => ({ params: { id: rule.id }, props: { rule } }));
 }
 const { rule } = Astro.props;
 ---
