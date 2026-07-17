@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/lawlint-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+regex = "1.11"
+serde = { version = "1", features = ["derive"] }
