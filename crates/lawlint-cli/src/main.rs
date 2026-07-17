@@ -16,6 +16,7 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod tui;
 mod update;
 
 #[derive(Debug, Parser)]
@@ -101,7 +102,9 @@ enum RulesAction {
 
 /// Walk up from `directory` looking for `lawlint.config.json`. A file that
 /// exists but does not parse is a config error (exit 2), not a silent skip.
-fn find_config(mut directory: PathBuf) -> Result<(LintOptions, Option<PathBuf>), String> {
+pub(crate) fn find_config(
+    mut directory: PathBuf,
+) -> Result<(LintOptions, Option<PathBuf>), String> {
     loop {
         let path = directory.join("lawlint.config.json");
         if path.is_file() {
@@ -152,7 +155,7 @@ fn merge_map<T>(
 /// Built-ins + config `ruleDirs` (relative to the config file's directory)
 /// plus `--rule-dir` flags (relative to cwd). LoadError messages are
 /// product-quality: propagate them verbatim.
-fn build_rule_set(
+pub(crate) fn build_rule_set(
     config: &LintOptions,
     config_dir: Option<&Path>,
     cli_dirs: &[PathBuf],
@@ -181,7 +184,10 @@ fn build_rule_set(
 /// The judge model to use, if the judge is active at all: the CLI flag wins
 /// (bare `--judge` = `Some(None)` = default model), else config
 /// `judge.enabled: true`.
-fn judge_spec(cli_judge: &Option<String>, config: &LintOptions) -> Option<Option<String>> {
+pub(crate) fn judge_spec(
+    cli_judge: &Option<String>,
+    config: &LintOptions,
+) -> Option<Option<String>> {
     let config_judge = config.judge.as_ref();
     let config_model = config_judge.and_then(|judge| judge.model.clone());
     match cli_judge {
@@ -215,7 +221,7 @@ fn build_judge(
     Ok((judge, cache))
 }
 
-fn lint_text(
+pub(crate) fn lint_text(
     text: &str,
     options: &LintOptions,
     rules: &RuleSet,
@@ -295,21 +301,18 @@ fn severity_colored(severity: Severity, value: &str, color: bool) -> String {
     }
 }
 
-fn pretty(result: &LintResult, quiet: bool) {
+pub(crate) fn format_pretty(result: &LintResult, quiet: bool, color: bool) -> String {
     if quiet {
-        return;
+        return String::new();
     }
-    let color = colors_enabled();
+    let mut lines = Vec::new();
     if result.diagnostics.is_empty() {
         let check = "✓ No issues found.";
-        println!(
-            "{}",
-            if color {
-                check.green().to_string()
-            } else {
-                check.into()
-            }
-        );
+        lines.push(if color {
+            check.green().to_string()
+        } else {
+            check.into()
+        });
     }
     for diagnostic in &result.diagnostics {
         let location = format!("{}:{}", diagnostic.line, diagnostic.column);
@@ -319,29 +322,34 @@ fn pretty(result: &LintResult, quiet: bool) {
         } else {
             diagnostic.rule_id.0.clone()
         };
-        println!("{location} {rule} {}", diagnostic.message);
+        lines.push(format!("{location} {rule} {}", diagnostic.message));
         let excerpt = if color {
             diagnostic.excerpt.dimmed().to_string()
         } else {
             diagnostic.excerpt.clone()
         };
-        println!("  {excerpt}");
+        lines.push(format!("  {excerpt}"));
         if let Some(suggestion) = &diagnostic.suggestion {
             let value = format!("Suggestion: {suggestion}");
-            println!(
+            lines.push(format!(
                 "  {}",
                 if color {
                     value.dimmed().to_string()
                 } else {
                     value
                 }
-            );
+            ));
         }
     }
-    println!(
+    lines.push(format!(
         "\nHuman-likeness score: {}/100 ({} words, {} sentences)",
         result.stats.score, result.stats.word_count, result.stats.sentence_count
-    );
+    ));
+    lines.join("\n")
+}
+
+fn pretty(result: &LintResult, quiet: bool) {
+    println!("{}", format_pretty(result, quiet, colors_enabled()));
 }
 
 fn machine_fix_count(diagnostics: &[Diagnostic]) -> usize {
@@ -356,7 +364,7 @@ fn machine_fix_count(diagnostics: &[Diagnostic]) -> usize {
         .count()
 }
 
-fn exit_code(result: &LintResult, max_warnings: &str) -> i32 {
+pub(crate) fn exit_code(result: &LintResult, max_warnings: &str) -> i32 {
     let warnings = result
         .diagnostics
         .iter()
@@ -828,6 +836,12 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
 // ---- entry -------------------------------------------------------------
 
 fn run(cli: Cli) -> Result<i32, String> {
+    // A bare `lawlint` in an interactive terminal launches the TUI instead of
+    // blocking on stdin.
+    if std::env::args().len() == 1 && io::stdin().is_terminal() {
+        return tui::run_tui();
+    }
+
     match &cli.command {
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
