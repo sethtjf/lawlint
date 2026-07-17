@@ -63,22 +63,26 @@ impl TuiApp {
             ..Default::default()
         };
 
-        let mut textarea = TextArea::default();
-        textarea.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input — Ctrl+L lint | Esc quit"),
-        );
-        textarea.set_style(Style::default().fg(Color::White));
-
-        Ok(Self {
-            textarea,
+        let mut app = Self {
+            textarea: TextArea::default(),
             output: String::from("Type or paste text and press Ctrl+L to lint."),
             last_result: None,
             rules,
             judge,
             options,
-        })
+        };
+        app.set_text("");
+        Ok(app)
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.textarea = TextArea::from(text.lines());
+        self.textarea.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Input — Ctrl+L lint | Esc quit"),
+        );
+        self.textarea.set_style(Style::default().fg(Color::White));
     }
 
     fn run(mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<i32, String> {
@@ -113,7 +117,7 @@ impl TuiApp {
                     continue;
                 }
                 if is_fix_shortcut(&key) {
-                    self.apply_fixes();
+                    self.apply_fixes()?;
                     continue;
                 }
                 self.textarea.input(key);
@@ -129,19 +133,17 @@ impl TuiApp {
         Ok(())
     }
 
-    fn apply_fixes(&mut self) {
+    fn apply_fixes(&mut self) -> Result<(), String> {
+        // Re-lint the current text so diagnostic offsets match the text we are
+        // about to edit. Then re-lint the fixed text to refresh results.
+        self.lint()?;
         let text = self.textarea.lines().join("\n");
         let Some(result) = &self.last_result else {
-            return;
+            return Ok(());
         };
         let fixed = lawlint_core::apply_fixes(&text, &result.diagnostics);
-        self.textarea = TextArea::from(fixed.lines());
-        self.textarea.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input — Ctrl+L lint | Esc quit"),
-        );
-        self.textarea.set_style(Style::default().fg(Color::White));
+        self.set_text(&fixed);
+        self.lint()
     }
 
     fn exit_code(&self) -> i32 {
