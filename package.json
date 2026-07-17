@@ -9,7 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "wasm:build": "wasm-pack build crates/lawlint-wasm --target web --out-dir ../../apps/website/src/generated/wasm",
+    "wasm:build": "bash scripts/build-wasm.sh",
     "rules:generate": "mkdir -p apps/website/src/generated && cargo run -q -p lawlint-cli -- rules --json > apps/website/src/generated/rules.json",
     "build": "bun run --cwd apps/website build",
     "dev": "bun run --cwd apps/website dev",
