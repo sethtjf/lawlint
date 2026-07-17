@@ -1,0 +1,270 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+<Layout title="Playground" description="Paste text and lint it in your browser — nothing you write leaves this page.">
+  <section class="playground">
+    <div class="eyebrow">Playground</div>
+    <h1 class="pg-title">Try lawlint in your browser.</h1>
+    <p class="intro">Paste a draft, drop in a file, or start from the sample. Everything runs locally in your browser — nothing you write leaves this page.</p>
+
+    <div class="toolbar">
+      <button type="button" id="load-sample" class="tool-button">Load sample</button>
+      <button type="button" id="open-file" class="tool-button">Open file…</button>
+      <input type="file" id="file-input" accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
+      <label class="toggle"><input type="checkbox" id="markdown-toggle" /> Treat as Markdown</label>
+      <button type="button" id="clear" class="tool-button quiet">Clear</button>
+    </div>
+
+    <div class="workbench">
+      <div class="editor" id="editor">
+        <div class="backdrop" aria-hidden="true"><div class="marks" id="marks"></div></div>
+        <textarea
+          id="input"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          placeholder="Paste your text here, or drop a .txt / .md file…"
+          aria-label="Text to lint"
+        ></textarea>
+      </div>
+      <aside class="results">
+        <div class="scoreboard">
+          <div class="score"><span id="score">–</span><span class="denom">/100</span></div>
+          <div class="score-label">Human-likeness score</div>
+          <dl class="stats">
+            <div><dt>Words</dt><dd id="stat-words">0</dd></div>
+            <div><dt>Sentences</dt><dd id="stat-sentences">0</dd></div>
+            <div><dt>Issues</dt><dd id="stat-issues">0</dd></div>
+          </dl>
+        </div>
+        <div id="diagnostics" class="diagnostics" role="list" aria-live="polite">
+          <p class="empty">Diagnostics will appear here as you type.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+</Layout>
+
+<script>
+  import { lint, type Diagnostic } from "lawlint/browser";
+
+  const input = document.getElementById("input") as HTMLTextAreaElement;
+  const marks = document.getElementById("marks") as HTMLDivElement;
+  const backdrop = marks.parentElement as HTMLDivElement;
+  const editor = document.getElementById("editor") as HTMLDivElement;
+  const diagnosticsEl = document.getElementById("diagnostics") as HTMLDivElement;
+  const scoreEl = document.getElementById("score") as HTMLSpanElement;
+  const statWords = document.getElementById("stat-words") as HTMLElement;
+  const statSentences = document.getElementById("stat-sentences") as HTMLElement;
+  const statIssues = document.getElementById("stat-issues") as HTMLElement;
+  const markdownToggle = document.getElementById("markdown-toggle") as HTMLInputElement;
+  const fileInput = document.getElementById("file-input") as HTMLInputElement;
+
+  const SAMPLE = `It is important to note that in today's fast-paced world, legal teams must delve into the landscape of regulatory obligations. Moreover, the aforementioned parties shall, pursuant to Section 4(b), cease and desist any and all conduct hereinafter described.
+
+Moreover, this Agreement is not only binding but also enforceable. Moreover, it could be said that the obligations herein are arguably very significant — indeed, they are crucially important.
+
+The parties agree. The parties covenant. The parties acknowledge that this arrangement — negotiated, drafted, and executed in good faith — shall be deemed accepted, notwithstanding the foregoing.`;
+
+  function escapeHtml(text: string) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function lineStartOffsets(text: string) {
+    const offsets = [0];
+    for (let i = 0; i < text.length; i++) if (text[i] === "\n") offsets.push(i + 1);
+    return offsets;
+  }
+
+  function toRange(d: Diagnostic, starts: number[], length: number) {
+    const start = (starts[d.line - 1] ?? 0) + d.column - 1;
+    const end =
+      d.endLine !== undefined && d.endColumn !== undefined
+        ? (starts[d.endLine - 1] ?? 0) + d.endColumn - 1
+        : start + 1;
+    return { start: Math.min(start, length), end: Math.min(Math.max(end, start + 1), length) };
+  }
+
+  function renderMarks(text: string, ranged: { start: number; end: number; severity: string }[]) {
+    const sorted = [...ranged].sort((a, b) => a.start - b.start || b.end - a.end);
+    let cursor = 0;
+    let html = "";
+    for (const r of sorted) {
+      if (r.end <= cursor) continue;
+      const start = Math.max(r.start, cursor);
+      html += escapeHtml(text.slice(cursor, start));
+      html += `<mark class="sev-${r.severity}">${escapeHtml(text.slice(start, r.end))}</mark>`;
+      cursor = r.end;
+    }
+    html += escapeHtml(text.slice(cursor));
+    marks.innerHTML = `${html}\n`;
+  }
+
+  function renderDiagnostics(
+    items: (Diagnostic & { start: number; end: number })[],
+  ) {
+    if (items.length === 0) {
+      diagnosticsEl.innerHTML = input.value.trim()
+        ? '<p class="empty good">✓ No issues found.</p>'
+        : '<p class="empty">Diagnostics will appear here as you type.</p>';
+      return;
+    }
+    diagnosticsEl.innerHTML = items
+      .map(
+        (d, i) => `
+        <button type="button" class="diagnostic" role="listitem" data-index="${i}">
+          <span class="diag-head">
+            <span class="badge sev-${d.severity}">${d.severity}</span>
+            <a href="/rules/${encodeURIComponent(d.ruleId)}" class="rule-link">${escapeHtml(d.ruleId)}</a>
+            <span class="loc">${d.line}:${d.column}</span>
+          </span>
+          <span class="diag-message">${escapeHtml(d.message)}</span>
+          ${d.suggestion ? `<span class="diag-suggestion">${escapeHtml(d.suggestion)}</span>` : ""}
+        </button>`,
+      )
+      .join("");
+  }
+
+  let current: (Diagnostic & { start: number; end: number })[] = [];
+
+  function run() {
+    const text = input.value;
+    const result = lint(text, markdownToggle.checked ? { markdown: true } : {});
+    const starts = lineStartOffsets(text);
+    current = result.diagnostics
+      .map((d) => ({ ...d, ...toRange(d, starts, text.length) }))
+      .sort((a, b) => a.start - b.start);
+    renderMarks(text, current);
+    renderDiagnostics(current);
+    scoreEl.textContent = text.trim() ? String(result.stats.score) : "–";
+    statWords.textContent = String(result.stats.wordCount);
+    statSentences.textContent = String(result.stats.sentenceCount);
+    statIssues.textContent = String(current.length);
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(run, 120);
+  });
+  markdownToggle.addEventListener("change", run);
+
+  input.addEventListener("scroll", () => {
+    backdrop.scrollTop = input.scrollTop;
+    backdrop.scrollLeft = input.scrollLeft;
+  });
+
+  diagnosticsEl.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("a")) return;
+    const item = target.closest<HTMLButtonElement>(".diagnostic");
+    if (!item) return;
+    const d = current[Number(item.dataset.index)];
+    if (!d) return;
+    input.focus();
+    input.setSelectionRange(d.start, d.end);
+    const lineHeight = Number.parseFloat(getComputedStyle(input).lineHeight) || 24;
+    input.scrollTop = Math.max(0, (d.line - 3) * lineHeight);
+    backdrop.scrollTop = input.scrollTop;
+  });
+
+  document.getElementById("load-sample")?.addEventListener("click", () => {
+    input.value = SAMPLE;
+    markdownToggle.checked = false;
+    run();
+  });
+  document.getElementById("clear")?.addEventListener("click", () => {
+    input.value = "";
+    run();
+    input.focus();
+  });
+  document.getElementById("open-file")?.addEventListener("click", () => fileInput.click());
+
+  async function loadFile(file: File) {
+    input.value = await file.text();
+    if (/\.(md|markdown)$/i.test(file.name)) markdownToggle.checked = true;
+    run();
+  }
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) void loadFile(file);
+    fileInput.value = "";
+  });
+
+  editor.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    editor.classList.add("dragging");
+  });
+  editor.addEventListener("dragleave", () => editor.classList.remove("dragging"));
+  editor.addEventListener("drop", (event) => {
+    event.preventDefault();
+    editor.classList.remove("dragging");
+    const file = event.dataTransfer?.files?.[0];
+    if (file) void loadFile(file);
+  });
+
+  run();
+</script>
+
+<style>
+  .playground { padding: 5rem 0 2rem; }
+  .pg-title { font-size: clamp(2.6rem, 6vw, 4.6rem); letter-spacing: -0.05em; max-width: 16ch; }
+  .intro { color: var(--muted); font-size: 1.2rem; max-width: 42rem; margin: 1.5rem 0 3rem; }
+
+  .toolbar { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; font: 0.75rem "IBM Plex Mono", monospace; }
+  .tool-button { padding: 0.55rem 0.9rem; background: var(--ink); color: var(--paper); border: 1px solid var(--ink); font: 0.72rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; }
+  .tool-button:hover { background: var(--oxblood); border-color: var(--oxblood); }
+  .tool-button.quiet { background: transparent; color: var(--ink); }
+  .tool-button.quiet:hover { color: var(--oxblood); border-color: var(--oxblood); background: transparent; }
+  .toggle { display: inline-flex; align-items: center; gap: 0.45rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); cursor: pointer; margin-left: auto; }
+  .toggle input { accent-color: var(--oxblood); }
+
+  .workbench { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr); gap: 1.5rem; align-items: start; }
+
+  .editor { position: relative; border: 1px solid var(--line); background: #f8f4ed; }
+  .editor.dragging { outline: 2px dashed var(--oxblood); outline-offset: -6px; }
+  .backdrop { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .marks, .editor textarea { font: 0.92rem/1.7 "IBM Plex Mono", monospace; padding: 1.2rem 1.3rem; margin: 0; border: 0; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; }
+  .marks { color: transparent; min-height: 100%; }
+  .editor textarea { position: relative; display: block; width: 100%; height: 30rem; resize: vertical; background: transparent; color: var(--ink); caret-color: var(--oxblood); outline: none; }
+  .editor textarea::placeholder { color: var(--muted); opacity: 0.7; }
+  .marks :global(mark) { color: transparent; border-radius: 1px; }
+  .marks :global(mark.sev-error) { background: rgba(126, 37, 40, 0.28); box-shadow: inset 0 -2px 0 var(--oxblood); }
+  .marks :global(mark.sev-warning) { background: rgba(126, 37, 40, 0.14); box-shadow: inset 0 -2px 0 rgba(126, 37, 40, 0.55); }
+  .marks :global(mark.sev-info) { background: rgba(117, 109, 100, 0.18); box-shadow: inset 0 -2px 0 var(--muted); }
+
+  .results { display: flex; flex-direction: column; gap: 1rem; }
+  .scoreboard { border: 1px solid var(--line); background: #f8f4ed; padding: 1.2rem 1.3rem; }
+  .score { font-size: 3.2rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1; }
+  .score .denom { font-size: 1.2rem; color: var(--muted); font-weight: 400; margin-left: 0.15rem; }
+  .score-label { color: var(--muted); font: 0.68rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.4rem; }
+  .stats { display: flex; gap: 1.6rem; margin: 1.1rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .stats div { display: flex; flex-direction: column-reverse; }
+  .stats dt { color: var(--muted); font: 0.62rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; }
+  .stats dd { margin: 0; font-size: 1.25rem; font-weight: 600; }
+
+  .diagnostics { display: flex; flex-direction: column; gap: 0.6rem; max-height: 24rem; overflow-y: auto; }
+  .empty { color: var(--muted); font: 0.78rem "IBM Plex Mono", monospace; margin: 0.5rem 0; }
+  .empty.good { color: #3c6e47; }
+  .diagnostics :global(.diagnostic) { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: #f8f4ed; padding: 0.8rem 0.95rem; cursor: pointer; font-family: inherit; }
+  .diagnostics :global(.diagnostic:hover) { border-color: var(--oxblood); }
+  .diagnostics :global(.diag-head) { display: flex; align-items: baseline; gap: 0.6rem; font: 0.68rem "IBM Plex Mono", monospace; }
+  .diagnostics :global(.badge) { text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.35rem; }
+  .diagnostics :global(.badge.sev-error) { background: var(--oxblood); color: var(--paper); }
+  .diagnostics :global(.badge.sev-warning) { background: rgba(126, 37, 40, 0.14); color: var(--oxblood); }
+  .diagnostics :global(.badge.sev-info) { background: var(--paper-deep); color: var(--muted); }
+  .diagnostics :global(.rule-link) { color: var(--ink); }
+  .diagnostics :global(.rule-link:hover) { color: var(--oxblood); }
+  .diagnostics :global(.loc) { color: var(--muted); margin-left: auto; }
+  .diagnostics :global(.diag-message) { display: block; margin-top: 0.45rem; font-size: 0.95rem; line-height: 1.45; }
+  .diagnostics :global(.diag-suggestion) { display: block; margin-top: 0.3rem; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+  .diagnostics :global(.diag-suggestion)::before { content: "→ "; color: var(--oxblood); }
+
+  @media (max-width: 860px) {
+    .workbench { grid-template-columns: 1fr; }
+    .editor textarea { height: 22rem; }
+    .toggle { margin-left: 0; }
+    .diagnostics { max-height: none; }
+  }
+</style>
