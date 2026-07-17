@@ -183,6 +183,11 @@ jobs:
             exit 1
           fi
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # SHA256SUMS + VERSION power the CLI self-update / update-check (docs §11).
+          # Checksums cover every artifact with bare basenames (no dir prefix), so
+          # self-update can look up "lawlint-<target>.<ext>" directly.
+          ( cd release-assets && sha256sum lawlint-* > SHA256SUMS )
+          printf '%s' "$version" > release-assets/VERSION
           for file in release-assets/*; do
             [ -f "$file" ] || continue
             name="$(basename "$file")"

@@ -421,6 +421,27 @@ Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or i
 - **WASM**: `lint(text, options)`, `builtInRulesMeta()` (now `RuleSet::metas()`), `loadRules(yamlFiles)` for playground-authored rules. Tier-3 **inference** is a host concern in the browser: wasm exports the host-driven pair `planJudge(text, options, extraRules?) -> JudgeRequest[]` and `applyJudgeFindings(text, options, requests, findingsPerRequest, extraRules?) -> LintResult` (grounding, hallucination counters, confidence floor, Warning cap all enforced inside wasm — the core invariant holds in-browser). The JS host runs inference however it likes (transformers.js/WebLLM on WebGPU, or cloud). In-process candle-wasm is a possible later addition, not the browser default.
 - **Desktop**: keep compiling against new `lint`.
 
+### CLI versioning & self-update (added post-v0.2.0)
+
+- `--version`/`-V` via clap `#[command(version)]` (from `CARGO_PKG_VERSION`).
+- **Distribution/version source**: R2, base URL `LAWLINT_UPDATE_BASE_URL` (default
+  `https://assets.lawlint.com/downloads`). Release workflow publishes, per release,
+  a `SHA256SUMS` over all artifacts and a plaintext `VERSION` file, to both
+  `releases/v<ver>/` and `latest/` (no-cache on `latest/`).
+- **Update check** (auto, cached, subtle — npm/gh/rustup pattern): at most once per
+  24h, cached in `<cache>/lawlint/update-check.json` (`{last_checked, latest_version}`).
+  Fetches `latest/VERSION` with a short timeout; on any error, silent. Prints a
+  one-line notice to **stderr after** the command. Suppressed when: `--no-update-check`,
+  `LAWLINT_NO_UPDATE_CHECK`, `CI` set, stderr not a TTY, `--format json`, or running
+  the `self-update` subcommand. Never alters exit code or stdout.
+- **`self-update`** subcommand (`--check`, `--force`, `--version <X>`): resolves target
+  triple at build time (build.rs `LAWLINT_TARGET` from `TARGET`), downloads the
+  version-pinned archive + `SHA256SUMS` from `releases/v<ver>/`, **verifies sha256**
+  (abort on mismatch, keep current binary), extracts the `lawlint` binary (tar.gz via
+  flate2+tar; Windows zip target-gated), and atomically replaces the running exe via
+  `self-replace`. Permission errors produce a helpful message. Binaries are unsigned;
+  integrity rests on TLS + published SHA256SUMS.
+
 ## 12. Testing requirements
 
 - Every module has colocated `#[cfg(test)]` unit tests.
