@@ -166,6 +166,85 @@ fn config_rule_dirs_load_relative_to_config() {
 }
 
 #[test]
+fn nested_config_is_discovered_and_wins_over_legacy() {
+    let dir = TempDir::new().unwrap();
+    write(
+        &dir,
+        ".lawlint/config.json",
+        r#"{"disable": ["no-ai-cliches"]}"#,
+    );
+    write(&dir, "lawlint.config.json", "{}");
+    cmd(&dir)
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no-ai-cliches").not())
+        .stderr(predicate::str::contains("both"));
+}
+
+#[test]
+fn nested_config_rule_dirs_resolve_from_project_root() {
+    let dir = TempDir::new().unwrap();
+    write_fix_package(&dir);
+    write(&dir, ".lawlint/config.json", r#"{"ruleDirs": ["pkg"]}"#);
+    fs::create_dir_all(dir.path().join("sub")).unwrap();
+    let mut cmd = Command::cargo_bin("lawlint").unwrap();
+    cmd.current_dir(dir.path().join("sub"))
+        .write_stdin("We utilize tools.")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("firm/use-plain"));
+}
+
+// ---- init --------------------------------------------------------------
+
+#[test]
+fn init_yes_writes_config_and_refuses_to_overwrite() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir).args(["init", "--yes"]).assert().code(0);
+    let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
+    assert!(config.contains("\"enabled\": false"));
+    cmd(&dir)
+        .args(["init", "--yes"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--force"));
+    cmd(&dir)
+        .args(["init", "--yes", "--force"])
+        .assert()
+        .code(0);
+}
+
+#[test]
+fn init_scaffolds_a_working_rules_package() {
+    let dir = TempDir::new().unwrap();
+    // Prompts: judge choice (default: disabled), markdown (default: no),
+    // starter rules package (yes).
+    cmd(&dir)
+        .arg("init")
+        .write_stdin("\n\ny\n")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(".lawlint/rules/style.yaml"));
+    // The scaffolded package is discovered via the written ruleDirs…
+    cmd(&dir)
+        .arg("rules")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no-avoidance-of-doubt"));
+    // …its own examples pass, and it fires on real input.
+    cmd(&dir)
+        .args(["rules", "test", ".lawlint/rules"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("0 failed"));
+    cmd(&dir)
+        .write_stdin("For the avoidance of doubt, the fee is due monthly.")
+        .assert()
+        .stdout(predicate::str::contains("no-avoidance-of-doubt"));
+}
+
+#[test]
 fn bad_rule_dir_prints_load_error_verbatim_and_exits_2() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("empty-pkg")).unwrap();
