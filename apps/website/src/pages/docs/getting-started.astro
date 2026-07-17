@@ -18,6 +18,8 @@ cargo build --release -p lawlint-cli</pre>
     <pre>./target/release/lawlint contract.md
 cat memo.txt | ./target/release/lawlint - --format json</pre>
     <p>Markdown files automatically skip fenced code blocks. For piped Markdown, add <code>--markdown</code>.</p>
+    <h2>Scoring</h2>
+    <p>Every result includes a human-likeness score from 0 to 100. Each diagnostic charges a penalty—5 points per error, 3 per warning, and 1 per info—normalized per 1,000 words, so the score reflects issue density rather than document length. The score decays smoothly as penalty density rises, keeping lightly flagged documents distinguishable while heavily flagged documents approach 0. Density rules such as <code>no-hedging</code> and <code>no-em-dash-overuse</code> charge in proportion to how far past their threshold the text runs.</p>
     <h2>Exit codes</h2>
     <ul><li><code>0</code> when no errors are found and the warning limit is not exceeded.</li><li><code>1</code> when an error is found or <code>--max-warnings</code> is exceeded.</li></ul>
     <p><a href="/docs/cli">Next: CLI reference →</a></p>
