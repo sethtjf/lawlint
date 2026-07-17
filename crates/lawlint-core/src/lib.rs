@@ -24,6 +24,8 @@ pub struct Diagnostic {
     pub excerpt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -115,6 +117,7 @@ impl<'a> RuleContext<'a> {
             end_line: Some(end_line),
             end_column: Some(end_column),
             excerpt: self.lines.get(line - 1).unwrap_or(&"").trim().to_string(),
+            weight: None,
         }
     }
 }
@@ -191,13 +194,20 @@ impl Rule for DensityRule {
             return vec![];
         }
         let m = matches[0];
-        vec![c.diagnostic(
+        let count = matches.len();
+        let weight = ((count as f64 - (threshold * words) / 1000.0).ceil() as u32).max(1);
+        let mut diagnostic = c.diagnostic(
             m.start(),
             m.end().max(m.start() + 1),
-            &self.message,
+            format!(
+                "{} ({} occurrences in {} words)",
+                self.message, count, words as usize
+            ),
             None,
             None,
-        )]
+        );
+        diagnostic.weight = Some(weight);
+        vec![diagnostic]
     }
 }
 struct LeadingRule {
@@ -476,15 +486,17 @@ pub fn lint_with_rules(text: &str, options: &LintOptions, rules: &[Box<dyn Rule>
         .count();
     let penalty: usize = diagnostics
         .iter()
-        .map(|d| match d.severity {
-            Severity::Error => 5,
-            Severity::Warning => 3,
-            Severity::Info => 1,
+        .map(|d| {
+            let points = match d.severity {
+                Severity::Error => 5,
+                Severity::Warning => 3,
+                Severity::Info => 1,
+            };
+            points * d.weight.unwrap_or(1) as usize
         })
         .sum();
-    let score = (100.0 - (penalty as f64 / (word_count.max(1) as f64)) * 100.0)
-        .round()
-        .clamp(0.0, 100.0) as i32;
+    let density = (penalty as f64 / word_count.max(1) as f64) * 1000.0;
+    let score = (100.0 * (-density / 100.0).exp()).round().clamp(0.0, 100.0) as i32;
     LintResult {
         diagnostics,
         stats: Stats {
@@ -550,7 +562,7 @@ mod tests {
             Stats {
                 word_count: 70,
                 sentence_count: 3,
-                score: 60
+                score: 2
             }
         );
         assert_eq!(
@@ -594,5 +606,90 @@ mod tests {
         assert_eq!(json["diagnostics"][0]["endColumn"], 9);
         assert_eq!(json["stats"]["wordCount"], 2);
         assert_eq!(json["stats"]["sentenceCount"], 1);
+        assert!(json["diagnostics"][0].get("weight").is_none());
+    }
+
+    fn scoring_sentences(count: usize) -> String {
+        let openers = [
+            "Alpha", "Bravo", "Cedar", "Delta", "Ember", "Fjord", "Grove", "Harbor", "Inlet",
+            "Juniper",
+        ];
+        (0..count)
+            .map(|sentence| {
+                (0..10)
+                    .map(|word| {
+                        if word == 0 {
+                            openers[sentence % openers.len()].to_string()
+                        } else {
+                            format!("w{}", sentence * 10 + word)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    + "."
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn scoring_uses_penalty_density_decay() {
+        let clean = lint("", &LintOptions::default());
+        assert_eq!(clean.stats.score, 100);
+
+        let text = format!(
+            "{} We map the landscape of this matter briefly here today.",
+            scoring_sentences(9)
+        );
+        let result = lint(&text, &LintOptions::default());
+        assert_eq!(result.stats.word_count, 100);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|d| d.rule_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["no-ai-cliches"]
+        );
+        assert_eq!(result.stats.score, 74);
+    }
+
+    #[test]
+    fn scoring_weights_density_diagnostics_by_overuse() {
+        let text = |count: usize| {
+            let openers = [
+                "Alpha", "Bravo", "Cedar", "Delta", "Ember", "Fjord", "Grove", "Harbor", "Inlet",
+                "Juniper",
+            ];
+            let mut remaining = count;
+            (0..100)
+                .map(|index| {
+                    let word = if index % 10 == 0 {
+                        openers[index / 10].to_string()
+                    } else if remaining > 0 {
+                        remaining -= 1;
+                        "perhaps".to_string()
+                    } else {
+                        format!("w{index}")
+                    };
+                    let punctuation = if index == 99 {
+                        "."
+                    } else if (index + 1) % 10 == 0 {
+                        ". "
+                    } else {
+                        " "
+                    };
+                    format!("{word}{punctuation}")
+                })
+                .collect::<String>()
+        };
+        let mild = lint(&text(3), &LintOptions::default());
+        let heavy = lint(&text(12), &LintOptions::default());
+
+        assert_eq!(mild.diagnostics[0].rule_id, "no-hedging");
+        assert_eq!(mild.diagnostics[0].weight, Some(2));
+        assert_eq!(heavy.diagnostics[0].weight, Some(11));
+        assert_eq!(mild.stats.score, 55);
+        assert_eq!(heavy.stats.score, 4);
     }
 }
