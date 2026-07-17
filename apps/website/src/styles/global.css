@@ -1,0 +1,65 @@
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+.shadcn-theme {
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--oxblood);
+  --primary-foreground: var(--paper);
+  --secondary: var(--paper-deep);
+  --secondary-foreground: var(--ink);
+  --muted: var(--paper-deep);
+  --muted-foreground: #756d64;
+  --accent: var(--paper-deep);
+  --accent-foreground: var(--ink);
+  --destructive: #a33a3d;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--oxblood);
+  --radius: 0.2rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: "Source Serif 4", Georgia, serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+}
+
+.shadcn-theme .mark-error {
+  background: rgb(126 37 40 / 28%);
+  box-shadow: inset 0 -2px 0 var(--oxblood);
+}
+
+.shadcn-theme .mark-warning {
+  background: rgb(126 37 40 / 14%);
+  box-shadow: inset 0 -2px 0 rgb(126 37 40 / 55%);
+}
+
+.shadcn-theme .mark-info {
+  background: rgb(117 109 100 / 18%);
+  box-shadow: inset 0 -2px 0 var(--muted);
+}
