@@ -16,8 +16,14 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod update;
+
 #[derive(Debug, Parser)]
-#[command(name = "lawlint", about = "Lint AI-generated legal and general text.")]
+#[command(
+    name = "lawlint",
+    about = "Lint AI-generated legal and general text.",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -48,6 +54,9 @@ struct Cli {
     /// Apply MachineApplicable fixes to FILE in place.
     #[arg(long)]
     fix: bool,
+    /// Skip the once-a-day check for a newer lawlint release.
+    #[arg(long, global = true)]
+    no_update_check: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -58,6 +67,18 @@ enum Command {
         json: bool,
         #[command(subcommand)]
         action: Option<RulesAction>,
+    },
+    /// Download and install the latest lawlint release (docs §11).
+    SelfUpdate {
+        /// Report current/latest and whether an update is available; no download.
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even when already on the latest version.
+        #[arg(long)]
+        force: bool,
+        /// Install this specific version instead of the latest.
+        #[arg(long, value_name = "X")]
+        version: Option<String>,
     },
 }
 
@@ -816,7 +837,24 @@ fn run(cli: Cli) -> Result<i32, String> {
             }) => rules_test(path, judge, *offline),
             None => rules_list(*json, &cli.rule_dir),
         },
-        None => lint_command(&cli),
+        Some(Command::SelfUpdate {
+            check,
+            force,
+            version,
+        }) => update::self_update(env!("CARGO_PKG_VERSION"), *check, *force, version.clone()),
+        None => {
+            let code = lint_command(&cli)?;
+            // At the very END of a normal lint run, after output is written:
+            // subtle, at-most-daily update notice. Never changes the exit code.
+            update::maybe_notify(
+                env!("CARGO_PKG_VERSION"),
+                &update::NotifyOptions {
+                    no_update_check_flag: cli.no_update_check,
+                    json_format: cli.format == "json",
+                },
+            );
+            Ok(code)
+        }
     }
 }
 
