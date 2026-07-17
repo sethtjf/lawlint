@@ -1,0 +1,18 @@
+id: no-en-dash
+engine: phrase
+scope: text
+severity: error
+description: "Flags en dashes outside numeric ranges."
+rationale: "En dashes belong only in numeric ranges such as 2020–2024. Elsewhere they read as stray punctuation."
+message: "Avoid en dashes except in numeric ranges (e.g. 2020–2024)."
+examples:
+  - bad: "The court–ordered remedy failed."
+    good: "The range spans 2020–2024."
+patterns:
+  - pattern: '–'
+    message: "Avoid en dashes except in numeric ranges (e.g. 2020–2024)."
+    suggestion: "Use a hyphen, or reword the sentence."
+# Old EnDashRule allowed the dash only when a digit sits IMMEDIATELY on each
+# side (no intervening space). A 1-byte window each side of the 3-byte dash
+# reproduces that exactly.
+allow_context: { pattern: '\d–\d', window: 1 }

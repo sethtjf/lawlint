@@ -1,0 +1,13 @@
+id: no-parenthetical-asides
+engine: density
+scope: text
+severity: warning
+description: "Flags frequent parenthetical asides"
+rationale: "Use this signal as a prompt to revise rhythm and density, not as a hard prohibition."
+message: "Parenthetical asides appear frequently; integrate important clauses into the sentence."
+threshold: 15
+examples:
+  - bad: "The court (again) delayed (twice)."
+    good: "The court delayed again, twice."
+patterns:
+  - '\([^)]*\)'

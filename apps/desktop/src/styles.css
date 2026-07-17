@@ -57,7 +57,7 @@ kbd { padding: 3px 5px; color: var(--ink); border: 1px solid var(--line); border
 .diagnostic-head { display: flex; align-items: center; gap: 9px; }
 .badge { padding: 4px 6px; color: var(--oxblood); background: rgba(126, 37, 40, .09); font-size: 9px; }
 .badge.sev-error { color: #a31f2a; background: rgba(163, 31, 42, .11); }
-.badge.sev-info { color: #6d665e; background: rgba(109, 102, 94, .12); }
+.badge.sev-suggestion, .badge.sev-info { color: #6d665e; background: rgba(109, 102, 94, .12); }
 .rule-id { color: var(--ink); font: 12px "IBM Plex Mono", ui-monospace, monospace; }
 .location { margin-left: auto; color: var(--muted); font-size: 10px; text-transform: none; letter-spacing: 0; }
 .diagnostic-message { margin: 13px 0 0; font-size: 14px; line-height: 1.5; }

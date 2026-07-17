@@ -1,0 +1,14 @@
+id: oxford-comma
+engine: phrase
+scope: text
+severity: warning
+description: "Flags lists that omit the Oxford comma."
+rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
+message: "Use the Oxford comma before the final item in a list."
+examples:
+  - bad: "The parties are Alice, Bob and Carol."
+    good: "The parties are Alice, Bob, and Carol."
+patterns:
+  - pattern: '(?i)\w+,\s+\w+(?:\s+\w+){0,3}\s+(?:and|or)\s+\w+'
+    message: "Use the Oxford comma before the final item in a list."
+    suggestion: "Add a comma before the closing “and” or “or”."

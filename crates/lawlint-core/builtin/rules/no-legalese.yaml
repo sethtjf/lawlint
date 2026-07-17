@@ -1,0 +1,26 @@
+id: no-legalese
+engine: phrase
+scope: text
+severity: warning
+description: "Flags archaic or unnecessarily formal legalese."
+rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
+message: "Avoid archaic legalese."
+examples:
+  - bad: "Pursuant to the agreement, the fee is due."
+    good: "Under the agreement, the fee is due."
+patterns:
+  - pattern: '(?i)\bhereinafter\b'
+    message: "Avoid “hereinafter”."
+    suggestion: "Name the party or concept directly."
+  - pattern: '(?i)\baforementioned\b'
+    message: "Avoid “aforementioned”."
+    suggestion: "Repeat the noun or use a clear reference."
+  - pattern: '(?i)\bpursuant to\b'
+    message: "Consider replacing “pursuant to”."
+    suggestion: "Use “under” or “by”."
+  - pattern: '(?i)\bnotwithstanding the foregoing\b'
+    message: "Avoid “notwithstanding the foregoing”."
+    suggestion: "State the exception directly."
+  - pattern: '(?i)\bherein\b|\bthereto\b'
+    message: "Avoid archaic legalese."
+    suggestion: "Use a specific noun or pronoun."

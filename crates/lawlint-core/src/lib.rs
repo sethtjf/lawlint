@@ -1,534 +1,222 @@
-use regex::Regex;
-use serde::{Deserialize, Serialize};
+//! lawlint-core — rules engine v2.
+//!
+//! Contract: docs/engine-design.md. Three tiers (static, statistical,
+//! inferential); declarative-first YAML rules with a programmatic `Rule`
+//! trait escape hatch; byte-offset spans into the original source; judge
+//! findings must ground to a span or they do not exist; wasm-safe and
+//! inference-agnostic (judge backends live in `crates/lawlint-judge`).
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Error,
-    Warning,
-    Info,
-}
+pub mod config;
+pub mod dispatch;
+pub mod document;
+pub mod engines;
+pub mod error;
+pub mod judge;
+pub mod loader;
+pub mod markdown;
+pub mod registry;
+pub mod rule;
+pub mod scoring;
+pub mod segment;
+pub mod types;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Diagnostic {
-    pub rule_id: String,
-    pub severity: Severity,
-    pub message: String,
-    pub line: usize,
-    pub column: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_line: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_column: Option<usize>,
-    pub excerpt: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggestion: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub weight: Option<u32>,
-}
+use std::sync::OnceLock;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Stats {
-    pub word_count: usize,
-    pub sentence_count: usize,
-    pub score: i32,
-}
+// ---- Public re-exports -------------------------------------------------
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct LintResult {
-    pub diagnostics: Vec<Diagnostic>,
-    pub stats: Stats,
-}
+pub use config::{JudgeOptions, LintOptions};
+pub use document::{parse, Block, BlockKind, Document, Sentence, Token, TokenKind};
+pub use error::{JudgeError, LoadError};
+// Host-driven tier-3 (wasm): plan/run/ground are public.
+pub use judge::{
+    default_quote_ground, plan_judge, run_judge, Granularity, Judge, JudgeCache, JudgeFinding,
+    JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment, PROMPT_VERSION,
+};
+pub use loader::{AllowContextDef, PackageManifest, PatternDef, RuleDef};
+pub use registry::{InferentialRule, RuleSet};
+pub use rule::{Ctx, Interests, Report, Rule, RuleExample, RuleMeta};
+pub use scoring::finalize;
+pub use types::{
+    Applicability, Diagnostic, Edit, Fix, LintResult, RuleId, Scope, Severity, Stats, TextRange,
+    Tier,
+};
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RuleExample {
-    pub bad: String,
-    pub good: String,
-}
+/// Default tier-3 confidence floor when `options.judge.floor` is unset.
+const DEFAULT_CONFIDENCE_FLOOR: f32 = 0.6;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RuleMeta {
-    pub description: String,
-    pub docs_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rationale: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub severity: Option<Severity>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub examples: Option<RuleExample>,
+/// The built-in rule set, validated once per process.
+fn built_in_set() -> &'static RuleSet {
+    static SET: OnceLock<RuleSet> = OnceLock::new();
+    SET.get_or_init(RuleSet::built_in)
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LintOptions {
-    pub enable: Option<Vec<String>>,
-    pub disable: Option<Vec<String>>,
-    pub severity: Option<std::collections::HashMap<String, Severity>>,
-    pub thresholds: Option<std::collections::HashMap<String, f64>>,
-    pub markdown: Option<bool>,
-}
+// ---- Public API (§8) ---------------------------------------------------
 
-pub trait Rule: Send + Sync {
-    fn id(&self) -> &str;
-    fn meta(&self) -> &RuleMeta;
-    fn check(&self, ctx: &RuleContext<'_>) -> Vec<Diagnostic>;
-}
-
-pub struct RuleContext<'a> {
-    pub text: &'a str,
-    pub lines: Vec<&'a str>,
-    pub line_starts: Vec<usize>,
-    pub options: &'a LintOptions,
-}
-
-impl<'a> RuleContext<'a> {
-    fn location(&self, offset: usize) -> (usize, usize) {
-        let line = self.line_starts.partition_point(|&start| start <= offset);
-        let line = line.max(1);
-        (
-            line,
-            self.text[self.line_starts[line - 1]..offset]
-                .encode_utf16()
-                .count()
-                + 1,
-        )
-    }
-    pub fn diagnostic(
-        &self,
-        start: usize,
-        end: usize,
-        message: impl Into<String>,
-        suggestion: Option<String>,
-        severity: Option<Severity>,
-    ) -> Diagnostic {
-        let (line, column) = self.location(start);
-        let (end_line, end_column) = self.location(end);
-        Diagnostic {
-            rule_id: String::new(),
-            severity: severity.unwrap_or(Severity::Warning),
-            message: message.into(),
-            suggestion,
-            line,
-            column,
-            end_line: Some(end_line),
-            end_column: Some(end_column),
-            excerpt: self.lines.get(line - 1).unwrap_or(&"").trim().to_string(),
-            weight: None,
-        }
-    }
-}
-
-fn compiled(pattern: &str) -> Regex {
-    Regex::new(pattern).unwrap_or_else(|e| panic!("invalid rule regex {pattern}: {e}"))
-}
-fn meta(id: &str, description: &str, severity: Severity, rationale: Option<&str>) -> RuleMeta {
-    RuleMeta {
-        description: description.into(),
-        docs_url: format!("https://lawlint.com/rules/{id}"),
-        rationale: rationale.map(str::to_string),
-        severity: Some(severity),
-        examples: None,
-    }
-}
-struct PhraseRule {
-    id: String,
-    meta: RuleMeta,
-    items: Vec<(Regex, String, Option<String>)>,
-    severity: Severity,
-}
-impl Rule for PhraseRule {
-    fn id(&self) -> &str {
-        &self.id
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        self.items
-            .iter()
-            .flat_map(|(re, msg, suggestion)| {
-                re.find_iter(c.text)
-                    .map(|m| {
-                        c.diagnostic(
-                            m.start(),
-                            m.end(),
-                            msg,
-                            suggestion.clone(),
-                            Some(self.severity),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    }
-}
-struct DensityRule {
-    id: String,
-    meta: RuleMeta,
-    re: Regex,
-    threshold: f64,
-    message: String,
-}
-impl Rule for DensityRule {
-    fn id(&self) -> &str {
-        &self.id
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let matches: Vec<_> = self.re.find_iter(c.text).collect();
-        let words = c.text.split_whitespace().count().max(1) as f64;
-        let threshold = c
-            .options
-            .thresholds
-            .as_ref()
-            .and_then(|x| x.get(&self.id))
-            .copied()
-            .unwrap_or(self.threshold);
-        if matches.is_empty() || (matches.len() as f64 / words) * 1000.0 <= threshold {
-            return vec![];
-        }
-        let m = matches[0];
-        let count = matches.len();
-        let weight = ((count as f64 - (threshold * words) / 1000.0).ceil() as u32).max(1);
-        let mut diagnostic = c.diagnostic(
-            m.start(),
-            m.end().max(m.start() + 1),
-            format!(
-                "{} ({} occurrences in {} words)",
-                self.message, count, words as usize
-            ),
-            None,
-            None,
-        );
-        diagnostic.weight = Some(weight);
-        vec![diagnostic]
-    }
-}
-struct LeadingRule {
-    id: String,
-    meta: RuleMeta,
-    needles: Vec<Regex>,
-    message: String,
-    suggestion: String,
-}
-impl Rule for LeadingRule {
-    fn id(&self) -> &str {
-        &self.id
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let mut out = vec![];
-        for needle in &self.needles {
-            let re = compiled(&format!(
-                r#"(?i)(^|[.!?]["')\]]?\s+|\n\s*)({})"#,
-                needle.as_str()
-            ));
-            for m in re.captures_iter(c.text) {
-                let full = m.get(0).unwrap();
-                let target = m.get(2).unwrap();
-                out.push(c.diagnostic(
-                    target.start(),
-                    target.end(),
-                    &self.message,
-                    Some(self.suggestion.clone()),
-                    Some(Severity::Error),
-                ));
-                let _ = full;
-            }
-        }
-        out
-    }
-}
-
-fn phrase(
-    id: &str,
-    description: &str,
-    severity: Severity,
-    items: &[(&str, &str, Option<&str>)],
-) -> Box<dyn Rule> {
-    Box::new(PhraseRule {
-        id: id.into(),
-        meta: meta(
-            id,
-            description,
-            severity,
-            Some(
-                "Avoid patterns that can make otherwise clear prose sound formulaic or overworked.",
-            ),
-        ),
-        severity,
-        items: items
-            .iter()
-            .map(|(p, m, s)| (compiled(p), (*m).into(), s.map(str::to_string)))
-            .collect(),
-    })
-}
-fn density(
-    id: &str,
-    description: &str,
-    pattern: &str,
-    threshold: f64,
-    message: &str,
-) -> Box<dyn Rule> {
-    Box::new(DensityRule { id: id.into(), meta: meta(id, description, Severity::Warning, Some("Use this signal as a prompt to revise rhythm and density, not as a hard prohibition.")), re: compiled(pattern), threshold, message: message.into() })
-}
-fn leading(
-    id: &str,
-    description: &str,
-    needles: &[&str],
-    message: &str,
-    suggestion: &str,
-) -> Box<dyn Rule> {
-    Box::new(LeadingRule {
-        id: id.into(),
-        meta: meta(
-            id,
-            description,
-            Severity::Error,
-            Some("Start with the substance. Openers that add no information should be cut."),
-        ),
-        needles: needles.iter().map(|x| compiled(x)).collect(),
-        message: message.into(),
-        suggestion: suggestion.into(),
-    })
-}
-
-pub fn built_in_rules() -> Vec<Box<dyn Rule>> {
-    let p = |id, d, items| phrase(id, d, Severity::Warning, items);
-    vec![
-        p("no-ai-cliches","Flags common AI-writing clichés.", &[ (r"(?i)\bdelve\b","Avoid the AI-writing cliché “delve”.",Some("Use a direct verb such as “examine”.")),(r"(?i)\btapestry\b","Avoid the metaphor “tapestry” in analytical prose.",None),(r"(?i)\blandscape of\b","Avoid the vague phrase “landscape of”.",None),(r"(?i)\bin today's fast-paced world\b","Avoid this generic introductory phrase.",None),(r"(?i)\bit is important to note\b","State the important point directly.",None),(r"(?i)\bnavigate the complexities\b","Use a concrete description of the task or issue.",None)]),
-        density("no-robotic-transitions","Flags overuse of formulaic transitions",r"(?im)^\s*(Moreover|Furthermore|Additionally|In conclusion),",18.0,"Formulaic sentence transitions are overused."),
-        phrase("no-legalese","Flags archaic or unnecessarily formal legalese.",Severity::Warning,&[(r"(?i)\bhereinafter\b","Avoid “hereinafter”.",Some("Name the party or concept directly.")),(r"(?i)\baforementioned\b","Avoid “aforementioned”.",Some("Repeat the noun or use a clear reference.")),(r"(?i)\bpursuant to\b","Consider replacing “pursuant to”.",Some("Use “under” or “by”.")),(r"(?i)\bnotwithstanding the foregoing\b","Avoid “notwithstanding the foregoing”.",Some("State the exception directly.")),(r"(?i)\bherein\b|\bthereto\b","Avoid archaic legalese.",Some("Use a specific noun or pronoun."))]),
-        density("no-em-dash-overuse","Flags excessive em dashes",r"—",8.0,"Em dashes are used too frequently."),
-        density("no-rule-of-three","Flags dense repeated triplet constructions",r"(?i)\b\w+(?:\s+\w+){0,3},\s+\w+(?:\s+\w+){0,3},\s+and\s+\w+",12.0,"Repeated rule-of-three constructions can sound formulaic."),
-        phrase("no-not-only","Flags not-only/but-also constructions",Severity::Warning,&[(r"(?is)\bnot only\b[\s\S]{0,120}\bbut also\b","Avoid the formulaic “not only ... but also” construction.",None)]),
-        Box::new(SentenceLengthRule { meta: meta("sentence-length","Flags sentences that are difficult to read.",Severity::Warning,None) }),
-        Box::new(RepetitiveRule { meta: meta("no-repetitive-openers","Flags repeated sentence openings.",Severity::Warning,None) }),
-        density("no-passive-overuse","Flags likely passive-voice overuse",r"(?i)\b(?:is|are|was|were|be|been|being)\s+\w+(?:ed|en)\b",25.0,"Passive voice appears frequently; prefer active constructions where possible."),
-        density("no-hedging","Flags excessive hedging language",r"(?i)\b(?:arguably|it could be said|generally speaking|perhaps|likely)\b",10.0,"Reduce hedging and make the claim more direct."),
-        density("no-empty-emphasis","Flags overused empty emphasis words",r"(?i)\b(?:very|really|significantly|crucially)\b",12.0,"Replace emphasis with a specific fact or omit it."),
-        phrase("no-doublets","Flags legal doublets and triplets",Severity::Info,&[(r"(?i)\b(?:cease and desist|null and void|any and all)\b","This legal doublet is often unnecessary.",Some("Use one precise term."))]),
-        phrase("no-em-dash","Flags every em dash",Severity::Error,&[(r"—","Never use em dashes.",Some("Substitute a comma, period, colon, or parentheses depending on the relationship."))]),
-        Box::new(EnDashRule { meta: meta("no-en-dash","Flags en dashes outside numeric ranges.",Severity::Error,Some("En dashes belong only in numeric ranges such as 2020–2024. Elsewhere they read as stray punctuation.")) }),
-        phrase("no-semicolons","Flags semicolons.",Severity::Error,&[(";", "Prefer periods over semicolons.",Some("Two short sentences beat one stitched-together one."))]),
-        phrase("oxford-comma","Flags lists that omit the Oxford comma.",Severity::Warning,&[(r"(?i)\w+,\s+\w+(?:\s+\w+){0,3}\s+(?:and|or)\s+\w+","Use the Oxford comma before the final item in a list.",Some("Add a comma before the closing “and” or “or”."))]),
-        phrase("no-marketing-language","Flags marketing language, hype, and filler.",Severity::Error,&[(r"(?i)\bleverage\b","Avoid the marketing verb “leverage”.",Some("Use “use” or a concrete verb.")),(r"(?i)\bunlock\b","Avoid the hype verb “unlock”.",Some("Describe the actual outcome.")),(r"(?i)\bpowerful\b","Avoid the filler adjective “powerful”.",Some("State the specific capability.")),(r"(?i)\bseamless(?:ly)?\b","Avoid the hype word “seamless”.",Some("Describe what actually happens.")),(r"(?i)\brobust\b","Avoid the filler adjective “robust”.",Some("Name the concrete property.")),(r"(?i)\bcutting[- ]edge\b","Avoid the hype phrase “cutting-edge”.",Some("Say what it is.")),(r"(?i)\bdelve\b","Avoid “delve”.",Some("Use a direct verb such as “examine”.")),(r"(?i)\btapestry\b","Avoid the metaphor “tapestry”.",None),(r"(?i)\bin the realm of\b","Avoid “in the realm of”.",Some("Name the subject directly.")),(r"(?i)\bnavigate the landscape of\b","Avoid “navigate the landscape of”.",Some("Describe the task.")),(r"(?i)\bit['’]s worth noting that\b","State the point directly.",Some("Drop the throat-clearing.")),(r"(?i)\bat the end of the day\b","Avoid the filler phrase “at the end of the day”.",None)]),
-        leading("no-sycophantic-openers","Flags sycophantic openers",&["(?:great|good|excellent|fantastic|wonderful) question","what a (?:great|fascinating|wonderful|excellent|interesting) (?:question|problem|point)","that['’]s a (?:great|fascinating|wonderful|excellent) (?:question|point)"],"Skip the sycophantic opener and start with the substance.","Skip the sycophantic opener and start with the substance."),
-        leading("no-throat-clearing","Flags throat-clearing openers",&["let me think(?: about this)?","here['’]s my take","here['’]s what i think","i think it['’]s worth","before (?:i|we) (?:begin|start|dive in)"],"Cut the throat-clearing and lead with the point.","Cut the throat-clearing and lead with the point."),
-        density("no-parenthetical-asides","Flags frequent parenthetical asides",r"\([^)]*\)",15.0,"Parenthetical asides appear frequently; integrate important clauses into the sentence."),
-    ]
-}
-
-struct SentenceLengthRule {
-    meta: RuleMeta,
-}
-impl Rule for SentenceLengthRule {
-    fn id(&self) -> &str {
-        "sentence-length"
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let re = compiled(r"(?s)[^.!?]+[.!?]+|[^.!?]+$");
-        re.find_iter(c.text)
-            .filter_map(|m| {
-                let n = m.as_str().split_whitespace().count();
-                let t = c
-                    .options
-                    .thresholds
-                    .as_ref()
-                    .and_then(|x| x.get("sentence-length"))
-                    .copied()
-                    .unwrap_or(45.0);
-                (n as f64 > t).then(|| {
-                    c.diagnostic(
-                        m.start(),
-                        m.end(),
-                        format!("Sentence is {n} words; consider shortening it."),
-                        None,
-                        None,
-                    )
-                })
-            })
-            .collect()
-    }
-}
-struct RepetitiveRule {
-    meta: RuleMeta,
-}
-impl Rule for RepetitiveRule {
-    fn id(&self) -> &str {
-        "no-repetitive-openers"
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        let re = compiled(r"(?i)(?:^|[.!?]\s+)([A-Za-z']+)");
-        let s: Vec<_> = re.captures_iter(c.text).filter_map(|x| x.get(1)).collect();
-        (2..s.len())
-            .filter_map(|i| {
-                let a = s[i - 2].as_str().to_ascii_lowercase();
-                (a == s[i - 1].as_str().to_ascii_lowercase()
-                    && a == s[i].as_str().to_ascii_lowercase())
-                .then(|| {
-                    c.diagnostic(
-                        s[i - 2].start(),
-                        s[i - 2].end(),
-                        format!("Three consecutive sentences begin with “{a}”."),
-                        None,
-                        None,
-                    )
-                })
-            })
-            .collect()
-    }
-}
-struct EnDashRule {
-    meta: RuleMeta,
-}
-impl Rule for EnDashRule {
-    fn id(&self) -> &str {
-        "no-en-dash"
-    }
-    fn meta(&self) -> &RuleMeta {
-        &self.meta
-    }
-    fn check(&self, c: &RuleContext<'_>) -> Vec<Diagnostic> {
-        c.text
-            .match_indices('–')
-            .filter_map(|(i, _)| {
-                let b = c.text[..i].chars().next_back();
-                let a = c.text[i + 3..].chars().next();
-                (b.is_none_or(|x| !x.is_ascii_digit()) || a.is_none_or(|x| !x.is_ascii_digit()))
-                    .then(|| {
-                        c.diagnostic(
-                            i,
-                            i + 3,
-                            "Avoid en dashes except in numeric ranges (e.g. 2020–2024).",
-                            Some("Use a hyphen, or reword the sentence.".into()),
-                            Some(Severity::Error),
-                        )
-                    })
-            })
-            .collect()
-    }
-}
-
-pub fn strip_markdown_code_blocks(text: &str) -> String {
-    compiled(r"```[\s\S]*?```")
-        .replace_all(text, |m: &regex::Captures| {
-            m[0].replace(|c: char| c != '\n', " ")
-        })
-        .into_owned()
-}
-
+/// Lint with the built-in rule set, tiers 1–2 only.
 pub fn lint(text: &str, options: &LintOptions) -> LintResult {
-    let rules = built_in_rules();
-    lint_with_rules(text, options, &rules)
+    lint_with(text, options, built_in_set())
 }
 
-pub fn lint_with_rules(text: &str, options: &LintOptions, rules: &[Box<dyn Rule>]) -> LintResult {
-    let owned = if options.markdown.unwrap_or(false) {
-        strip_markdown_code_blocks(text)
-    } else {
-        text.to_string()
-    };
-    let text = owned.as_str();
-    let mut starts = vec![0];
-    for (i, c) in text.char_indices() {
-        if c == '\n' {
-            starts.push(i + 1)
-        }
-    }
-    let lines = text.split('\n').collect();
-    let ctx = RuleContext {
-        text,
-        lines,
-        line_starts: starts,
-        options,
-    };
-    let mut diagnostics = vec![];
-    for rule in rules {
-        if options
-            .disable
-            .as_ref()
-            .is_some_and(|x| x.iter().any(|id| id == rule.id()))
-            || options
-                .enable
-                .as_ref()
-                .is_some_and(|x| !x.iter().any(|id| id == rule.id()))
-        {
+/// Lint with an explicit rule set, tiers 1–2 only.
+pub fn lint_with(text: &str, options: &LintOptions, rules: &RuleSet) -> LintResult {
+    let doc = document::parse(text, options.markdown.unwrap_or(false));
+    let instances = rules.instantiate(options);
+    let diagnostics = dispatch::run(text, &doc, instances, options, rules);
+    scoring::finalize(text, diagnostics, &doc)
+}
+
+/// Lint including tier 3: plan_judge → run_judge (with cache) → ground →
+/// merge diagnostics (confidence floor + severity cap applied in scoring).
+pub fn lint_full(
+    text: &str,
+    options: &LintOptions,
+    rules: &RuleSet,
+    judge: &dyn Judge,
+    cache: Option<&dyn JudgeCache>,
+) -> LintResult {
+    let doc = document::parse(text, options.markdown.unwrap_or(false));
+    let instances = rules.instantiate(options);
+    // Rubrics (plus each rule's scope, for masking grounded findings) from
+    // the (enable/disable/severity-resolved) instances, captured before the
+    // dispatcher consumes them.
+    let fragments: Vec<(Scope, RubricFragment)> = instances
+        .iter()
+        .filter_map(|r| r.rubric().cloned().map(|f| (r.meta().scope, f)))
+        .collect();
+    let mut diagnostics = dispatch::run(text, &doc, instances, options, rules);
+
+    let refs: Vec<&RubricFragment> = fragments.iter().map(|(_, f)| f).collect();
+    let reqs = plan_judge(&doc, text, &refs);
+    let (grounded, stats) = run_judge(judge, cache, &reqs, text);
+
+    let suppressions = dispatch::Suppressions::new(text, rules);
+    let mut tier3 = Vec::new();
+    for (_req, finding, span) in grounded {
+        let Some((scope, fragment)) = fragments.iter().find(|(_, f)| f.rule.0 == finding.rule)
+        else {
+            continue; // run_judge already discards foreign rules; belt and suspenders
+        };
+        // Tier-3 diagnostics obey the same scope mask as tiers 1–2 (§8):
+        // grounding can land a quote in a citation sentence, a code block, or
+        // non-block source the rule may never report into.
+        let mask = dispatch::scope_mask(*scope, text, &doc);
+        if !dispatch::mask_contains(&mask, &span) {
             continue;
         }
-        for mut d in rule.check(&ctx) {
-            d.rule_id = rule.id().into();
-            if let Some(s) = options.severity.as_ref().and_then(|x| x.get(rule.id())) {
-                d.severity = *s
-            }
-            diagnostics.push(d)
+        if suppressions.suppressed(&fragment.rule, span.start) {
+            continue;
         }
+        let message = if finding.explanation.trim().is_empty() {
+            format!("Flagged by {}.", fragment.rule.0)
+        } else {
+            finding.explanation.clone()
+        };
+        let fix = finding.suggested_rewrite.as_ref().map(|replacement| Fix {
+            edits: vec![Edit { range: span, replacement: replacement.clone() }],
+            applicability: Applicability::MaybeIncorrect, // tier-3 fixes always
+        });
+        tier3.push(Diagnostic {
+            rule_id: fragment.rule.clone(),
+            severity: fragment.severity,
+            tier: Tier::Inferential,
+            span,
+            message,
+            line: 0,
+            column: 0,
+            end_line: None,
+            end_column: None,
+            excerpt: String::new(),
+            suggestion: finding.suggested_rewrite.clone(),
+            weight: None,
+            confidence: Some(finding.confidence),
+            fix,
+        });
     }
-    let word_re = compiled(r"(?u)\b[\w’'-]+\b");
-    let word_count = word_re.find_iter(text).count();
-    let sentence_count = text
-        .split(['.', '!', '?'])
-        .filter(|s| !s.trim().is_empty())
-        .count();
-    let penalty: usize = diagnostics
-        .iter()
-        .map(|d| {
-            let points = match d.severity {
-                Severity::Error => 5,
-                Severity::Warning => 3,
-                Severity::Info => 1,
-            };
-            points * d.weight.unwrap_or(1) as usize
-        })
-        .sum();
-    let density = (penalty as f64 / word_count.max(1) as f64) * 1000.0;
-    let score = (100.0 * (-density / 100.0).exp()).round().clamp(0.0, 100.0) as i32;
-    LintResult {
-        diagnostics,
-        stats: Stats {
-            word_count,
-            sentence_count,
-            score,
-        },
-    }
+    let floor = options
+        .judge
+        .as_ref()
+        .and_then(|j| j.floor)
+        .unwrap_or(DEFAULT_CONFIDENCE_FLOOR);
+    diagnostics.extend(scoring::gate_tier3(tier3, floor));
+
+    let mut result = scoring::finalize(text, diagnostics, &doc);
+    result.judge = Some(stats);
+    result
 }
+
+/// Apply MachineApplicable fixes: non-overlapping, span order, single pass.
+pub fn apply_fixes(text: &str, diagnostics: &[Diagnostic]) -> String {
+    let mut edits: Vec<&Edit> = diagnostics
+        .iter()
+        .filter_map(|d| d.fix.as_ref())
+        .filter(|f| f.applicability == Applicability::MachineApplicable)
+        .flat_map(|f| f.edits.iter())
+        .filter(|e| e.range.start <= e.range.end && e.range.end <= text.len())
+        .collect();
+    edits.sort_by_key(|e| (e.range.start, e.range.end));
+
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0usize;
+    for edit in edits {
+        if edit.range.start < pos {
+            continue; // overlaps an already-applied edit: skip
+        }
+        out.push_str(&text[pos..edit.range.start]);
+        out.push_str(&edit.replacement);
+        pos = edit.range.end;
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+// ------------------------------------------------------------------------
+// Ported old test suite (§12) + integration tests.
+// ------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn has(text: &str, id: &str) -> bool {
         lint(text, &LintOptions::default())
             .diagnostics
             .iter()
-            .any(|d| d.rule_id == id)
+            .any(|d| d.rule_id.0 == id)
     }
+
+    // ---- ported: registry ----------------------------------------------
+
     #[test]
     fn registry() {
-        assert_eq!(built_in_rules().len(), 20);
-        assert!(built_in_rules().iter().all(|r| r.meta().severity.is_some()));
+        // Old suite: 20 bespoke rules. Now 22 (two new inferential rules).
+        let rs = RuleSet::built_in();
+        assert_eq!(rs.metas().len(), 22);
+        assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
+        assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
+
+    // ---- ported: basics ------------------------------------------------
+
     #[test]
     fn basics() {
-        assert!(has("We should delve into this issue.", "no-ai-cliches"));
-        assert!(has("The parties are Alice, Bob and Carol.", "oxford-comma"));
-        assert!(!has("The range spans 2020–2024.", "no-en-dash"));
+        assert!(has("We should delve into this issue.", "core/no-ai-cliches"));
+        assert!(has("The parties are Alice, Bob and Carol.", "core/oxford-comma"));
+        assert!(!has("The range spans 2020–2024.", "core/no-en-dash"));
     }
+
+    #[test]
+    fn en_dash_outside_numeric_range_flagged() {
+        assert!(has("The court–ordered remedy failed.", "core/no-en-dash"));
+        // Old EnDashRule required a digit IMMEDIATELY adjacent on each side:
+        // spaced ranges are flagged.
+        assert!(has("The years 2020 – 2024 mattered.", "core/no-en-dash"));
+    }
+
+    // ---- ported: options -----------------------------------------------
+
     #[test]
     fn options() {
+        // Legacy flat id resolves through the alias map.
         let o = LintOptions {
             disable: Some(vec!["no-ai-cliches".into()]),
             ..Default::default()
@@ -536,16 +224,38 @@ mod tests {
         assert!(lint("delve", &o)
             .diagnostics
             .iter()
-            .all(|d| d.rule_id != "no-ai-cliches"));
+            .all(|d| d.rule_id.0 != "core/no-ai-cliches"));
     }
 
     #[test]
     fn accepts_explicit_rule_lists() {
-        let rules = built_in_rules();
-        let result = lint_with_rules("We delve.", &LintOptions::default(), &rules[..1]);
+        // Old suite sliced `built_in_rules()`; the equivalent is an `enable`
+        // allowlist over the same rule set.
+        let o = LintOptions {
+            enable: Some(vec!["no-ai-cliches".into()]),
+            ..Default::default()
+        };
+        let result = lint("We delve.", &o);
         assert_eq!(result.diagnostics.len(), 1);
-        assert_eq!(result.diagnostics[0].rule_id, "no-ai-cliches");
+        assert_eq!(result.diagnostics[0].rule_id.0, "core/no-ai-cliches");
     }
+
+    #[test]
+    fn severity_override_applies_via_flat_id() {
+        let o = LintOptions {
+            severity: Some(
+                [("no-ai-cliches".to_string(), Severity::Suggestion)]
+                    .into_iter()
+                    .collect(),
+            ),
+            enable: Some(vec!["no-ai-cliches".into()]),
+            ..Default::default()
+        };
+        let result = lint("We delve.", &o);
+        assert_eq!(result.diagnostics[0].severity, Severity::Suggestion);
+    }
+
+    // ---- ported: fixture parity ----------------------------------------
 
     #[test]
     fn fixture_parity() {
@@ -557,57 +267,74 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            bad_result.stats,
-            Stats {
-                word_count: 70,
-                sentence_count: 3,
-                score: 2
-            }
-        );
+        // word_count and score match the old engine exactly.
+        assert_eq!(bad_result.stats.word_count, 70);
+        assert_eq!(bad_result.stats.score, 2);
+        // sentence_count was 3 under the old `.!?` splitter; legal-aware
+        // segmentation counts the heading "Agreement" as its own sentence → 4.
+        assert_eq!(bad_result.stats.sentence_count, 4);
+        // Same diagnostic multiset as the old engine, now in span order.
         assert_eq!(
             bad_result
                 .diagnostics
                 .iter()
-                .map(|d| d.rule_id.as_str())
+                .map(|d| d.rule_id.0.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "no-ai-cliches",
-                "no-ai-cliches",
-                "no-ai-cliches",
-                "no-legalese",
-                "no-legalese",
-                "no-passive-overuse",
-                "no-doublets",
-                "no-doublets",
-                "oxford-comma",
-                "no-marketing-language",
+                "core/no-ai-cliches",        // "It is important to note"
+                "core/no-ai-cliches",        // "delve"
+                "core/no-marketing-language", // "delve"
+                "core/no-ai-cliches",        // "landscape of"
+                "core/no-legalese",          // "Pursuant to"
+                "core/no-legalese",          // "aforementioned"
+                "core/oxford-comma",         // "terms, the parties … and …"
+                "core/no-doublets",          // "cease and desist"
+                "core/no-doublets",          // "any and all"
+                "core/no-passive-overuse",   // "be flagged" (density span)
             ]
         );
+
         let clean = include_str!("../tests/fixtures/clean.txt");
         let clean_result = lint(clean, &LintOptions::default());
-        assert!(clean_result.diagnostics.is_empty());
-        assert_eq!(
-            clean_result.stats,
-            Stats {
-                word_count: 20,
-                sentence_count: 2,
-                score: 100
-            }
-        );
+        assert!(clean_result.diagnostics.is_empty(), "{:?}", clean_result.diagnostics);
+        assert_eq!(clean_result.stats.word_count, 20);
+        assert_eq!(clean_result.stats.sentence_count, 2);
+        assert_eq!(clean_result.stats.score, 100);
     }
+
+    #[test]
+    fn old_info_severity_is_now_suggestion() {
+        // no-doublets was Severity::Info; it must surface as "suggestion".
+        let result = lint("The order is null and void.", &LintOptions::default());
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/no-doublets")
+            .expect("doublet flagged");
+        assert_eq!(d.severity, Severity::Suggestion);
+        let v = serde_json::to_value(d).unwrap();
+        assert_eq!(v["severity"], "suggestion");
+    }
+
+    // ---- ported: JSON field-name contract ------------------------------
 
     #[test]
     fn json_shape_uses_typescript_names() {
         let result = lint("We delve.", &LintOptions::default());
-        let json = serde_json::to_value(result).unwrap();
-        assert_eq!(json["diagnostics"][0]["ruleId"], "no-ai-cliches");
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["diagnostics"][0]["ruleId"], "core/no-ai-cliches");
         assert_eq!(json["diagnostics"][0]["endLine"], 1);
         assert_eq!(json["diagnostics"][0]["endColumn"], 9);
+        assert_eq!(json["diagnostics"][0]["severity"], "warning");
         assert_eq!(json["stats"]["wordCount"], 2);
         assert_eq!(json["stats"]["sentenceCount"], 1);
         assert!(json["diagnostics"][0].get("weight").is_none());
+        assert!(json["diagnostics"][0].get("confidence").is_none());
+        // Tiers 1-2 only: no judge stats key at all.
+        assert!(json.get("judge").is_none());
     }
+
+    // ---- ported: scoring golden parity ---------------------------------
 
     fn scoring_sentences(count: usize) -> String {
         let openers = [
@@ -647,9 +374,9 @@ mod tests {
             result
                 .diagnostics
                 .iter()
-                .map(|d| d.rule_id.as_str())
+                .map(|d| d.rule_id.0.as_str())
                 .collect::<Vec<_>>(),
-            vec!["no-ai-cliches"]
+            vec!["core/no-ai-cliches"]
         );
         assert_eq!(result.stats.score, 74);
     }
@@ -686,10 +413,442 @@ mod tests {
         let mild = lint(&text(3), &LintOptions::default());
         let heavy = lint(&text(12), &LintOptions::default());
 
-        assert_eq!(mild.diagnostics[0].rule_id, "no-hedging");
+        // GOLDEN PARITY (non-negotiable): weights 2/11, scores 55/4.
+        assert_eq!(mild.diagnostics[0].rule_id.0, "core/no-hedging");
         assert_eq!(mild.diagnostics[0].weight, Some(2));
         assert_eq!(heavy.diagnostics[0].weight, Some(11));
         assert_eq!(mild.stats.score, 55);
         assert_eq!(heavy.stats.score, 4);
+    }
+
+    // ---- ported: bespoke rule behaviors --------------------------------
+
+    #[test]
+    fn leading_rules_fire_only_at_sentence_start() {
+        assert!(has("Great question! The answer is no.", "core/no-sycophantic-openers"));
+        assert!(has(
+            "Fine. Here's my take on the motion.",
+            "core/no-throat-clearing"
+        ));
+        assert!(!has(
+            "That was a great question to raise.",
+            "core/no-sycophantic-openers"
+        ));
+    }
+
+    #[test]
+    fn sentence_length_uses_threshold_override() {
+        let text = "one two three four five six seven eight nine ten.";
+        assert!(!has(text, "core/sentence-length"));
+        let o = LintOptions {
+            thresholds: Some([("sentence-length".to_string(), 5.0)].into_iter().collect()),
+            ..Default::default()
+        };
+        let result = lint(text, &o);
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/sentence-length")
+            .expect("long sentence flagged");
+        assert_eq!(d.message, "Sentence is 10 words; consider shortening it.");
+    }
+
+    #[test]
+    fn repetitive_openers_fire_and_report_last_sentence() {
+        let text = "The court erred. The record shows this plainly. The remedy is reversal.";
+        let result = lint(text, &LintOptions::default());
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/no-repetitive-openers")
+            .expect("repetitive openers flagged");
+        assert_eq!(d.message, "Three consecutive sentences begin with “the”.");
+    }
+
+    #[test]
+    fn legal_citations_do_not_split_sentences() {
+        // Old splitter counted "See Roe v. Wade, 410 U.S. 113 (1973)." as
+        // several sentences; legal segmentation keeps it as one (citation)
+        // sentence — sentence_count expectations shift per §12.
+        let text = "See Roe v. Wade, 410 U.S. 113 (1973). The court held that this applies.";
+        let result = lint(text, &LintOptions::default());
+        assert_eq!(result.stats.sentence_count, 2);
+    }
+
+    #[test]
+    fn markdown_code_blocks_are_not_linted_and_not_counted() {
+        let text = "Clean prose here.\n\n```\nwe delve; pursuant to — herein\n```\n";
+        let o = LintOptions {
+            markdown: Some(true),
+            ..Default::default()
+        };
+        let result = lint(text, &o);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert_eq!(result.stats.word_count, 3);
+    }
+
+    // ---- suppression e2e ------------------------------------------------
+
+    #[test]
+    fn suppression_comments_silence_rules() {
+        let text = "<!-- lawlint-disable-next-line no-ai-cliches -->\nWe delve into it.\nWe delve again.";
+        let o = LintOptions {
+            markdown: Some(true),
+            enable: Some(vec!["no-ai-cliches".into()]),
+            ..Default::default()
+        };
+        let result = lint(text, &o);
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].line, 3);
+    }
+
+    // ---- apply_fixes ----------------------------------------------------
+
+    #[test]
+    fn apply_fixes_machine_applicable_in_span_order() {
+        let text = "We leverage and delve daily.";
+        let result = lint(text, &LintOptions::default());
+        // Built-ins carry no `fix:` strings yet; simulate two machine fixes
+        // over real diagnostics plus one MaybeIncorrect that must be ignored.
+        let mk = |start: usize, end: usize, replacement: &str, applicability| Diagnostic {
+            rule_id: RuleId("core/x".into()),
+            severity: Severity::Error,
+            tier: Tier::Static,
+            span: TextRange { start, end },
+            message: "m".into(),
+            line: 0,
+            column: 0,
+            end_line: None,
+            end_column: None,
+            excerpt: String::new(),
+            suggestion: None,
+            weight: None,
+            confidence: None,
+            fix: Some(Fix {
+                edits: vec![Edit {
+                    range: TextRange { start, end },
+                    replacement: replacement.into(),
+                }],
+                applicability,
+            }),
+        };
+        let lev = text.find("leverage").unwrap();
+        let del = text.find("delve").unwrap();
+        let diags = vec![
+            // Out of span order on purpose.
+            mk(del, del + 5, "dig", Applicability::MachineApplicable),
+            mk(lev, lev + 8, "use", Applicability::MachineApplicable),
+            mk(0, 2, "They", Applicability::MaybeIncorrect),
+        ];
+        assert_eq!(apply_fixes(text, &diags), "We use and dig daily.");
+        // No fixes → identity.
+        assert_eq!(apply_fixes(text, &result.diagnostics), text);
+    }
+
+    #[test]
+    fn apply_fixes_skips_overlapping_edits() {
+        let mk = |start: usize, end: usize, replacement: &str| Diagnostic {
+            rule_id: RuleId("core/x".into()),
+            severity: Severity::Error,
+            tier: Tier::Static,
+            span: TextRange { start, end },
+            message: "m".into(),
+            line: 0,
+            column: 0,
+            end_line: None,
+            end_column: None,
+            excerpt: String::new(),
+            suggestion: None,
+            weight: None,
+            confidence: None,
+            fix: Some(Fix {
+                edits: vec![Edit {
+                    range: TextRange { start, end },
+                    replacement: replacement.into(),
+                }],
+                applicability: Applicability::MachineApplicable,
+            }),
+        };
+        let text = "abcdef";
+        // Second edit overlaps the first → skipped.
+        let diags = vec![mk(0, 4, "X"), mk(2, 6, "Y")];
+        assert_eq!(apply_fixes(text, &diags), "Xef");
+        // Out-of-bounds edit ignored entirely.
+        let diags = vec![mk(0, 99, "X")];
+        assert_eq!(apply_fixes(text, &diags), "abcdef");
+    }
+
+    // ---- tier-3 end-to-end ----------------------------------------------
+
+    fn finding(rule: &str, quote: &str, confidence: f32, rewrite: Option<&str>) -> JudgeFinding {
+        JudgeFinding {
+            rule: rule.to_string(),
+            quote: quote.to_string(),
+            explanation: "hedge with no stated uncertainty".into(),
+            confidence,
+            suggested_rewrite: rewrite.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn tier3_end_to_end_grounded_findings_become_diagnostics() {
+        let text = "It could perhaps be argued that the claim fails. Damages total $12,000.";
+        let judge = MockJudge::new().respond(
+            "could perhaps",
+            vec![
+                finding(
+                    "core/empty-hedge",
+                    "It could perhaps be argued that",
+                    0.9,
+                    Some("The claim fails because"),
+                ),
+                // Below the 0.6 floor: dropped by scoring.
+                finding("core/empty-hedge", "the claim fails", 0.3, None),
+            ],
+        );
+        let result = lint_full(
+            text,
+            &LintOptions::default(),
+            built_in_set(),
+            &judge,
+            None,
+        );
+        let tier3: Vec<&Diagnostic> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.tier == Tier::Inferential)
+            .collect();
+        assert_eq!(tier3.len(), 1);
+        let d = tier3[0];
+        assert_eq!(d.rule_id.0, "core/empty-hedge");
+        assert_eq!(d.span.slice(text), "It could perhaps be argued that");
+        // Indistinguishable downstream: positions/excerpt filled like any
+        // static diagnostic.
+        assert_eq!(d.line, 1);
+        assert_eq!(d.column, 1);
+        assert!(!d.excerpt.is_empty());
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.confidence, Some(0.9));
+        // Tier-3 fixes are always MaybeIncorrect.
+        assert_eq!(d.fix.as_ref().unwrap().applicability, Applicability::MaybeIncorrect);
+        assert_eq!(d.suggestion.as_deref(), Some("The claim fails because"));
+        // Judge stats surfaced.
+        let stats = result.judge.as_ref().unwrap();
+        assert_eq!(stats.grounded, 2);
+        assert!(stats.chunks >= 1);
+    }
+
+    #[test]
+    fn tier3_severity_capped_at_warning_even_with_error_override() {
+        let text = "It could perhaps be argued that the claim fails.";
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 0.95, None)],
+        );
+        let o = LintOptions {
+            severity: Some(
+                [("empty-hedge".to_string(), Severity::Error)]
+                    .into_iter()
+                    .collect(),
+            ),
+            enable: Some(vec!["empty-hedge".into()]),
+            ..Default::default()
+        };
+        let result = lint_full(text, &o, built_in_set(), &judge, None);
+        assert_eq!(result.diagnostics.len(), 1);
+        // Rule severity overridden to Error, but tier-3 caps at Warning.
+        assert_eq!(result.diagnostics[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn tier3_confidence_floor_from_judge_options() {
+        let text = "It could perhaps be argued that the claim fails.";
+        let mk_judge = || {
+            MockJudge::new().respond(
+                "",
+                vec![finding("core/empty-hedge", "could perhaps be argued", 0.7, None)],
+            )
+        };
+        let base = LintOptions {
+            enable: Some(vec!["empty-hedge".into()]),
+            ..Default::default()
+        };
+        // Default floor 0.6: kept.
+        let result = lint_full(text, &base, built_in_set(), &mk_judge(), None);
+        assert_eq!(result.diagnostics.len(), 1);
+        // Raised floor 0.8: dropped.
+        let strict = LintOptions {
+            judge: Some(JudgeOptions {
+                floor: Some(0.8),
+                ..Default::default()
+            }),
+            ..base.clone()
+        };
+        let result = lint_full(text, &strict, built_in_set(), &mk_judge(), None);
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn tier3_diagnostics_score_confidence_weighted() {
+        // 100 words, only tier-3: one Warning finding at confidence 1.0 →
+        // penalty 3 → density 30 → score 74; at 0.5 floor and confidence
+        // 0.6 → penalty 1.8 → density 18 → round(100·e^-0.18) = 84.
+        let filler: String = (0..93).map(|i| format!("w{i} ")).collect();
+        let text = format!("{filler}It could perhaps be argued that fine.");
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 1.0, None)],
+        );
+        let o = LintOptions {
+            enable: Some(vec!["empty-hedge".into()]),
+            ..Default::default()
+        };
+        let result = lint_full(&text, &o, built_in_set(), &judge, None);
+        assert_eq!(result.stats.word_count, 100);
+        assert_eq!(result.stats.score, 74);
+
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 0.6, None)],
+        );
+        let result = lint_full(&text, &o, built_in_set(), &judge, None);
+        assert_eq!(result.stats.score, 84);
+    }
+
+    fn inferential_set(scope: &str, granularity: &str) -> RuleSet {
+        let manifest =
+            loader::parse_manifest("style.yaml", "name: core\nversion: 0.1.0\n").unwrap();
+        let yaml = format!(
+            "id: judge-me\nengine: inferential\nscope: {scope}\nseverity: warning\n\
+             granularity: {granularity}\nrubric: Flag it.\n\
+             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n"
+        );
+        let rule = loader::parse_rule("r.yaml", &yaml).unwrap();
+        RuleSet::from_parts(&manifest, vec![("r.yaml".to_string(), rule)]).unwrap()
+    }
+
+    #[test]
+    fn tier3_prose_scope_excludes_citation_sentences() {
+        // Regression: grounded judge findings used to bypass the scope mask,
+        // so a prose-scope inferential rule could report inside a citation
+        // sentence that tiers 1–2 may never touch.
+        let rs = inferential_set("prose", "sentence");
+        let text = "See Roe v. Wade, 410 U.S. 113 (1973). The claim fails badly.";
+        let judge = MockJudge::new()
+            .respond("", vec![finding("core/judge-me", "Roe v. Wade", 0.9, None)]);
+        let result = lint_full(text, &LintOptions::default(), &rs, &judge, None);
+        assert!(
+            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            "{:?}",
+            result.diagnostics
+        );
+        // Control: the same rule may report in the non-citation sentence.
+        let judge = MockJudge::new()
+            .respond("", vec![finding("core/judge-me", "claim fails badly", 0.9, None)]);
+        let result = lint_full(text, &LintOptions::default(), &rs, &judge, None);
+        assert_eq!(
+            result.diagnostics.iter().filter(|d| d.tier == Tier::Inferential).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn tier3_text_scope_excludes_code_blocks() {
+        // A document-granularity rubric sends the WHOLE source (code blocks
+        // included) to the judge; a grounded quote landing inside a code
+        // block must still be masked out for the default text scope.
+        let rs = inferential_set("text", "document");
+        let text = "Fine prose here.\n\n```\nsecret code target\n```\n";
+        let judge = MockJudge::new()
+            .respond("", vec![finding("core/judge-me", "secret code target", 0.9, None)]);
+        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let result = lint_full(text, &o, &rs, &judge, None);
+        assert!(
+            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn tier3_findings_never_land_in_invisible_html_blocks() {
+        // HTML blocks emit no Block: they must not be merged into judge
+        // chunks, and even a grounded span there would fail the scope mask.
+        let text =
+            "Para one is fine.\n\n<div>hidden could perhaps be argued html</div>\n\nPara two is fine.";
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+        );
+        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let result = lint_full(text, &o, built_in_set(), &judge, None);
+        assert!(
+            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    // ---- markdown tables -------------------------------------------------
+
+    #[test]
+    fn markdown_tables_are_not_linted_as_prose() {
+        // Regression: a pipe table used to parse as one giant Paragraph with
+        // no sentence terminators — core/sentence-length fired ("Sentence is
+        // 56 words") and the score sank for a document that is only a table.
+        let mut src = String::from("| column one | column two |\n|---|---|\n");
+        for i in 0..5 {
+            src.push_str(&format!("| row {i} cell alpha | row {i} cell beta |\n"));
+        }
+        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let result = lint(&src, &o);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert_eq!(result.stats.score, 100);
+    }
+
+    #[test]
+    fn tier3_respects_suppression_comments() {
+        let text =
+            "<!-- lawlint-disable-next-line empty-hedge -->\nIt could perhaps be argued that the claim fails.";
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+        );
+        let o = LintOptions {
+            markdown: Some(true),
+            enable: Some(vec!["empty-hedge".into()]),
+            ..Default::default()
+        };
+        let result = lint_full(text, &o, built_in_set(), &judge, None);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn tier3_disabled_rule_produces_no_requests() {
+        let text = "It could perhaps be argued that the claim fails.";
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+        );
+        let o = LintOptions {
+            disable: Some(vec!["empty-hedge".into(), "padded-elaboration".into()]),
+            ..Default::default()
+        };
+        let result = lint_full(text, &o, built_in_set(), &judge, None);
+        assert_eq!(judge.calls(), 0); // no rubrics → no chunks → no calls
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.tier != Tier::Inferential));
+        assert_eq!(result.judge.as_ref().unwrap().chunks, 0);
+    }
+
+    #[test]
+    fn lint_result_round_trips_through_json() {
+        let result = lint("We delve — again; furthermore.", &LintOptions::default());
+        let json = serde_json::to_string(&result).unwrap();
+        let back: LintResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.diagnostics.len(), result.diagnostics.len());
+        assert_eq!(back.stats.word_count, result.stats.word_count);
     }
 }
