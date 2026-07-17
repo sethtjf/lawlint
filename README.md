@@ -36,6 +36,10 @@ console.log(result.stats.score, result.diagnostics);
 const fileResult = await lintFile("document.txt");
 ```
 
+In browsers (or other environments without Node built-ins), import from
+`lawlint/browser` — same API minus `lintFile` and config discovery. The
+website's [playground](https://lawlint.dev/playground) is built on it.
+
 ## Monorepo layout
 
 - `packages/lawlint` — published TypeScript SDK and `lawlint` CLI.
