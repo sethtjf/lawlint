@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/sethtjf/lawlint/compare/v0.2.0...v0.3.0) (2026-07-17)
+
+
+### Features
+
+* **cli:** add --version, auto update-check, and self-update ([#21](https://github.com/sethtjf/lawlint/issues/21)) ([cd61088](https://github.com/sethtjf/lawlint/commit/cd6108860f2eab31e930af906538653890f8bfc2))
+
 ## [0.2.0](https://github.com/sethtjf/lawlint/compare/v0.1.0...v0.2.0) (2026-07-17)
 
 
