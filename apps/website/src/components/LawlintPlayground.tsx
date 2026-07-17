@@ -329,7 +329,7 @@ export default function LawlintPlayground() {
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
-            disabled={!hasText}
+            disabled={!hasText || !latestResult}
             onClick={() =>
               downloadReport(
                 markdownReport(),
@@ -343,7 +343,7 @@ export default function LawlintPlayground() {
             Download Markdown
           </Button>
           <Button
-            disabled={!hasText}
+            disabled={!hasText || !latestResult}
             onClick={() =>
               downloadReport(
                 jsonReport(),
@@ -356,7 +356,12 @@ export default function LawlintPlayground() {
           >
             Download JSON
           </Button>
-          <Button disabled={!hasText} onClick={() => void copyJson()} size="sm" variant="outline">
+          <Button
+            disabled={!hasText || !latestResult}
+            onClick={() => void copyJson()}
+            size="sm"
+            variant="outline"
+          >
             {copied ? "Copied" : "Copy JSON"}
           </Button>
           <Button onClick={clear} size="sm" variant="ghost">
