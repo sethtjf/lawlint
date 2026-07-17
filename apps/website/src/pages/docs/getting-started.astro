@@ -5,12 +5,15 @@ import Layout from "../../layouts/Layout.astro";
   <article class="doc">
     <div class="eyebrow">Docs / 01</div>
     <h1>Getting started</h1>
-    <p class="intro">Build the native lawlint binary, point it at a document, and get a focused list of things worth revising.</p>
-    <h2>Build the CLI</h2>
+    <p class="intro">Install the native lawlint CLI or desktop app, point it at a document, and get a focused list of things worth revising.</p>
+    <h2>Install lawlint</h2>
+    <pre>curl -fsSL https://lawlint.dev/install.sh | sh</pre>
+    <p>For Windows, run <code>irm https://lawlint.dev/install.ps1 | iex</code> in PowerShell. Prefer a visual workflow? <a href="/download">Download the desktop app</a> for macOS or Windows.</p>
+    <h2>Build from source</h2>
     <pre>git clone https://github.com/sethtjf/lawlint
 cd lawlint
 cargo build --release -p lawlint-cli</pre>
-    <p>One-line installers and a download page are coming in the next release.</p>
+    <p>Building from source is useful for development or for platforms without a published archive.</p>
     <h2>Run the CLI</h2>
     <pre>./target/release/lawlint contract.md
 cat memo.txt | ./target/release/lawlint - --format json</pre>

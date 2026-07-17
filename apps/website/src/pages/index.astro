@@ -6,7 +6,7 @@ import Layout from "../layouts/Layout.astro";
     <div class="eyebrow">01 / A text linter for the age of generated prose</div>
     <h1>Make machine-written text sound human.</h1>
     <p class="lede">lawlint finds the clichés, legalese, and rhythmic tells that make AI-generated writing feel synthetic — then points toward something clearer.</p>
-    <div class="actions"><a class="button" href="/playground">Try the playground</a><a class="button secondary" href="/docs/getting-started">Read the docs</a><a class="button secondary" href="/rules">Browse rules</a></div>
+    <div class="actions"><a class="button" href="/playground">Try the playground</a><a class="button secondary" href="/download">Download lawlint</a><a class="button secondary" href="/docs/getting-started">Read the docs</a></div>
   </section>
   <section class="demo rule">
     <div class="section-label">02 / In practice</div>
@@ -20,8 +20,8 @@ import Layout from "../layouts/Layout.astro";
     </div>
   </section>
   <section class="install rule">
-    <div><div class="section-label">03 / Start small</div><h2>One package. Two ways in.</h2></div>
-    <div><pre>cargo build --release -p lawlint-cli</pre><p>Build the native CLI, or bring the Rust SDK into your own writing tools.</p><a href="/docs/sdk">Explore the SDK →</a></div>
+    <div><div class="section-label">03 / Start small</div><h2>Native tools, no account.</h2></div>
+    <div><pre>curl -fsSL https://lawlint.dev/install.sh | sh</pre><p>Install the native CLI in one line, or download the desktop app for a focused visual review.</p><a href="/download">See all downloads →</a> <a href="/docs/sdk">Explore the SDK →</a></div>
   </section>
 </Layout>
 <style>

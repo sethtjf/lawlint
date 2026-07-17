@@ -1,0 +1,212 @@
+name: Release
+
+# Required repository secrets for publishing:
+# R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, and R2_BUCKET.
+# GITHUB_TOKEN is provided automatically by GitHub Actions.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the leading v (for example, 1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  DOWNLOAD_BASE_URL: https://downloads.lawlint.dev
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cli:
+    name: CLI ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build CLI
+        run: cargo build --release -p lawlint-cli --target ${{ matrix.target }}
+      - name: Package Unix CLI
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/lawlint-${{ matrix.target }}"
+          mkdir -p "$package_dir"
+          cp "target/${{ matrix.target }}/release/lawlint" "$package_dir/lawlint"
+          cp README.md LICENSE "$package_dir/"
+          mkdir -p dist
+          tar -czf "dist/lawlint-${{ matrix.target }}.tar.gz" -C "$package_dir" lawlint README.md LICENSE
+      - name: Package Windows CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $env:RUNNER_TEMP "lawlint-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/lawlint.exe" (Join-Path $packageDir "lawlint.exe")
+          Copy-Item README.md, LICENSE $packageDir
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$packageDir/*" -DestinationPath "dist/lawlint-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Build and stage desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+          args: --target ${{ matrix.target }}
+      - name: Collect macOS bundles
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg" -type f -name '*.dmg' -exec cp {} "dist/lawlint-desktop-${{ matrix.target }}.dmg" \;
+      - name: Collect Windows bundles
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $nsis = Get-ChildItem "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
+          $msi = Get-ChildItem "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi" | Select-Object -First 1
+          Copy-Item $nsis.FullName "dist/lawlint-desktop-${{ matrix.target }}.exe"
+          Copy-Item $msi.FullName "dist/lawlint-desktop-${{ matrix.target }}.msi"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish R2 assets and GitHub Release
+    needs: [cli, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: "*"
+          merge-multiple: true
+      - name: Validate release configuration
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ACCOUNT_ID R2_BUCKET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required release secret: $name"
+              exit 1
+            fi
+          done
+      - name: Upload assets to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          VERSION_INPUT: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${VERSION_INPUT:-${GITHUB_REF_NAME#v}}"
+          if [ -z "$version" ] || [ "$version" = "$GITHUB_REF_NAME" ]; then
+            echo "::error::Could not derive a release version from the tag or workflow input."
+            exit 1
+          fi
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          for file in release-assets/*; do
+            [ -f "$file" ] || continue
+            name="$(basename "$file")"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/releases/v${version}/${name}" --endpoint-url "$endpoint"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
+          done
+      - name: Write release notes
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${VERSION_INPUT:-${GITHUB_REF_NAME#v}}"
+          base="${DOWNLOAD_BASE_URL%/}"
+          {
+            echo "# lawlint v${version}"
+            echo
+            echo "Unsigned native downloads. R2 is the canonical distribution store."
+            echo
+            echo "## CLI"
+            for file in release-assets/lawlint-*.tar.gz release-assets/lawlint-*.zip; do
+              [ -f "$file" ] || continue
+              name="$(basename "$file")"
+              echo "- [$name](${base}/releases/v${version}/${name})"
+            done
+            echo
+            echo "## Desktop"
+            for file in release-assets/lawlint-desktop-*; do
+              [ -f "$file" ] || continue
+              name="$(basename "$file")"
+              echo "- [$name](${base}/releases/v${version}/${name})"
+            done
+          } > release-notes.md
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
+          name: lawlint ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
