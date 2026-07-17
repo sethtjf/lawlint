@@ -19,6 +19,9 @@ on:
   push:
     branches:
       - main
+  # Manual lever: run release-please on demand (e.g. if a merge commit happened
+  # to carry a CI-skip token and no push run fired). Opens/refreshes the release PR.
+  workflow_dispatch:
 
 permissions:
   contents: write
