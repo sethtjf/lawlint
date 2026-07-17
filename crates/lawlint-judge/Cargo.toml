@@ -1,0 +1,34 @@
+[package]
+name = "lawlint-judge"
+description = "Tier-3 judge backends for lawlint (native only). ax (axllm) is the AI interface for all backends."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+lawlint-core = { path = "../lawlint-core" }
+# ax is the AI interface for ALL backends (hard product requirement).
+# Pinned: AxJudge and CandleClient are written against the v23.0.1 AxAIClient
+# contract (`chat(&mut self, Value) -> AxResult<Value>`, blocking transport).
+axllm = "=23.0.1"
+anyhow = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+# In-process candle inference for the default local backend.
+candle-core = "0.11"
+candle-transformers = "0.11"
+hf-hub = { version = "0.4", default-features = false, features = ["ureq", "native-tls"] }
+tokenizers = "0.23"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.11", features = ["metal"] }
+candle-transformers = { version = "0.11", features = ["metal"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Cloud backends ("anthropic:<model>", "openai:<base-url>#<model>") through
+# stock ax clients.
+cloud = []

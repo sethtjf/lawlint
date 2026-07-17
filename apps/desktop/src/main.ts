@@ -4,13 +4,21 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import "./styles.css";
 
 type Diagnostic = {
-  ruleId: string;
-  severity: "error" | "warning" | "info";
+  ruleId: string; // namespaced "package/name", e.g. "core/no-em-dash"
+  severity: "error" | "warning" | "suggestion";
+  tier: "static" | "statistical" | "inferential";
+  span: { start: number; end: number };
   message: string;
   suggestion?: string;
+  confidence?: number; // tier-3 only
   line: number;
   column: number;
 };
+
+// Tolerate legacy "info" payloads; the v2 engine emits "suggestion".
+function severityLabel(severity: string): string {
+  return severity === "info" ? "suggestion" : severity;
+}
 
 type LintResult = {
   diagnostics: Diagnostic[];
@@ -51,7 +59,7 @@ function render(result: LintResult) {
   diagnostics.innerHTML = result.diagnostics.map((diagnostic) => `
     <article class="diagnostic">
       <div class="diagnostic-head">
-        <span class="badge sev-${diagnostic.severity}">${diagnostic.severity}</span>
+        <span class="badge sev-${severityLabel(diagnostic.severity)}">${severityLabel(diagnostic.severity)}</span>
         <span class="rule-id">${escapeHtml(diagnostic.ruleId)}</span>
         <span class="location">${diagnostic.line}:${diagnostic.column}</span>
       </div>

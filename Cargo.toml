@@ -3,6 +3,7 @@ members = [
     "apps/desktop/src-tauri",
     "crates/lawlint-core",
     "crates/lawlint-cli",
+    "crates/lawlint-judge",
     "crates/lawlint-wasm",
 ]
 resolver = "2"
@@ -16,6 +17,12 @@ version = "0.1.0" # x-release-please-version
 regex = "1.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+strsim = "0.11"
+sha2 = "0.10"
+include_dir = "0.7"
+pulldown-cmark = { version = "0.12", default-features = false }
 clap = { version = "4", features = ["derive"] }
 colored = "3"
 wasm-bindgen = "0.2"

@@ -5,10 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+# rlib so native unit tests (`cargo test -p lawlint-wasm`) can link the crate.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 lawlint-core = { path = "../lawlint-core" }
 serde.workspace = true
 serde-wasm-bindgen.workspace = true
 wasm-bindgen.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
