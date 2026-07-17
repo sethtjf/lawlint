@@ -74,13 +74,8 @@ const desktopAssets = {
   const isLinux = platform.includes("linux");
   const title = document.querySelector("#primary-title");
   const copy = document.querySelector("#primary-copy");
-  const desktopLink = document.querySelector<HTMLAnchorElement>("#desktop-link");
-  const cliLink = document.querySelector<HTMLAnchorElement>("#cli-link");
-
-  type UserAgentData = {
-    architecture?: string;
-    getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>;
-  };
+  const desktopLink = document.querySelector("#desktop-link");
+  const cliLink = document.querySelector("#cli-link");
 
   async function selectDownload() {
     if (isWindows) {
@@ -104,7 +99,7 @@ const desktopAssets = {
 
     if (!isMac) return;
 
-    const userAgentData = (navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData;
+    const userAgentData = navigator.userAgentData;
     let architecture = userAgentData?.architecture?.toLowerCase() ?? "";
     if (userAgentData?.getHighEntropyValues) {
       try {
