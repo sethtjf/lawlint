@@ -63,11 +63,12 @@ const densityRule = (
       "Use this signal as a prompt to revise rhythm and density, not as a hard prohibition.",
   },
   check: (context) => {
-    const count = [...context.text.matchAll(pattern)].length;
+    const matches = [...context.text.matchAll(pattern)];
+    const count = matches.length;
     const words = Math.max(1, context.text.trim().split(/\s+/).length);
     const threshold = context.options.thresholds?.[id] ?? defaultThreshold;
     if ((count / words) * 1000 <= threshold || count === 0) return [];
-    const match = context.text.match(pattern);
+    const match = matches[0];
     const start = match?.index ?? 0;
     return [context.diagnostic(start, start + (match?.[0].length ?? 1), message)];
   },

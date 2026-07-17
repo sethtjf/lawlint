@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { findConfig } from "./config.js";
+import { findConfig, mergeOptions } from "./config.js";
 import { stripMarkdownCodeBlocks } from "./markdown.js";
 import { builtInRules } from "./rules.js";
 import type { Diagnostic, LintOptions, LintResult, Rule, RuleContext, Severity } from "./types.js";
 export * from "./types.js";
 export { builtInRules };
 export { stripMarkdownCodeBlocks };
+export { findConfig, mergeOptions } from "./config.js";
 
 function location(text: string, offset: number) {
   const before = text.slice(0, offset);
@@ -74,11 +75,5 @@ export async function lintFile(path: string, options: LintOptions = {}): Promise
   const config = await findConfig(options.cwd);
   const text = await readFile(path, "utf8");
   const markdown = path.toLowerCase().endsWith(".md");
-  return lint(text, {
-    ...config,
-    ...options,
-    severity: { ...config.severity, ...options.severity },
-    thresholds: { ...config.thresholds, ...options.thresholds },
-    markdown: options.markdown ?? markdown,
-  });
+  return lint(text, mergeOptions(config, { ...options, markdown: options.markdown ?? markdown }));
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import pc from "picocolors";
+import { findConfig, mergeOptions } from "./config.js";
 import { lint, lintFile } from "./index.js";
 
 function arg(name: string) {
@@ -32,7 +33,7 @@ async function main() {
             process.stdin.on("end", () => resolve(data));
             process.stdin.on("error", reject);
           }),
-          options,
+          mergeOptions(await findConfig(), options),
         )
       : await lintFile(input, options);
 

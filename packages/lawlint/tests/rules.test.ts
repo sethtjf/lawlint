@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { builtInRules, lint, lintFile } from "../src/index.js";
+import { builtInRules, findConfig, lint, lintFile, mergeOptions } from "../src/index.js";
 
 const has = (text: string, ruleId: string, options = {}) =>
   lint(text, options).diagnostics.some((diagnostic) => diagnostic.ruleId === ruleId);
@@ -82,6 +82,46 @@ describe("built-in rules", () => {
     const text = "Arguably this is a claim.";
     expect(has(text, "no-hedging")).toBe(true);
     expect(has(text, "no-hedging", { thresholds: { "no-hedging": 1000 } })).toBe(false);
+  });
+
+  it("reports density diagnostics on the trigger's actual line", () => {
+    const result = lint(`A clean introduction.\n\n${"word — ".repeat(10)}word`);
+    const diagnostic = result.diagnostics.find((item) => item.ruleId === "no-em-dash-overuse");
+    expect(diagnostic?.line).toBe(3);
+    expect(diagnostic?.column).toBeGreaterThan(1);
+  });
+
+  it("merges discovered config underneath explicit options", () => {
+    const result = mergeOptions(
+      {
+        disable: ["no-legalese"],
+        severity: { "no-hedging": "info" },
+        thresholds: { "no-hedging": 20 },
+      },
+      {
+        disable: ["no-ai-cliches"],
+        severity: { "no-hedging": "error" },
+        thresholds: { "no-hedging": 30 },
+      },
+    );
+    expect(result.disable).toEqual(["no-ai-cliches"]);
+    expect(result.severity?.["no-hedging"]).toBe("error");
+    expect(result.thresholds?.["no-hedging"]).toBe(30);
+  });
+
+  it("discovers config for a stdin-equivalent working directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "lawlint-config-"));
+    await writeFile(
+      join(directory, "lawlint.config.json"),
+      JSON.stringify({
+        disable: ["no-ai-cliches", "no-legalese"],
+        severity: { "no-legalese": "error" },
+      }),
+    );
+    const config = await findConfig(directory);
+    const options = mergeOptions(config);
+    const result = lint("We delve pursuant to the rule.", options);
+    expect(result.diagnostics).toHaveLength(0);
   });
 
   it("skips fenced Markdown code blocks in lintFile", async () => {
