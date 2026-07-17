@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "cli": "bun packages/lawlint/src/cli.ts",
     "build": "bun run --cwd packages/lawlint build && bun run --cwd apps/website build",
     "lint": "bunx biome check .",
     "typecheck": "bunx tsc -b",
