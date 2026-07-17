@@ -72,30 +72,56 @@ const desktopAssets = {
   const isWindows = platform.includes("windows");
   const isMac = platform.includes("mac os") || platform.includes("macintosh");
   const isLinux = platform.includes("linux");
-  const isArm = platform.includes("arm64") || platform.includes("aarch64");
   const title = document.querySelector("#primary-title");
   const copy = document.querySelector("#primary-copy");
   const desktopLink = document.querySelector<HTMLAnchorElement>("#desktop-link");
   const cliLink = document.querySelector<HTMLAnchorElement>("#cli-link");
 
-  if (isWindows) {
-    if (title) title.textContent = "lawlint for Windows";
-    if (copy) copy.textContent = "A native desktop workspace with an installer that fits your existing setup.";
-    if (desktopLink) desktopLink.href = desktopAssets.windows;
-    if (cliLink) cliLink.href = cliAssets.windows;
-  } else if (isLinux) {
-    if (title) title.textContent = "lawlint for Linux";
-    if (copy) copy.textContent = "The native CLI is the fastest way to lint locally on Linux.";
-    if (desktopLink) {
-      desktopLink.textContent = "Download CLI installer";
-      desktopLink.href = cliAssets.linux;
+  type UserAgentData = {
+    architecture?: string;
+    getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>;
+  };
+
+  async function selectDownload() {
+    if (isWindows) {
+      if (title) title.textContent = "lawlint for Windows";
+      if (copy) copy.textContent = "A native desktop workspace with an installer that fits your existing setup.";
+      if (desktopLink) desktopLink.href = desktopAssets.windows;
+      if (cliLink) cliLink.href = cliAssets.windows;
+      return;
     }
-    if (cliLink) cliLink.href = cliAssets.linux;
-  } else if (isMac && !isArm) {
-    if (title) title.textContent = "lawlint for Intel Mac";
-    if (desktopLink) desktopLink.href = desktopAssets.macIntel;
-    if (cliLink) cliLink.href = cliAssets.macIntel;
+
+    if (isLinux) {
+      if (title) title.textContent = "lawlint for Linux";
+      if (copy) copy.textContent = "The native CLI is the fastest way to lint locally on Linux.";
+      if (desktopLink) {
+        desktopLink.textContent = "Download CLI installer";
+        desktopLink.href = cliAssets.linux;
+      }
+      if (cliLink) cliLink.href = cliAssets.linux;
+      return;
+    }
+
+    if (!isMac) return;
+
+    const userAgentData = (navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData;
+    let architecture = userAgentData?.architecture?.toLowerCase() ?? "";
+    if (userAgentData?.getHighEntropyValues) {
+      try {
+        architecture = (await userAgentData.getHighEntropyValues(["architecture"])).architecture?.toLowerCase() ?? architecture;
+      } catch {
+        // Use the Apple Silicon default when architecture data is unavailable.
+      }
+    }
+
+    if (/^(x86|x86_64|amd64)$/.test(architecture)) {
+      if (title) title.textContent = "lawlint for Intel Mac";
+      if (desktopLink) desktopLink.href = desktopAssets.macIntel;
+      if (cliLink) cliLink.href = cliAssets.macIntel;
+    }
   }
+
+  void selectDownload();
 </script>
 <style>
   .download-page { padding: 6rem 0 3rem; }

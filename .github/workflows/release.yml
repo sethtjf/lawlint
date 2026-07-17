@@ -101,15 +101,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Build and stage desktop bundles
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }}
-          tagName: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
-          releaseName: lawlint ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
-          releaseDraft: true
-          prerelease: false
       - name: Collect macOS bundles
         if: runner.os == 'macOS'
         shell: bash
@@ -178,7 +172,7 @@ jobs:
             [ -f "$file" ] || continue
             name="$(basename "$file")"
             aws s3 cp "$file" "s3://${R2_BUCKET}/releases/v${version}/${name}" --endpoint-url "$endpoint"
-            aws s3 cp "$file" "s3://${R2_BUCKET}/latest/${name}" --endpoint-url "$endpoint"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
           done
       - name: Write release notes
         env:
