@@ -1,0 +1,11 @@
+id: no-repetitive-openers
+engine: statistical
+scope: text
+severity: warning
+description: "Flags repeated sentence openings."
+message: "Three consecutive sentences begin with the same word."
+metric: repetitive-openers
+params: { run_length: 3 }
+examples:
+  - bad: "The court erred. The record shows this plainly. The remedy is reversal."
+    good: "The court erred. Its record shows this plainly. Reversal is the remedy."

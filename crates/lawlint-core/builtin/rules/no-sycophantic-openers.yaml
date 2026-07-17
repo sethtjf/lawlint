@@ -1,0 +1,20 @@
+id: no-sycophantic-openers
+engine: leading
+scope: text
+severity: error
+description: "Flags sycophantic openers"
+rationale: "Start with the substance. Openers that add no information should be cut."
+message: "Skip the sycophantic opener and start with the substance."
+examples:
+  - bad: "Great question. The statute controls."
+    good: "The statute controls."
+patterns:
+  - pattern: '(?:great|good|excellent|fantastic|wonderful) question'
+    message: "Skip the sycophantic opener and start with the substance."
+    suggestion: "Skip the sycophantic opener and start with the substance."
+  - pattern: 'what a (?:great|fascinating|wonderful|excellent|interesting) (?:question|problem|point)'
+    message: "Skip the sycophantic opener and start with the substance."
+    suggestion: "Skip the sycophantic opener and start with the substance."
+  - pattern: 'that[''’]s a (?:great|fascinating|wonderful|excellent) (?:question|point)'
+    message: "Skip the sycophantic opener and start with the substance."
+    suggestion: "Skip the sycophantic opener and start with the substance."

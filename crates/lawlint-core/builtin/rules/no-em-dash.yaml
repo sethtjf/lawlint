@@ -1,0 +1,14 @@
+id: no-em-dash
+engine: phrase
+scope: text
+severity: error
+description: "Flags every em dash"
+rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
+message: "Never use em dashes."
+examples:
+  - bad: "It was—frankly—wrong."
+    good: "It was, frankly, wrong."
+patterns:
+  - pattern: '—'
+    message: "Never use em dashes."
+    suggestion: "Substitute a comma, period, colon, or parentheses depending on the relationship."

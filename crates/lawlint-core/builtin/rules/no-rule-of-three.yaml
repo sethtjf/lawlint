@@ -1,0 +1,13 @@
+id: no-rule-of-three
+engine: density
+scope: text
+severity: warning
+description: "Flags dense repeated triplet constructions"
+rationale: "Use this signal as a prompt to revise rhythm and density, not as a hard prohibition."
+message: "Repeated rule-of-three constructions can sound formulaic."
+threshold: 12
+examples:
+  - bad: "The rule is clear, simple, and fair."
+    good: "The rule is clear and fair."
+patterns:
+  - '(?i)\b\w+(?:\s+\w+){0,3},\s+\w+(?:\s+\w+){0,3},\s+and\s+\w+'

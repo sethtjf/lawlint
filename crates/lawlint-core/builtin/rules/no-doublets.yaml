@@ -1,0 +1,14 @@
+id: no-doublets
+engine: phrase
+scope: text
+severity: suggestion
+description: "Flags legal doublets and triplets"
+rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
+message: "This legal doublet is often unnecessary."
+examples:
+  - bad: "The contract is null and void."
+    good: "The contract is void."
+patterns:
+  - pattern: '(?i)\b(?:cease and desist|null and void|any and all)\b'
+    message: "This legal doublet is often unnecessary."
+    suggestion: "Use one precise term."
