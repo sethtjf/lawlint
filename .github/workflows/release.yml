@@ -198,7 +198,7 @@ jobs:
           version="${VERSION_INPUT:-${GITHUB_REF_NAME#v}}"
           base="${DOWNLOAD_BASE_URL%/}"
           {
-            echo "# lawlint v${version}"
+            echo "## Downloads"
             echo
             echo "Unsigned native downloads. R2 is the canonical distribution store."
             echo
@@ -222,6 +222,10 @@ jobs:
           tag_name: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
           name: lawlint ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
           body_path: release-notes.md
+          # When release-please already created the release (release-PR flow), append
+          # the download section under its changelog instead of overwriting it. On a
+          # manual tag/dispatch there is no existing release, so this sets the body.
+          append_body: true
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
