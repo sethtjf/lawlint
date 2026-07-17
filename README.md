@@ -66,7 +66,7 @@ The CLI discovers `lawlint.config.json` from the current directory upward.
 ## Maintainer releases
 
 Pushing a `v*` tag runs the release workflow. It publishes versioned and
-`latest/` assets to the R2 bucket behind `https://downloads.lawlint.com`, then
+`latest/` assets to the R2 bucket behind `https://assets.lawlint.com/downloads`, then
 creates a GitHub Release whose notes point to those canonical download URLs.
 The workflow requires these repository secrets:
 

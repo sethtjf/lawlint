@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 env:
-  DOWNLOAD_BASE_URL: https://downloads.lawlint.com
+  DOWNLOAD_BASE_URL: https://assets.lawlint.com/downloads
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -171,8 +171,8 @@ jobs:
           for file in release-assets/*; do
             [ -f "$file" ] || continue
             name="$(basename "$file")"
-            aws s3 cp "$file" "s3://${R2_BUCKET}/releases/v${version}/${name}" --endpoint-url "$endpoint"
-            aws s3 cp "$file" "s3://${R2_BUCKET}/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/releases/v${version}/${name}" --endpoint-url "$endpoint"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
           done
       - name: Write release notes
         env:
