@@ -41,7 +41,11 @@ pub fn word_count(source: &str, doc: &Document) -> usize {
         .collect();
     word_regex()
         .find_iter(source)
-        .filter(|m| !code.iter().any(|r| m.start() >= r.start && m.end() <= r.end))
+        .filter(|m| {
+            !code
+                .iter()
+                .any(|r| m.start() >= r.start && m.end() <= r.end)
+        })
         .count()
 }
 
@@ -125,7 +129,11 @@ pub fn finalize(source: &str, mut diagnostics: Vec<Diagnostic>, doc: &Document) 
 
     LintResult {
         diagnostics,
-        stats: Stats { word_count: words, sentence_count, score },
+        stats: Stats {
+            word_count: words,
+            sentence_count,
+            score,
+        },
         judge: None,
     }
 }
@@ -205,7 +213,10 @@ mod tests {
     fn score_formula_matches_old_engine() {
         // 100 words, one Warning with weight 2 → penalty 6 → density 60 →
         // round(100·e^-0.6) = 55 (golden mild-hedging parity arithmetic).
-        let src = (0..100).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        let src = (0..100)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let doc = parse(&src, false);
         let mut d = diag(0, 2, Severity::Warning, Tier::Static);
         d.weight = Some(2);
@@ -235,7 +246,10 @@ mod tests {
     fn tier3_points_scale_with_confidence() {
         // 100 words. Static Warning (3) + inferential Warning conf 0.8 (2.4)
         // → penalty 5.4 → density 54 → round(100·e^-0.54) = 58.
-        let src = (0..100).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        let src = (0..100)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let doc = parse(&src, false);
         let d1 = diag(0, 2, Severity::Warning, Tier::Static);
         let mut d2 = diag(3, 5, Severity::Warning, Tier::Inferential);

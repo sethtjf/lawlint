@@ -175,7 +175,10 @@ mod tests {
         let cache = DiskCache::at(dir.path());
         let text = "It could perhaps be argued that the claim fails.";
         let req = JudgeRequest {
-            chunk_range: TextRange { start: 0, end: text.len() },
+            chunk_range: TextRange {
+                start: 0,
+                end: text.len(),
+            },
             chunk_text: text.to_string(),
             rules: vec![RuleId("core/empty-hedge".to_string())],
             prompt: "p".to_string(),

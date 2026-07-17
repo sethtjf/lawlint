@@ -22,14 +22,10 @@ const ABBREVIATIONS: &[&str] = &[
     // case style / citation
     "v.", "vs.", "id.", "ibid.", "no.", "nos.", "fed.", "r.", "civ.", "crim.", "p.", "proc.",
     "evid.", "cir.", "ct.", "cl.", "u.s.", "s.", "ed.", "l.", "rev.", "stat.", "reg.", "sec.",
-    "art.", "para.", "pp.", "seq.",
-    // latin
-    "e.g.", "i.e.", "etc.", "cf.",
-    // corporate
-    "inc.", "corp.", "ltd.", "co.",
-    // honorifics
-    "mr.", "mrs.", "ms.", "dr.", "prof.", "hon.",
-    // months
+    "art.", "para.", "pp.", "seq.", // latin
+    "e.g.", "i.e.", "etc.", "cf.", // corporate
+    "inc.", "corp.", "ltd.", "co.", // honorifics
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "hon.", // months
     "jan.", "feb.", "mar.", "apr.", "jun.", "jul.", "aug.", "sep.", "sept.", "oct.", "nov.",
     "dec.",
 ];
@@ -70,7 +66,10 @@ pub fn split_sentences(source: &str, range: TextRange) -> Vec<Sentence> {
 
     let push = |sentences: &mut Vec<Sentence>, s: usize, e: usize| {
         if e > s {
-            let abs = TextRange { start: base + s, end: base + e };
+            let abs = TextRange {
+                start: base + s,
+                end: base + e,
+            };
             sentences.push(make_sentence(source, abs));
         }
     };
@@ -98,7 +97,11 @@ pub fn split_sentences(source: &str, range: TextRange) -> Vec<Sentence> {
             while m < chars.len() && chars[m].1.is_whitespace() {
                 m += 1;
             }
-            let end_rel = if k < chars.len() { chars[k].0 } else { text.len() };
+            let end_rel = if k < chars.len() {
+                chars[k].0
+            } else {
+                text.len()
+            };
             if m >= chars.len() {
                 // Terminator run reaches end of block: always close.
                 push(&mut sentences, start.take().unwrap_or(off), end_rel);
@@ -215,9 +218,16 @@ pub fn tokenize(source: &str, range: TextRange) -> Vec<Token> {
                     break;
                 }
             }
-            let end = if j < chars.len() { chars[j].0 } else { text.len() };
+            let end = if j < chars.len() {
+                chars[j].0
+            } else {
+                text.len()
+            };
             tokens.push(Token {
-                range: TextRange { start: base + off, end: base + end },
+                range: TextRange {
+                    start: base + off,
+                    end: base + end,
+                },
                 kind: TokenKind::Word,
             });
             i = j;
@@ -236,15 +246,25 @@ pub fn tokenize(source: &str, range: TextRange) -> Vec<Token> {
                     break;
                 }
             }
-            let end = if j < chars.len() { chars[j].0 } else { text.len() };
+            let end = if j < chars.len() {
+                chars[j].0
+            } else {
+                text.len()
+            };
             tokens.push(Token {
-                range: TextRange { start: base + off, end: base + end },
+                range: TextRange {
+                    start: base + off,
+                    end: base + end,
+                },
                 kind: TokenKind::Number,
             });
             i = j;
         } else {
             tokens.push(Token {
-                range: TextRange { start: base + off, end: base + off + c.len_utf8() },
+                range: TextRange {
+                    start: base + off,
+                    end: base + off + c.len_utf8(),
+                },
                 kind: TokenKind::Punct,
             });
             i += 1;
@@ -277,7 +297,10 @@ mod tests {
     use super::*;
 
     fn whole(text: &str) -> TextRange {
-        TextRange { start: 0, end: text.len() }
+        TextRange {
+            start: 0,
+            end: text.len(),
+        }
     }
 
     fn sentences(text: &str) -> Vec<Sentence> {
@@ -285,7 +308,10 @@ mod tests {
     }
 
     fn sentence_texts(text: &str) -> Vec<String> {
-        sentences(text).iter().map(|s| s.range.slice(text).to_string()).collect()
+        sentences(text)
+            .iter()
+            .map(|s| s.range.slice(text).to_string())
+            .collect()
     }
 
     // ---- §12 segmentation corpus: ≥15 tricky legal cases -----------------
@@ -297,7 +323,10 @@ mod tests {
         assert_eq!(s.len(), 2, "expected 2 sentences in {text:?}");
         assert!(s[0].is_citation, "first sentence must be a citation");
         assert!(!s[1].is_citation);
-        assert_eq!(s[0].range.slice(text), "See Roe v. Wade, 410 U.S. 113 (1973).");
+        assert_eq!(
+            s[0].range.slice(text),
+            "See Roe v. Wade, 410 U.S. 113 (1973)."
+        );
         assert_eq!(s[1].range.slice(text), "The court held that this applies.");
     }
 
@@ -374,16 +403,26 @@ mod tests {
             ("Cf. Katz v. United States, 389 U.S. 347 (1967).", true),
             ("Accord Smith v. Jones, 12 F.3d 88 (2d Cir. 1993).", true),
             ("E.g., Brown v. Board of Educ., 347 U.S. 483 (1954).", true),
-            ("But see Olmstead v. United States, for the older rule.", true),
+            (
+                "But see Olmstead v. United States, for the older rule.",
+                true,
+            ),
             ("See also Terry v. Ohio, on reasonable suspicion.", true),
-            ("The seminal case is Brown, 347 U.S. 483, 495 (1954), which changed everything.", true),
+            (
+                "The seminal case is Brown, 347 U.S. 483, 495 (1954), which changed everything.",
+                true,
+            ),
             ("The court held that this applies.", false),
             ("But see Olmstead.", false), // signal without a case style
             ("Seeing the writing on the wall, they settled.", false), // "See" prefix of a word
             ("The standard is well known.", false),
         ];
         for (text, expected) in cases {
-            assert_eq!(is_citation_sentence(text), *expected, "citation flag wrong for {text:?}");
+            assert_eq!(
+                is_citation_sentence(text),
+                *expected,
+                "citation flag wrong for {text:?}"
+            );
         }
     }
 
@@ -440,7 +479,10 @@ mod tests {
         let text = "The café’s motion—filed früh—was granted. “Naïve” objections followed.";
         let s = sentences(text);
         assert_eq!(s.len(), 2);
-        assert_eq!(s[0].range.slice(text), "The café’s motion—filed früh—was granted.");
+        assert_eq!(
+            s[0].range.slice(text),
+            "The café’s motion—filed früh—was granted."
+        );
         assert_eq!(s[1].range.slice(text), "“Naïve” objections followed.");
         for sent in &s {
             for t in &sent.tokens {
@@ -527,14 +569,23 @@ mod tests {
 
     #[test]
     fn ordinal_reporters_block_splits() {
-        assert_eq!(sentences("The 2d. Circuit and the 3d. Circuit agree.").len(), 1);
-        assert_eq!(sentences("The 1st. filing was late. It was rejected.").len(), 2);
+        assert_eq!(
+            sentences("The 2d. Circuit and the 3d. Circuit agree.").len(),
+            1
+        );
+        assert_eq!(
+            sentences("The 1st. filing was late. It was rejected.").len(),
+            2
+        );
     }
 
     #[test]
     fn enumeration_only_blocks_at_line_start() {
         // Mid-line "5." splits when followed by a capital.
-        assert_eq!(sentences("The answer is 5. Nothing more follows here.").len(), 2);
+        assert_eq!(
+            sentences("The answer is 5. Nothing more follows here.").len(),
+            2
+        );
         // Line-start "5." is an enumeration label.
         assert_eq!(sentences("5. The fifth claim fails entirely.").len(), 1);
     }

@@ -76,13 +76,15 @@ mod tests {
 
     #[test]
     fn options_pass_through() {
-        let options: LintOptions =
-            serde_json::from_str(
-                r#"{"markdown": true, "disable": ["no-ai-cliches", "no-marketing-language"]}"#,
-            )
-            .unwrap();
-        let result = run_lint("We delve.\n\n```\npursuant to — herein\n```\n", Some(options))
-            .unwrap();
+        let options: LintOptions = serde_json::from_str(
+            r#"{"markdown": true, "disable": ["no-ai-cliches", "no-marketing-language"]}"#,
+        )
+        .unwrap();
+        let result = run_lint(
+            "We delve.\n\n```\npursuant to — herein\n```\n",
+            Some(options),
+        )
+        .unwrap();
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     }
 
@@ -106,13 +108,15 @@ mod tests {
         )
         .unwrap();
 
-        let options: LintOptions = serde_json::from_str(&format!(
-            r#"{{"ruleDirs": [{:?}]}}"#,
-            dir.to_string_lossy()
-        ))
-        .unwrap();
+        let options: LintOptions =
+            serde_json::from_str(&format!(r#"{{"ruleDirs": [{:?}]}}"#, dir.to_string_lossy()))
+                .unwrap();
         let result = run_lint("We delve into foo.", Some(options)).unwrap();
-        let ids: Vec<&str> = result.diagnostics.iter().map(|d| d.rule_id.0.as_str()).collect();
+        let ids: Vec<&str> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.rule_id.0.as_str())
+            .collect();
         assert!(ids.contains(&"firm/no-foo"), "{ids:?}");
         assert!(ids.contains(&"core/no-ai-cliches"), "{ids:?}");
 

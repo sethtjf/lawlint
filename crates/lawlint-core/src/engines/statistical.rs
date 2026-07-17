@@ -52,10 +52,13 @@ pub struct StatisticalEngine {
 impl StatisticalEngine {
     /// Build from a validated def (known metric + params).
     pub fn from_def(meta: RuleMeta, def: &RuleDef, file: &str) -> Result<Self, LoadError> {
-        let metric_str = def.metric.as_deref().ok_or_else(|| LoadError::MissingField {
-            file: file.to_string(),
-            field: "metric".to_string(),
-        })?;
+        let metric_str = def
+            .metric
+            .as_deref()
+            .ok_or_else(|| LoadError::MissingField {
+                file: file.to_string(),
+                field: "metric".to_string(),
+            })?;
         let metric = Metric::parse(metric_str).ok_or_else(|| {
             LoadError::invalid_field(
                 file,
@@ -127,7 +130,11 @@ impl Rule for StatisticalEngine {
 
     fn interests(&self) -> Interests {
         // blocks: repetitive-openers runs reset at block boundaries.
-        Interests { sentences: true, blocks: true, ..Interests::default() }
+        Interests {
+            sentences: true,
+            blocks: true,
+            ..Interests::default()
+        }
     }
 
     fn check_block(&mut self, _b: &Block, _ctx: &mut Ctx) {
@@ -236,8 +243,12 @@ mod tests {
     }
 
     fn engine(metric: &str, params: Option<HashMap<String, f64>>) -> StatisticalEngine {
-        StatisticalEngine::from_def(meta_for("x"), &base_def(Some(metric), params), "rules/x.yaml")
-            .unwrap()
+        StatisticalEngine::from_def(
+            meta_for("x"),
+            &base_def(Some(metric), params),
+            "rules/x.yaml",
+        )
+        .unwrap()
     }
 
     /// Test-only tokenizer: ASCII words/numbers/punct with byte ranges.
@@ -254,23 +265,37 @@ mod tests {
                 while j < end && (b[j].is_ascii_alphabetic() || b[j] == b'\'') {
                     j += 1;
                 }
-                tokens.push(Token { range: TextRange { start: i, end: j }, kind: TokenKind::Word });
+                tokens.push(Token {
+                    range: TextRange { start: i, end: j },
+                    kind: TokenKind::Word,
+                });
                 i = j;
             } else if c.is_ascii_digit() {
                 let mut j = i;
                 while j < end && b[j].is_ascii_digit() {
                     j += 1;
                 }
-                tokens
-                    .push(Token { range: TextRange { start: i, end: j }, kind: TokenKind::Number });
+                tokens.push(Token {
+                    range: TextRange { start: i, end: j },
+                    kind: TokenKind::Number,
+                });
                 i = j;
             } else {
-                tokens
-                    .push(Token { range: TextRange { start: i, end: i + 1 }, kind: TokenKind::Punct });
+                tokens.push(Token {
+                    range: TextRange {
+                        start: i,
+                        end: i + 1,
+                    },
+                    kind: TokenKind::Punct,
+                });
                 i += 1;
             }
         }
-        Sentence { range: TextRange { start, end }, tokens, is_citation: false }
+        Sentence {
+            range: TextRange { start, end },
+            tokens,
+            is_citation: false,
+        }
     }
 
     /// Split `source` on `.` into sentences (test-only, no legal awareness).
@@ -339,7 +364,10 @@ mod tests {
                 "rules/x.yaml",
             )
             .unwrap_err();
-            assert!(err.to_string().contains("run_length"), "{bad} should be rejected");
+            assert!(
+                err.to_string().contains("run_length"),
+                "{bad} should be rejected"
+            );
         }
     }
 
@@ -353,7 +381,10 @@ mod tests {
                 "rules/x.yaml",
             )
             .unwrap_err();
-            assert!(err.to_string().contains("max_words"), "{bad} should be rejected");
+            assert!(
+                err.to_string().contains("max_words"),
+                "{bad} should be rejected"
+            );
         }
     }
 
@@ -367,14 +398,23 @@ mod tests {
                 "rules/x.yaml",
             )
             .unwrap_err();
-            assert!(err.to_string().contains("run_length"), "{bad} should be rejected");
+            assert!(
+                err.to_string().contains("run_length"),
+                "{bad} should be rejected"
+            );
         }
     }
 
     #[test]
     fn metric_parse_known_and_unknown() {
-        assert_eq!(Metric::parse("sentence-length"), Some(Metric::SentenceLength));
-        assert_eq!(Metric::parse("repetitive-openers"), Some(Metric::RepetitiveOpeners));
+        assert_eq!(
+            Metric::parse("sentence-length"),
+            Some(Metric::SentenceLength)
+        );
+        assert_eq!(
+            Metric::parse("repetitive-openers"),
+            Some(Metric::RepetitiveOpeners)
+        );
         assert_eq!(Metric::parse("nope"), None);
     }
 
@@ -390,8 +430,17 @@ mod tests {
         let over = format!("{}.", vec!["w"; 46].join(" "));
         let reports = run_over(&mut e, &over, None);
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].span, TextRange { start: 0, end: over.len() });
-        assert_eq!(reports[0].message, "Sentence is 46 words; consider shortening it.");
+        assert_eq!(
+            reports[0].span,
+            TextRange {
+                start: 0,
+                end: over.len()
+            }
+        );
+        assert_eq!(
+            reports[0].message,
+            "Sentence is 46 words; consider shortening it."
+        );
     }
 
     #[test]
@@ -408,7 +457,10 @@ mod tests {
         );
         let reports = run_over(&mut e, "pay 100 dollars, now.", None);
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].message, "Sentence is 4 words; consider shortening it.");
+        assert_eq!(
+            reports[0].message,
+            "Sentence is 4 words; consider shortening it."
+        );
     }
 
     #[test]
@@ -420,7 +472,10 @@ mod tests {
         let mut e = engine("sentence-length", None);
         let reports = run_over(&mut e, src, Some(5.0));
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].message, "Sentence is 6 words; consider shortening it.");
+        assert_eq!(
+            reports[0].message,
+            "Sentence is 6 words; consider shortening it."
+        );
     }
 
     #[test]
@@ -449,7 +504,10 @@ mod tests {
         assert_eq!(reports.len(), 1);
         // Span is the LAST sentence of the run.
         assert_eq!(reports[0].span.slice(src), "The bird flew.");
-        assert_eq!(reports[0].message, "Three consecutive sentences begin with “the”.");
+        assert_eq!(
+            reports[0].message,
+            "Three consecutive sentences begin with “the”."
+        );
     }
 
     #[test]
@@ -498,7 +556,10 @@ mod tests {
         let sents = sentences(src);
         let block = Block {
             kind: BlockKind::Paragraph,
-            range: TextRange { start: 0, end: src.len() },
+            range: TextRange {
+                start: 0,
+                end: src.len(),
+            },
             sentences: vec![],
         };
         let mut ctx = Ctx::new(src, 0);
@@ -526,7 +587,10 @@ mod tests {
         let reports = run_over(&mut e, src, None);
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].span.slice(src), "The dog ran.");
-        assert_eq!(reports[0].message, "Two consecutive sentences begin with “the”.");
+        assert_eq!(
+            reports[0].message,
+            "Two consecutive sentences begin with “the”."
+        );
     }
 
     #[test]

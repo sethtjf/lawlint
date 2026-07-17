@@ -13,9 +13,7 @@ use crate::config::LintOptions;
 use crate::engines::{DensityEngine, LeadingEngine, PhraseEngine, StatisticalEngine};
 use crate::error::LoadError;
 use crate::judge::{Granularity, RubricFragment};
-use crate::loader::{
-    self, parse_manifest, parse_rule, PackageManifest, RuleDef,
-};
+use crate::loader::{self, parse_manifest, parse_rule, PackageManifest, RuleDef};
 use crate::rule::{Interests, Rule, RuleMeta};
 use crate::types::{RuleId, Scope, Severity};
 
@@ -116,10 +114,12 @@ impl RuleSet {
             path: "builtin/style.yaml".to_string(),
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "embedded file not found"),
         })?;
-        let manifest_text = manifest_file.contents_utf8().ok_or_else(|| LoadError::Yaml {
-            file: "builtin/style.yaml".to_string(),
-            message: "file is not valid UTF-8".to_string(),
-        })?;
+        let manifest_text = manifest_file
+            .contents_utf8()
+            .ok_or_else(|| LoadError::Yaml {
+                file: "builtin/style.yaml".to_string(),
+                message: "file is not valid UTF-8".to_string(),
+            })?;
         let manifest = parse_manifest("builtin/style.yaml", manifest_text)?;
 
         let mut rules: Vec<(String, RuleDef)> = Vec::new();
@@ -151,11 +151,10 @@ impl RuleSet {
     pub fn load_dir(path: &Path) -> Result<RuleSet, LoadError> {
         let manifest_path = path.join("style.yaml");
         let manifest_name = manifest_path.display().to_string();
-        let manifest_text =
-            std::fs::read_to_string(&manifest_path).map_err(|e| LoadError::Io {
-                path: manifest_name.clone(),
-                source: e,
-            })?;
+        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|e| LoadError::Io {
+            path: manifest_name.clone(),
+            source: e,
+        })?;
         let manifest = parse_manifest(&manifest_name, &manifest_text)?;
 
         let mut rules: Vec<(String, RuleDef)> = Vec::new();
@@ -362,11 +361,7 @@ mod tests {
     // ---- helpers --------------------------------------------------------
 
     fn manifest(name: &str) -> PackageManifest {
-        parse_manifest(
-            "style.yaml",
-            &format!("name: {name}\nversion: 0.1.0\n"),
-        )
-        .unwrap()
+        parse_manifest("style.yaml", &format!("name: {name}\nversion: 0.1.0\n")).unwrap()
     }
 
     fn rule(file: &str, yaml: &str) -> (String, RuleDef) {
@@ -396,16 +391,18 @@ mod tests {
         // rewrite; whatever is present must validate.
         let rs = RuleSet::built_in();
         for meta in rs.metas() {
-            assert!(meta.id.0.starts_with("core/"), "unexpected id {}", meta.id.0);
+            assert!(
+                meta.id.0.starts_with("core/"),
+                "unexpected id {}",
+                meta.id.0
+            );
         }
     }
 
     #[test]
     fn load_dir_reads_manifest_and_rules() {
-        let base = std::env::temp_dir().join(format!(
-            "lawlint-registry-load-dir-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("lawlint-registry-load-dir-{}", std::process::id()));
         let rules_dir = base.join("rules");
         std::fs::create_dir_all(&rules_dir).unwrap();
         std::fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
@@ -422,10 +419,8 @@ mod tests {
 
     #[test]
     fn load_dir_missing_manifest_is_io_error() {
-        let base = std::env::temp_dir().join(format!(
-            "lawlint-registry-missing-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("lawlint-registry-missing-{}", std::process::id()));
         std::fs::create_dir_all(&base).unwrap();
         let e = RuleSet::load_dir(&base).unwrap_err();
         assert!(matches!(e, LoadError::Io { .. }), "{e}");
@@ -437,11 +432,8 @@ mod tests {
 
     #[test]
     fn from_sources_matches_load_dir_semantics() {
-        let rs = RuleSet::from_sources(
-            "user",
-            &[("no-x.yaml".to_string(), phrase_yaml("no-x"))],
-        )
-        .unwrap();
+        let rs = RuleSet::from_sources("user", &[("no-x.yaml".to_string(), phrase_yaml("no-x"))])
+            .unwrap();
         assert_eq!(rs.metas().len(), 1);
         assert_eq!(rs.metas()[0].id.0, "user/no-x");
         assert_eq!(rs.resolve("no-x").unwrap().0, "user/no-x");
@@ -477,7 +469,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(e.file(), "b.yaml");
-        assert!(e.to_string().contains("duplicate rule id \"user/no-x\""), "{e}");
+        assert!(
+            e.to_string().contains("duplicate rule id \"user/no-x\""),
+            "{e}"
+        );
     }
 
     #[test]
@@ -501,7 +496,10 @@ mod tests {
     fn meta_defaults_scope_severity_and_docs_url() {
         let rs = set_of(
             "core",
-            vec![rule("r.yaml", "id: no-x\nengine: phrase\npatterns: [\"—\"]\n")],
+            vec![rule(
+                "r.yaml",
+                "id: no-x\nengine: phrase\npatterns: [\"—\"]\n",
+            )],
         );
         let meta = rs.metas()[0];
         assert_eq!(meta.scope, Scope::Text);
@@ -716,7 +714,13 @@ mod tests {
         let ids: Vec<_> = rules.iter().map(|r| r.meta().id.0.clone()).collect();
         assert_eq!(
             ids,
-            vec!["core/no-p", "core/no-l", "core/no-d", "core/no-s", "core/no-i"]
+            vec![
+                "core/no-p",
+                "core/no-l",
+                "core/no-d",
+                "core/no-s",
+                "core/no-i"
+            ]
         );
         // Tier derived from engine, visible on the instantiated rule.
         assert_eq!(rules[0].meta().tier, Tier::Static);

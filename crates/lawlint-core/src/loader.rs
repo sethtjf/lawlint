@@ -357,10 +357,13 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
             compile_regex(file, "patterns[0]", def.patterns[0].pattern())?;
         }
         "statistical" => {
-            let metric = def.metric.as_deref().ok_or_else(|| LoadError::MissingField {
-                file: file.to_string(),
-                field: "metric".to_string(),
-            })?;
+            let metric = def
+                .metric
+                .as_deref()
+                .ok_or_else(|| LoadError::MissingField {
+                    file: file.to_string(),
+                    field: "metric".to_string(),
+                })?;
             if !matches!(metric, "sentence-length" | "repetitive-openers") {
                 return Err(LoadError::invalid_field(
                     file,
@@ -484,7 +487,9 @@ mod tests {
     }
 
     fn err(yaml: &str) -> String {
-        parse_rule(F, yaml).expect_err("rule should not parse").to_string()
+        parse_rule(F, yaml)
+            .expect_err("rule should not parse")
+            .to_string()
     }
 
     // ---- happy paths, one per engine kind ------------------------------
@@ -515,7 +520,12 @@ allow_context: { pattern: '\d\s?–\s?\d', window: 8 }
         assert_eq!(def.patterns.len(), 2);
         assert_eq!(def.patterns[0].pattern(), "—");
         match &def.patterns[1] {
-            PatternDef::Detailed { pattern, message, suggestion, fix } => {
+            PatternDef::Detailed {
+                pattern,
+                message,
+                suggestion,
+                fix,
+            } => {
                 assert_eq!(pattern, "(?i)\\bdelve\\b");
                 assert_eq!(message.as_deref(), Some("No delving"));
                 assert_eq!(suggestion.as_deref(), Some("examine"));
@@ -607,7 +617,10 @@ engine: phrase
 severity: info
 patterns: ["—"]
 "#);
-        assert_eq!(parse_severity(def.severity.as_deref().unwrap()), Some(Severity::Suggestion));
+        assert_eq!(
+            parse_severity(def.severity.as_deref().unwrap()),
+            Some(Severity::Suggestion)
+        );
     }
 
     // ---- validation errors ---------------------------------------------
@@ -639,15 +652,16 @@ patterns: ["—"]
     #[test]
     fn bad_scope_lists_alternatives() {
         let e = err("id: x\nengine: phrase\nscope: body\npatterns: [\"a\"]\n");
-        assert_eq!(e, "rules/test.yaml: scope: \"body\" is not a scope — use prose, text, or all");
+        assert_eq!(
+            e,
+            "rules/test.yaml: scope: \"body\" is not a scope — use prose, text, or all"
+        );
     }
 
     #[test]
     fn bad_granularity_lists_alternatives() {
-        let e = err(
-            "id: x\nengine: inferential\ngranularity: word\nrubric: r\n\
-             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n",
-        );
+        let e = err("id: x\nengine: inferential\ngranularity: word\nrubric: r\n\
+             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
         assert_eq!(
             e,
             "rules/test.yaml: granularity: \"word\" is not a granularity — \
@@ -658,7 +672,10 @@ patterns: ["—"]
     #[test]
     fn invalid_regex_surfaces_regex_error_text() {
         let e = err("id: x\nengine: phrase\npatterns: [\"(unclosed\"]\n");
-        assert!(e.starts_with("rules/test.yaml: patterns[0]: invalid regex \"(unclosed\":"), "{e}");
+        assert!(
+            e.starts_with("rules/test.yaml: patterns[0]: invalid regex \"(unclosed\":"),
+            "{e}"
+        );
         assert!(e.contains("unclosed group"), "{e}");
     }
 
@@ -739,7 +756,9 @@ patterns: ["—"]
     fn statistical_params_are_validated_at_load_time() {
         // Regression: these used to pass validation, then the FIRST lint
         // panicked in RuleSet::instantiate ("validated rule failed to build").
-        let e = err("id: rep\nengine: statistical\nmetric: repetitive-openers\nparams: { run_length: 0 }\n");
+        let e = err(
+            "id: rep\nengine: statistical\nmetric: repetitive-openers\nparams: { run_length: 0 }\n",
+        );
         assert_eq!(
             e,
             "rules/test.yaml: params.run_length: 0 is not a valid run length — \
@@ -751,9 +770,12 @@ patterns: ["—"]
         assert!(e.contains("params.run_length"), "{e}");
         // NaN max_words used to load fine and made sentence-length never fire
         // with no signal.
-        let e = err("id: sl\nengine: statistical\nmetric: sentence-length\nparams: { max_words: .nan }\n");
+        let e = err(
+            "id: sl\nengine: statistical\nmetric: sentence-length\nparams: { max_words: .nan }\n",
+        );
         assert!(e.contains("params.max_words"), "{e}");
-        let e = err("id: sl\nengine: statistical\nmetric: sentence-length\nparams: { max_words: 0 }\n");
+        let e =
+            err("id: sl\nengine: statistical\nmetric: sentence-length\nparams: { max_words: 0 }\n");
         assert!(e.contains("params.max_words"), "{e}");
         // Valid params still load.
         ok("id: sl\nengine: statistical\nmetric: sentence-length\nparams: { max_words: 45, run_length: 3 }\n");
@@ -761,7 +783,8 @@ patterns: ["—"]
 
     #[test]
     fn inferential_needs_rubric_and_examples() {
-        let e = err("id: x\nengine: inferential\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
+        let e =
+            err("id: x\nengine: inferential\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
         assert_eq!(e, "rules/test.yaml: missing required field `rubric`");
 
         let e = err("id: x\nengine: inferential\nrubric: r\nflag_examples: [a, b]\npass_examples: [x, y, z]\n");
@@ -771,7 +794,9 @@ patterns: ["—"]
              flag_examples — found 2"
         );
 
-        let e = err("id: x\nengine: inferential\nrubric: r\nflag_examples: [a, b, c]\npass_examples: []\n");
+        let e = err(
+            "id: x\nengine: inferential\nrubric: r\nflag_examples: [a, b, c]\npass_examples: []\n",
+        );
         assert_eq!(
             e,
             "rules/test.yaml: pass_examples: an inferential rule needs at least 3 \
@@ -781,10 +806,8 @@ patterns: ["—"]
 
     #[test]
     fn inferential_severity_above_warning_is_an_error() {
-        let e = err(
-            "id: x\nengine: inferential\nseverity: error\nrubric: r\n\
-             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n",
-        );
+        let e = err("id: x\nengine: inferential\nseverity: error\nrubric: r\n\
+             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
         assert_eq!(
             e,
             "rules/test.yaml: severity: \"error\" is too severe for an inferential rule — \
@@ -825,8 +848,11 @@ patterns: ["—"]
 
     #[test]
     fn manifest_happy_path() {
-        let m = parse_manifest("pkg/style.yaml", "name: core\nversion: 0.1.0\ndescription: d\n")
-            .unwrap();
+        let m = parse_manifest(
+            "pkg/style.yaml",
+            "name: core\nversion: 0.1.0\ndescription: d\n",
+        )
+        .unwrap();
         assert_eq!(m.name, "core");
         assert_eq!(m.version, "0.1.0");
         assert_eq!(m.description.as_deref(), Some("d"));
@@ -834,7 +860,9 @@ patterns: ["—"]
 
     #[test]
     fn manifest_missing_name() {
-        let e = parse_manifest("pkg/style.yaml", "version: 0.1.0\n").unwrap_err().to_string();
+        let e = parse_manifest("pkg/style.yaml", "version: 0.1.0\n")
+            .unwrap_err()
+            .to_string();
         assert_eq!(e, "pkg/style.yaml: missing required field `name`");
     }
 

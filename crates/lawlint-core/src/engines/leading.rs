@@ -42,9 +42,12 @@ impl LeadingEngine {
         for (i, p) in def.patterns.iter().enumerate() {
             let (needle, message, suggestion) = match p {
                 PatternDef::Bare(s) => (s.as_str(), None, None),
-                PatternDef::Detailed { pattern, message, suggestion, .. } => {
-                    (pattern.as_str(), message.clone(), suggestion.clone())
-                }
+                PatternDef::Detailed {
+                    pattern,
+                    message,
+                    suggestion,
+                    ..
+                } => (pattern.as_str(), message.clone(), suggestion.clone()),
             };
             let anchored = format!("(?i)^(?:{needle})");
             let regex = Regex::new(&anchored).map_err(|e| LoadError::InvalidRegex {
@@ -53,7 +56,11 @@ impl LeadingEngine {
                 pattern: needle.to_string(),
                 message: e.to_string(),
             })?;
-            items.push(LeadingItem { regex, message, suggestion });
+            items.push(LeadingItem {
+                regex,
+                message,
+                suggestion,
+            });
         }
 
         let default_message = def
@@ -61,7 +68,11 @@ impl LeadingEngine {
             .clone()
             .unwrap_or_else(|| meta.description.clone());
 
-        Ok(LeadingEngine { meta, items, default_message })
+        Ok(LeadingEngine {
+            meta,
+            items,
+            default_message,
+        })
     }
 }
 
@@ -71,7 +82,10 @@ impl Rule for LeadingEngine {
     }
 
     fn interests(&self) -> Interests {
-        Interests { sentences: true, ..Interests::default() }
+        Interests {
+            sentences: true,
+            ..Interests::default()
+        }
     }
 
     fn check_sentence(&mut self, s: &Sentence, ctx: &mut Ctx) {
@@ -87,7 +101,10 @@ impl Rule for LeadingEngine {
                 }
                 debug_assert_eq!(m.start(), 0);
                 ctx.report(Report {
-                    span: TextRange { start: base, end: base + m.end() },
+                    span: TextRange {
+                        start: base,
+                        end: base + m.end(),
+                    },
                     message: item
                         .message
                         .clone()
@@ -139,16 +156,14 @@ mod tests {
     }
 
     fn sycophantic() -> LeadingEngine {
-        let d = def(
-            r#"
+        let d = def(r#"
 id: no-sycophantic-openers
 engine: leading
 message: "Skip the sycophantic opener and start with the substance."
 patterns:
   - "(?:great|good|excellent|fantastic|wonderful) question"
   - "what a (?:great|fascinating|wonderful|excellent|interesting) (?:question|problem|point)"
-"#,
-        );
+"#);
         LeadingEngine::from_def(meta(), &d, "t.yaml").unwrap()
     }
 
@@ -202,15 +217,13 @@ patterns:
     #[test]
     fn unicode_needle_with_curly_apostrophe() {
         let source = "Here’s my take on damages.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: no-throat-clearing
 engine: leading
 message: "Cut the throat-clearing and lead with the point."
 patterns:
   - "here['’]s my take"
-"#,
-        );
+"#);
         let mut e = LeadingEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let s = sentence(0, source.len());
         let reports = run(&mut e, source, &s);
@@ -223,16 +236,14 @@ patterns:
     #[test]
     fn per_item_message_suggestion_override_and_default_fallback() {
         let source = "Wonderful question.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: t
 engine: leading
 message: "default msg"
 patterns:
   - { pattern: "wonderful question", message: "custom msg", suggestion: "cut it" }
   - "great question"
-"#,
-        );
+"#);
         let mut e = LeadingEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let s = sentence(0, source.len());
         let reports = run(&mut e, source, &s);
@@ -260,9 +271,8 @@ patterns:
     #[test]
     fn first_matching_needle_wins_single_report() {
         let source = "Great question about torts.";
-        let d = def(
-            "id: t\nengine: leading\npatterns: [\"great question\", \"great question about\"]",
-        );
+        let d =
+            def("id: t\nengine: leading\npatterns: [\"great question\", \"great question about\"]");
         let mut e = LeadingEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let reports = run(&mut e, source, &sentence(0, source.len()));
         assert_eq!(reports.len(), 1);
@@ -283,7 +293,12 @@ patterns:
         let d = def("id: t\nengine: leading\npatterns: [\"fine\", \"(\"]");
         let err = LeadingEngine::from_def(meta(), &d, "rules/t.yaml").unwrap_err();
         match err {
-            LoadError::InvalidRegex { file, field, pattern, .. } => {
+            LoadError::InvalidRegex {
+                file,
+                field,
+                pattern,
+                ..
+            } => {
                 assert_eq!(file, "rules/t.yaml");
                 assert_eq!(field, "patterns[1]");
                 // Error carries the author's needle, not the anchored wrapper.

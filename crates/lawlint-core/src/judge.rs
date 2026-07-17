@@ -251,7 +251,12 @@ pub fn plan_judge(doc: &Document, source: &str, rules: &[&RubricFragment]) -> Ve
     let chunk_rubrics: Vec<&RubricFragment> = rules
         .iter()
         .copied()
-        .filter(|r| matches!(r.granularity, Granularity::Sentence | Granularity::Paragraph))
+        .filter(|r| {
+            matches!(
+                r.granularity,
+                Granularity::Sentence | Granularity::Paragraph
+            )
+        })
         .collect();
     let doc_rubrics: Vec<&RubricFragment> = rules
         .iter()
@@ -583,16 +588,8 @@ mod tests {
             severity: Severity::Warning,
             granularity,
             rubric: format!("Rubric text for {rule}."),
-            flag_examples: vec![
-                "flag one".into(),
-                "flag two".into(),
-                "flag three".into(),
-            ],
-            pass_examples: vec![
-                "pass one".into(),
-                "pass two".into(),
-                "pass three".into(),
-            ],
+            flag_examples: vec!["flag one".into(), "flag two".into(), "flag three".into()],
+            pass_examples: vec!["pass one".into(), "pass two".into(), "pass three".into()],
         }
     }
 
@@ -652,9 +649,18 @@ mod tests {
 
     #[test]
     fn granularity_serde_lowercase() {
-        assert_eq!(serde_json::to_string(&Granularity::Sentence).unwrap(), "\"sentence\"");
-        assert_eq!(serde_json::to_string(&Granularity::Paragraph).unwrap(), "\"paragraph\"");
-        assert_eq!(serde_json::to_string(&Granularity::Document).unwrap(), "\"document\"");
+        assert_eq!(
+            serde_json::to_string(&Granularity::Sentence).unwrap(),
+            "\"sentence\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Granularity::Paragraph).unwrap(),
+            "\"paragraph\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Granularity::Document).unwrap(),
+            "\"document\""
+        );
         let g: Granularity = serde_json::from_str("\"paragraph\"").unwrap();
         assert_eq!(g, Granularity::Paragraph);
     }
@@ -703,16 +709,28 @@ mod tests {
     #[test]
     fn ground_exact_substring_absolute_offsets() {
         let chunk = "The court held that this applies broadly.";
-        let range = TextRange { start: 100, end: 100 + chunk.len() };
+        let range = TextRange {
+            start: 100,
+            end: 100 + chunk.len(),
+        };
         let got = default_quote_ground("held that", chunk, range).unwrap();
-        assert_eq!(got, TextRange { start: 110, end: 119 });
+        assert_eq!(
+            got,
+            TextRange {
+                start: 110,
+                end: 119
+            }
+        );
         assert_eq!(&chunk[10..19], "held that");
     }
 
     #[test]
     fn ground_exact_with_multibyte_prefix() {
         let chunk = "It was—frankly—wrong in every way.";
-        let range = TextRange { start: 50, end: 50 + chunk.len() };
+        let range = TextRange {
+            start: 50,
+            end: 50 + chunk.len(),
+        };
         let idx = chunk.find("wrong").unwrap();
         let got = default_quote_ground("wrong", chunk, range).unwrap();
         assert_eq!(got.start, 50 + idx);
@@ -724,9 +742,18 @@ mod tests {
         // 10-char quote vs 10-char window with 1 substitution: 1 - 1/10 = 0.9,
         // exactly at the floor — must ground.
         let chunk = "zz abcdefghiX zz";
-        let range = TextRange { start: 7, end: 7 + chunk.len() };
+        let range = TextRange {
+            start: 7,
+            end: 7 + chunk.len(),
+        };
         let got = default_quote_ground("abcdefghij", chunk, range).unwrap();
-        assert_eq!(got, TextRange { start: 7 + 3, end: 7 + 13 });
+        assert_eq!(
+            got,
+            TextRange {
+                start: 7 + 3,
+                end: 7 + 13
+            }
+        );
         assert_eq!(&chunk[3..13], "abcdefghiX");
     }
 
@@ -734,7 +761,10 @@ mod tests {
     fn ground_fuzzy_below_floor_discards() {
         // 9-char quote, 1 substitution: 1 - 1/9 ≈ 0.889 < 0.9 — must discard.
         let chunk = "zz abcdefghX zz";
-        let range = TextRange { start: 0, end: chunk.len() };
+        let range = TextRange {
+            start: 0,
+            end: chunk.len(),
+        };
         assert!(default_quote_ground("abcdefghi", chunk, range).is_none());
     }
 
@@ -743,10 +773,16 @@ mod tests {
         // Multibyte é inside both quote and window; sliding must not panic
         // and the returned range must cover the whole multibyte window.
         let chunk = "so café latte is great indeed";
-        let range = TextRange { start: 10, end: 10 + chunk.len() };
+        let range = TextRange {
+            start: 10,
+            end: 10 + chunk.len(),
+        };
         // 19 chars, 1 substitution (greet/great): 1 - 1/19 ≈ 0.947 >= 0.9.
         let got = default_quote_ground("café latte is greet", chunk, range).unwrap();
-        let rel = TextRange { start: got.start - 10, end: got.end - 10 };
+        let rel = TextRange {
+            start: got.start - 10,
+            end: got.end - 10,
+        };
         assert_eq!(rel.slice(chunk), "café latte is great");
     }
 
@@ -755,7 +791,10 @@ mod tests {
         // Over MAX_FUZZY_QUOTE_CHARS: exact match still grounds…
         let quote = "q".repeat(MAX_FUZZY_QUOTE_CHARS + 1);
         let chunk = format!("prefix {quote} suffix");
-        let range = TextRange { start: 0, end: chunk.len() };
+        let range = TextRange {
+            start: 0,
+            end: chunk.len(),
+        };
         let got = default_quote_ground(&quote, &chunk, range).unwrap();
         assert_eq!(got.slice(&chunk), quote);
         // …but a near-miss is discarded instead of running the
@@ -772,14 +811,20 @@ mod tests {
         // test completes instantly; without it, it visibly hangs.
         let chunk = "The court held that the motion fails on procedural grounds. ".repeat(300);
         let quote = "zzz ".repeat(90);
-        let range = TextRange { start: 0, end: chunk.len() };
+        let range = TextRange {
+            start: 0,
+            end: chunk.len(),
+        };
         assert!(default_quote_ground(quote.trim(), &chunk, range).is_none());
     }
 
     #[test]
     fn ground_garbage_and_edge_quotes_discard() {
         let chunk = "short text";
-        let range = TextRange { start: 0, end: chunk.len() };
+        let range = TextRange {
+            start: 0,
+            end: chunk.len(),
+        };
         assert!(default_quote_ground("completely unrelated words here", chunk, range).is_none());
         assert!(default_quote_ground("", chunk, range).is_none());
         // Quote longer (in chars) than the chunk: no window exists.
@@ -796,7 +841,13 @@ mod tests {
         let refs: Vec<&RubricFragment> = rules.iter().collect();
         let reqs = plan_judge(&doc, source, &refs);
         assert_eq!(reqs.len(), 1);
-        assert_eq!(reqs[0].chunk_range, TextRange { start: 0, end: source.len() });
+        assert_eq!(
+            reqs[0].chunk_range,
+            TextRange {
+                start: 0,
+                end: source.len()
+            }
+        );
         assert_eq!(reqs[0].chunk_text, source);
         assert_eq!(reqs[0].rules, vec![RuleId("core/empty-hedge".into())]);
     }
@@ -811,8 +862,20 @@ mod tests {
         let refs: Vec<&RubricFragment> = rules.iter().collect();
         let reqs = plan_judge(&doc, &source, &refs);
         assert_eq!(reqs.len(), 2);
-        assert_eq!(reqs[0].chunk_range, TextRange { start: 0, end: 1002 }); // both paras + "\n\n"
-        assert_eq!(reqs[1].chunk_range, TextRange { start: 1004, end: 1504 });
+        assert_eq!(
+            reqs[0].chunk_range,
+            TextRange {
+                start: 0,
+                end: 1002
+            }
+        ); // both paras + "\n\n"
+        assert_eq!(
+            reqs[1].chunk_range,
+            TextRange {
+                start: 1004,
+                end: 1504
+            }
+        );
         for r in &reqs {
             assert_eq!(r.chunk_text, r.chunk_range.slice(&source));
         }
@@ -849,7 +912,12 @@ mod tests {
         let rules = [frag("core/empty-hedge", Granularity::Sentence)];
         let refs: Vec<&RubricFragment> = rules.iter().collect();
         let reqs = plan_judge(&doc, source, &refs);
-        assert_eq!(reqs.len(), 3, "{:?}", reqs.iter().map(|r| &r.chunk_text).collect::<Vec<_>>());
+        assert_eq!(
+            reqs.len(),
+            3,
+            "{:?}",
+            reqs.iter().map(|r| &r.chunk_text).collect::<Vec<_>>()
+        );
         assert!(reqs.iter().all(|r| !r.chunk_text.contains("div")));
         assert!(reqs.iter().all(|r| !r.chunk_text.contains("---")));
         assert_eq!(reqs[0].chunk_text, "Para one is fine.");
@@ -895,7 +963,13 @@ mod tests {
         );
         // Whole-document request carries only document rubrics.
         let doc_req = &reqs[1];
-        assert_eq!(doc_req.chunk_range, TextRange { start: 0, end: source.len() });
+        assert_eq!(
+            doc_req.chunk_range,
+            TextRange {
+                start: 0,
+                end: source.len()
+            }
+        );
         assert_eq!(doc_req.chunk_text, source);
         assert_eq!(doc_req.rules, vec![RuleId("core/whole-doc".into())]);
         // Different rubric sets → different cache key bases.
@@ -966,9 +1040,10 @@ mod tests {
     fn run_retries_once_then_succeeds() {
         let text = "The hedge could perhaps be argued.";
         let r = req(text, &["core/empty-hedge"]);
-        let judge = MockJudge::new()
-            .respond_err(text, "transient")
-            .respond(text, vec![finding("core/empty-hedge", "could perhaps", 0.8)]);
+        let judge = MockJudge::new().respond_err(text, "transient").respond(
+            text,
+            vec![finding("core/empty-hedge", "could perhaps", 0.8)],
+        );
         let (out, stats) = run_judge(&judge, None, &[r], text);
         assert_eq!(judge.calls(), 2);
         assert_eq!(out.len(), 1);
@@ -1002,7 +1077,10 @@ mod tests {
             .respond_err(t1, "boom")
             .respond_err(t1, "boom again")
             .respond(t2, vec![finding("core/empty-hedge", "works fine", 0.7)]);
-        let reqs = [req(t1, &["core/empty-hedge"]), req(t2, &["core/empty-hedge"])];
+        let reqs = [
+            req(t1, &["core/empty-hedge"]),
+            req(t2, &["core/empty-hedge"]),
+        ];
         let source = t2; // grounding uses chunk_text; ranges are per-request
         let (out, stats) = run_judge(&judge, None, &reqs, source);
         assert_eq!(stats.chunks, 2);
@@ -1076,7 +1154,11 @@ mod tests {
         let r = req(text, &["core/empty-hedge"]);
         let judge = MockJudge::new().respond(
             text,
-            vec![finding("core/empty-hedge", "totally fabricated wording", 0.9)],
+            vec![finding(
+                "core/empty-hedge",
+                "totally fabricated wording",
+                0.9,
+            )],
         );
         let (out, stats) = run_judge(&judge, None, &[r], text);
         assert!(out.is_empty());

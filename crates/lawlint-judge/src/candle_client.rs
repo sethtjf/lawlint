@@ -251,9 +251,7 @@ fn load_model(repo_id: &str, gguf_file: Option<&str>) -> AxResult<Loaded> {
         None if repo_id == crate::DEFAULT_LOCAL_REPO => DEFAULT_GGUF_FILE.to_string(),
         None => resolve_gguf_file(&repo, repo_id)?,
     };
-    eprintln!(
-        "lawlint-judge: fetching {repo_id}/{gguf_name} (downloads once, then cached)…"
-    );
+    eprintln!("lawlint-judge: fetching {repo_id}/{gguf_name} (downloads once, then cached)…");
     let gguf_path = repo
         .get(&gguf_name)
         .map_err(|e| rt(&format!("failed to fetch {repo_id}/{gguf_name}"), e))?;
@@ -348,7 +346,9 @@ fn generate(loaded: &mut Loaded, prompt: &str) -> AxResult<(String, &'static str
             .squeeze(0)
             .and_then(|l| l.to_dtype(candle_core::DType::F32))
             .map_err(|e| rt("logits reshape failed", e))?;
-        sampler.sample(&logits).map_err(|e| rt("sampling failed", e))
+        sampler
+            .sample(&logits)
+            .map_err(|e| rt("sampling failed", e))
     };
 
     // Prompt pass (full sequence), then token-by-token with KV cache.
@@ -523,7 +523,10 @@ mod tests {
         assert_eq!(context_length_from_metadata(&llama), 4_096);
 
         // Missing, zero, or non-integer values fall back conservatively.
-        assert_eq!(context_length_from_metadata(&md(&[])), FALLBACK_CONTEXT_LENGTH);
+        assert_eq!(
+            context_length_from_metadata(&md(&[])),
+            FALLBACK_CONTEXT_LENGTH
+        );
         let zero = md(&[("qwen2.context_length", gguf_file::Value::U32(0))]);
         assert_eq!(context_length_from_metadata(&zero), FALLBACK_CONTEXT_LENGTH);
         let bad = md(&[(

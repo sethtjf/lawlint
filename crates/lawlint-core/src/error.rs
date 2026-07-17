@@ -116,7 +116,10 @@ mod tests {
             file: "rules/x.yaml".into(),
             field: "rubric".into(),
         };
-        assert_eq!(e.to_string(), "rules/x.yaml: missing required field `rubric`");
+        assert_eq!(
+            e.to_string(),
+            "rules/x.yaml: missing required field `rubric`"
+        );
     }
 
     #[test]

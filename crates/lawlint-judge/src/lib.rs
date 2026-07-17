@@ -237,7 +237,11 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
             Some((repo, file)) => (repo, Some(file.to_string())),
             None => (spec, None),
         };
-        let repo = if repo.is_empty() { DEFAULT_LOCAL_REPO } else { repo };
+        let repo = if repo.is_empty() {
+            DEFAULT_LOCAL_REPO
+        } else {
+            repo
+        };
         let model_id = match &file {
             Some(f) => format!("local:{repo}#{f}"),
             None => format!("local:{repo}"),
@@ -484,7 +488,10 @@ mod tests {
         let judge = AxJudge::new(Box::new(client), "m");
         let source = "It could perhaps be argued.";
         let r = JudgeRequest {
-            chunk_range: lawlint_core::TextRange { start: 0, end: source.len() },
+            chunk_range: lawlint_core::TextRange {
+                start: 0,
+                end: source.len(),
+            },
             chunk_text: source.to_string(),
             rules: vec![lawlint_core::RuleId("core/empty-hedge".to_string())],
             prompt: "p".to_string(),
@@ -514,7 +521,9 @@ mod tests {
             format!("local:{DEFAULT_LOCAL_REPO}")
         );
         assert_eq!(
-            create_judge(&opts("local:foo/bar-GGUF")).unwrap().model_id(),
+            create_judge(&opts("local:foo/bar-GGUF"))
+                .unwrap()
+                .model_id(),
             "local:foo/bar-GGUF"
         );
         assert_eq!(
@@ -542,7 +551,10 @@ mod tests {
     #[cfg(not(feature = "cloud"))]
     #[test]
     fn create_judge_cloud_schemes_error_without_cloud_feature() {
-        for model in ["anthropic:claude-sonnet-4-5", "openai:http://localhost:8080/v1#m"] {
+        for model in [
+            "anthropic:claude-sonnet-4-5",
+            "openai:http://localhost:8080/v1#m",
+        ] {
             let opts = JudgeOptions {
                 model: Some(model.to_string()),
                 ..Default::default()

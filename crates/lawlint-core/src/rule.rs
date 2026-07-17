@@ -196,7 +196,10 @@ mod tests {
             description: "d".into(),
             docs_url: "u".into(),
             rationale: None,
-            examples: vec![RuleExample { bad: "b".into(), good: "g".into() }],
+            examples: vec![RuleExample {
+                bad: "b".into(),
+                good: "g".into(),
+            }],
         };
         let v = serde_json::to_value(&meta).unwrap();
         assert!(v.get("rationale").is_none());

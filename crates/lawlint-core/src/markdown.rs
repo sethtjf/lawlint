@@ -98,7 +98,10 @@ pub fn markdown_blocks(source: &str) -> Vec<(BlockKind, TextRange)> {
                     flush(&mut current, &mut blocks);
                     blocks.push((
                         BlockKind::CodeBlock,
-                        TextRange { start: range.start, end: range.end },
+                        TextRange {
+                            start: range.start,
+                            end: range.end,
+                        },
                     ));
                     code_depth += 1;
                 }
@@ -181,7 +184,13 @@ pub fn plain_blocks(source: &str) -> Vec<(BlockKind, TextRange)> {
         pos += line.len();
         if line.trim().is_empty() {
             if let Some(s) = block_start.take() {
-                blocks.push((BlockKind::Paragraph, TextRange { start: s, end: block_end }));
+                blocks.push((
+                    BlockKind::Paragraph,
+                    TextRange {
+                        start: s,
+                        end: block_end,
+                    },
+                ));
             }
             continue;
         }
@@ -193,7 +202,13 @@ pub fn plain_blocks(source: &str) -> Vec<(BlockKind, TextRange)> {
         block_end = content_end;
     }
     if let Some(s) = block_start {
-        blocks.push((BlockKind::Paragraph, TextRange { start: s, end: block_end }));
+        blocks.push((
+            BlockKind::Paragraph,
+            TextRange {
+                start: s,
+                end: block_end,
+            },
+        ));
     }
     blocks
 }
@@ -217,7 +232,10 @@ mod tests {
         let blocks = plain_blocks(src);
         assert_eq!(blocks.len(), 3);
         assert!(blocks.iter().all(|(k, _)| *k == BlockKind::Paragraph));
-        assert_eq!(blocks[0].1.slice(src), "First paragraph line one.\nLine two.");
+        assert_eq!(
+            blocks[0].1.slice(src),
+            "First paragraph line one.\nLine two."
+        );
         assert_eq!(blocks[1].1.slice(src), "Second paragraph.");
         assert_eq!(blocks[2].1.slice(src), "Third.");
     }
@@ -297,7 +315,10 @@ mod tests {
         let src = "> Quoted holding of the court.\n";
         assert_eq!(
             slices(src),
-            vec![(BlockKind::BlockQuote, "Quoted holding of the court.".to_string())]
+            vec![(
+                BlockKind::BlockQuote,
+                "Quoted holding of the court.".to_string()
+            )]
         );
     }
 
@@ -319,14 +340,24 @@ mod tests {
         let src = "Para.\n\n    let indented = true;\n\nAfter.\n";
         let blocks = markdown_blocks(src);
         let kinds: Vec<BlockKind> = blocks.iter().map(|(k, _)| *k).collect();
-        assert_eq!(kinds, vec![BlockKind::Paragraph, BlockKind::CodeBlock, BlockKind::Paragraph]);
+        assert_eq!(
+            kinds,
+            vec![
+                BlockKind::Paragraph,
+                BlockKind::CodeBlock,
+                BlockKind::Paragraph
+            ]
+        );
         assert!(blocks[1].1.slice(src).contains("let indented = true;"));
     }
 
     #[test]
     fn nested_list_inside_quote_classifies_innermost() {
         let src = "> - nested point\n";
-        assert_eq!(slices(src), vec![(BlockKind::ListItem, "nested point".to_string())]);
+        assert_eq!(
+            slices(src),
+            vec![(BlockKind::ListItem, "nested point".to_string())]
+        );
     }
 
     #[test]
@@ -364,7 +395,10 @@ mod tests {
     #[test]
     fn heading_inside_blockquote_is_heading() {
         let src = "> # Quoted Heading\n";
-        assert_eq!(slices(src), vec![(BlockKind::Heading, "Quoted Heading".to_string())]);
+        assert_eq!(
+            slices(src),
+            vec![(BlockKind::Heading, "Quoted Heading".to_string())]
+        );
     }
 
     #[test]

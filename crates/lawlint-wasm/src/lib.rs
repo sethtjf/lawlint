@@ -161,13 +161,16 @@ impl HostJudge {
 
 impl Judge for HostJudge {
     fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError> {
-        self.findings.get(&req.cache_key_base).cloned().ok_or_else(|| {
-            JudgeError::Backend(
-                "no host findings for this chunk (requests do not match this \
+        self.findings
+            .get(&req.cache_key_base)
+            .cloned()
+            .ok_or_else(|| {
+                JudgeError::Backend(
+                    "no host findings for this chunk (requests do not match this \
                  text/options/rules)"
-                    .to_string(),
-            )
-        })
+                        .to_string(),
+                )
+            })
     }
 
     fn model_id(&self) -> &str {
@@ -337,7 +340,11 @@ pub fn lint_with_rules(
 /// The host runs each `prompt` through its model and passes the requests
 /// back to `applyJudgeFindings` with the findings it got.
 #[wasm_bindgen(js_name = planJudge)]
-pub fn plan_judge_js(text: &str, options: JsValue, extra_rules: JsValue) -> Result<JsValue, JsValue> {
+pub fn plan_judge_js(
+    text: &str,
+    options: JsValue,
+    extra_rules: JsValue,
+) -> Result<JsValue, JsValue> {
     let options = options_from_js(options)?;
     let extra = extra_rules_from_js(extra_rules)?;
     match plan_judge_impl(text, &options, &extra) {
@@ -366,11 +373,12 @@ pub fn apply_judge_findings_js(
 ) -> Result<JsValue, JsValue> {
     let options = options_from_js(options)?;
     let extra = extra_rules_from_js(extra_rules)?;
-    let requests: Vec<JudgeRequest> = serde_wasm_bindgen::from_value(requests).map_err(|error| {
-        JsValue::from_str(&format!(
-            "invalid requests: expected the JudgeRequest array from planJudge: {error}"
-        ))
-    })?;
+    let requests: Vec<JudgeRequest> =
+        serde_wasm_bindgen::from_value(requests).map_err(|error| {
+            JsValue::from_str(&format!(
+                "invalid requests: expected the JudgeRequest array from planJudge: {error}"
+            ))
+        })?;
     let findings: Vec<Vec<JudgeFinding>> = serde_wasm_bindgen::from_value(findings_per_request)
         .map_err(|error| {
             JsValue::from_str(&format!(
@@ -493,7 +501,10 @@ mod tests {
         let e = lint_with_user_rules(
             "text",
             &LintOptions::default(),
-            &[extra("re.yaml", "id: no-x\nengine: phrase\npatterns: [\"(\"]\n")],
+            &[extra(
+                "re.yaml",
+                "id: no-x\nengine: phrase\npatterns: [\"(\"]\n",
+            )],
         )
         .unwrap_err();
         assert_eq!(e.file, "re.yaml");
@@ -617,7 +628,10 @@ mod tests {
                 "id: no-x\nengine: density\nscope: prose\nseverity: info\nthreshold: 8\n\
                  patterns: [x]\n",
             ),
-            extra("y.yaml", "id: no-y\nengine: leading\npatterns: [Certainly]\n"),
+            extra(
+                "y.yaml",
+                "id: no-y\nengine: leading\npatterns: [Certainly]\n",
+            ),
         ])
         .unwrap();
         let metas = set.metas();
@@ -731,7 +745,11 @@ mod tests {
         assert_eq!(reqs.len(), 1, "{reqs:?}");
         let req = &reqs[0];
         assert_eq!(req.chunk_text, text);
-        assert!(req.rules.iter().any(|r| r.0 == "core/empty-hedge"), "{:?}", req.rules);
+        assert!(
+            req.rules.iter().any(|r| r.0 == "core/empty-hedge"),
+            "{:?}",
+            req.rules
+        );
         assert!(req.prompt.contains("core/empty-hedge"));
         assert!(req.prompt.contains(text));
         assert_eq!(req.cache_key_base.len(), 64);
@@ -767,7 +785,10 @@ mod tests {
         let e = plan_judge_impl(
             "text",
             &LintOptions::default(),
-            &[extra("bad.yaml", "id: no-x\nengine: phrase\nseverity: high\npatterns: [x]\n")],
+            &[extra(
+                "bad.yaml",
+                "id: no-x\nengine: phrase\nseverity: high\npatterns: [x]\n",
+            )],
         )
         .unwrap_err();
         assert_eq!(e.file, "bad.yaml");
@@ -787,7 +808,11 @@ mod tests {
         let result = apply_judge_findings_impl(text, &options, reqs, findings, &[])
             .unwrap_or_else(|_| panic!("apply failed"));
         // Tiers 1–2 still present, merged in span order.
-        assert!(ids(&result).contains(&"core/no-ai-cliches"), "{:?}", ids(&result));
+        assert!(
+            ids(&result).contains(&"core/no-ai-cliches"),
+            "{:?}",
+            ids(&result)
+        );
         // Grounded tier-3 diagnostic, finalized like any static one.
         let d = result
             .diagnostics
@@ -820,8 +845,13 @@ mod tests {
             "totally fabricated wording never in the text",
             0.95,
         )]];
-        let result = apply_judge_findings_impl(text, &options, reqs, findings, &[]).ok().unwrap();
-        assert!(result.diagnostics.iter().all(|d| d.tier != Tier::Inferential));
+        let result = apply_judge_findings_impl(text, &options, reqs, findings, &[])
+            .ok()
+            .unwrap();
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.tier != Tier::Inferential));
         let stats = result.judge.as_ref().unwrap();
         assert_eq!(stats.grounded, 0);
         assert_eq!(stats.hallucinated.get("core/empty-hedge"), Some(&1));
@@ -838,16 +868,25 @@ mod tests {
                 "could perhaps be argued",
                 confidence,
             )]];
-            apply_judge_findings_impl(text, &options, reqs, findings, &[]).ok().unwrap()
+            apply_judge_findings_impl(text, &options, reqs, findings, &[])
+                .ok()
+                .unwrap()
         };
         // Below the default 0.6 floor: grounded (it IS in the text) but gated.
         let result = mk(0.3);
-        assert!(result.diagnostics.iter().all(|d| d.tier != Tier::Inferential));
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.tier != Tier::Inferential));
         assert_eq!(result.judge.as_ref().unwrap().grounded, 1);
         // Above the floor: kept.
         let result = mk(0.9);
         assert_eq!(
-            result.diagnostics.iter().filter(|d| d.tier == Tier::Inferential).count(),
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.tier == Tier::Inferential)
+                .count(),
             1
         );
     }
@@ -874,14 +913,22 @@ mod tests {
         let options = LintOptions::default();
         // Requests planned for DIFFERENT text: keys can't match the re-plan.
         let stale = plan_judge_impl("Entirely different words here.", &options, &[]).unwrap();
-        let findings = vec![vec![judge_finding("core/empty-hedge", "different words", 0.9)]];
-        let result =
-            apply_judge_findings_impl(text, &options, stale, findings, &[]).ok().unwrap();
+        let findings = vec![vec![judge_finding(
+            "core/empty-hedge",
+            "different words",
+            0.9,
+        )]];
+        let result = apply_judge_findings_impl(text, &options, stale, findings, &[])
+            .ok()
+            .unwrap();
         let stats = result.judge.as_ref().unwrap();
         assert_eq!(stats.chunks, 1);
         assert_eq!(stats.chunks_failed, 1);
         assert_eq!(stats.grounded, 0);
-        assert!(result.diagnostics.iter().all(|d| d.tier != Tier::Inferential));
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.tier != Tier::Inferential));
     }
 
     #[test]
@@ -890,12 +937,20 @@ mod tests {
         let extra = [fluff_rule()];
         let options = LintOptions {
             // Severity override must still cap at Warning for tier-3.
-            severity: Some([("no-fluff".to_string(), Severity::Error)].into_iter().collect()),
+            severity: Some(
+                [("no-fluff".to_string(), Severity::Error)]
+                    .into_iter()
+                    .collect(),
+            ),
             ..Default::default()
         };
         let reqs = plan_judge_impl(text, &options, &extra).unwrap();
         assert_eq!(reqs.len(), 1);
-        assert!(reqs[0].rules.iter().any(|r| r.0 == "user/no-fluff"), "{:?}", reqs[0].rules);
+        assert!(
+            reqs[0].rules.iter().any(|r| r.0 == "user/no-fluff"),
+            "{:?}",
+            reqs[0].rules
+        );
         assert!(reqs[0].prompt.contains("Flag fluff."));
         let findings = reqs
             .iter()
@@ -907,8 +962,9 @@ mod tests {
                 }
             })
             .collect();
-        let result =
-            apply_judge_findings_impl(text, &options, reqs, findings, &extra).ok().unwrap();
+        let result = apply_judge_findings_impl(text, &options, reqs, findings, &extra)
+            .ok()
+            .unwrap();
         let d = result
             .diagnostics
             .iter()
@@ -926,10 +982,22 @@ mod tests {
         let options = LintOptions::default();
         let reqs = plan_judge_impl(text, &options, &[]).unwrap();
         let findings = vec![vec![judge_finding("core/not-a-rule", "could perhaps", 0.9)]];
-        let result =
-            apply_judge_findings_impl(text, &options, reqs, findings, &[]).ok().unwrap();
-        assert!(result.diagnostics.iter().all(|d| d.tier != Tier::Inferential));
-        assert_eq!(result.judge.as_ref().unwrap().hallucinated.get("core/not-a-rule"), Some(&1));
+        let result = apply_judge_findings_impl(text, &options, reqs, findings, &[])
+            .ok()
+            .unwrap();
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.tier != Tier::Inferential));
+        assert_eq!(
+            result
+                .judge
+                .as_ref()
+                .unwrap()
+                .hallucinated
+                .get("core/not-a-rule"),
+            Some(&1)
+        );
     }
 
     #[test]
@@ -942,13 +1010,22 @@ mod tests {
         let json = serde_json::to_string(&reqs).unwrap();
         let back: Vec<JudgeRequest> = serde_json::from_str(&json).unwrap();
         assert_eq!(back[0].cache_key_base, reqs[0].cache_key_base);
-        let findings = vec![vec![judge_finding("core/empty-hedge", "could perhaps be argued", 0.9)]];
+        let findings = vec![vec![judge_finding(
+            "core/empty-hedge",
+            "could perhaps be argued",
+            0.9,
+        )]];
         let fjson = serde_json::to_string(&findings).unwrap();
         let fback: Vec<Vec<JudgeFinding>> = serde_json::from_str(&fjson).unwrap();
-        let result =
-            apply_judge_findings_impl(text, &options, back, fback, &[]).ok().unwrap();
+        let result = apply_judge_findings_impl(text, &options, back, fback, &[])
+            .ok()
+            .unwrap();
         assert_eq!(
-            result.diagnostics.iter().filter(|d| d.tier == Tier::Inferential).count(),
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.tier == Tier::Inferential)
+                .count(),
             1
         );
     }
@@ -959,8 +1036,7 @@ mod tests {
     fn suppression_comments_silence_user_rules_by_name() {
         // Previously a documented limitation: directives could not name user
         // rules. With a real merged RuleSet the dispatcher resolves them.
-        let text =
-            "<!-- lawlint-disable-next-line no-foo -->\nSome foo here.\nMore foo again.";
+        let text = "<!-- lawlint-disable-next-line no-foo -->\nSome foo here.\nMore foo again.";
         let o = LintOptions {
             markdown: Some(true),
             enable: Some(vec!["no-foo".into()]),

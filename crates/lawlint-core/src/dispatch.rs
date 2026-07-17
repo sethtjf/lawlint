@@ -46,7 +46,10 @@ fn sentence_admitted(scope: Scope, block_kind: BlockKind, s: &Sentence) -> bool 
 /// Shared with `lint_full` so tier-3 diagnostics obey the same mask.
 pub(crate) fn scope_mask(scope: Scope, source: &str, doc: &Document) -> Vec<TextRange> {
     match scope {
-        Scope::All => vec![TextRange { start: 0, end: source.len() }],
+        Scope::All => vec![TextRange {
+            start: 0,
+            end: source.len(),
+        }],
         Scope::Text => doc
             .blocks
             .iter()
@@ -112,7 +115,11 @@ fn parse_ids(rest: &str, rule_set: &RuleSet) -> (bool, HashSet<String>) {
     }
     let ids = tokens
         .iter()
-        .filter_map(|t| rule_set.resolve(t).or_else(|| rule_set.resolve(&t.to_lowercase())))
+        .filter_map(|t| {
+            rule_set
+                .resolve(t)
+                .or_else(|| rule_set.resolve(&t.to_lowercase()))
+        })
         .map(|id| id.0.clone())
         .collect();
     (false, ids)
@@ -199,7 +206,11 @@ impl Suppressions {
             per_line[target].merge(&supp);
         }
 
-        Suppressions { line_starts, per_line, file }
+        Suppressions {
+            line_starts,
+            per_line,
+            file,
+        }
     }
 
     /// Is a diagnostic for `id` starting at byte `offset` suppressed?
@@ -280,7 +291,11 @@ pub fn run(
         .into_iter()
         .map(|rule| {
             let threshold = threshold_for(options, rule_set, &rule.meta().id);
-            Slot { rule, threshold, diagnostics: Vec::new() }
+            Slot {
+                rule,
+                threshold,
+                diagnostics: Vec::new(),
+            }
         })
         .collect();
 
@@ -370,7 +385,12 @@ mod tests {
         )])
     }
 
-    fn run_on(source: &str, markdown: bool, rs: &RuleSet, options: &LintOptions) -> Vec<Diagnostic> {
+    fn run_on(
+        source: &str,
+        markdown: bool,
+        rs: &RuleSet,
+        options: &LintOptions,
+    ) -> Vec<Diagnostic> {
         let doc = parse(source, markdown);
         run(source, &doc, rs.instantiate(options), options, rs)
     }
@@ -432,7 +452,13 @@ mod tests {
             "id: no-wade\nengine: phrase\nscope: prose\nmessage: m\npatterns: ['Wade']\n",
         )]);
         let _ = rs;
-        let diags = run(src, &doc, rs2.instantiate(&LintOptions::default()), &LintOptions::default(), &rs2);
+        let diags = run(
+            src,
+            &doc,
+            rs2.instantiate(&LintOptions::default()),
+            &LintOptions::default(),
+            &rs2,
+        );
         assert!(diags.is_empty());
     }
 
@@ -486,7 +512,11 @@ mod tests {
         let src = "perhaps one two.\n\n```\nfiller filler filler filler filler filler\n```\n";
         let diags = run_on(src, true, &rs, &LintOptions::default());
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("(1 occurrences in 3 words)"), "{}", diags[0].message);
+        assert!(
+            diags[0].message.contains("(1 occurrences in 3 words)"),
+            "{}",
+            diags[0].message
+        );
     }
 
     // ---- suppression ---------------------------------------------------

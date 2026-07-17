@@ -73,7 +73,11 @@ impl Rule for DensityEngine {
     }
 
     fn interests(&self) -> Interests {
-        Interests { blocks: true, document_exit: true, ..Interests::default() }
+        Interests {
+            blocks: true,
+            document_exit: true,
+            ..Interests::default()
+        }
     }
 
     fn check_block(&mut self, b: &Block, ctx: &mut Ctx) {
@@ -168,7 +172,10 @@ mod tests {
     fn whole_block(source: &str) -> Block {
         Block {
             kind: BlockKind::Paragraph,
-            range: TextRange { start: 0, end: source.len() },
+            range: TextRange {
+                start: 0,
+                end: source.len(),
+            },
             sentences: vec![],
         }
     }
@@ -223,7 +230,12 @@ mod tests {
         def.patterns = vec![PatternDef::Bare("(".into())];
         let err = DensityEngine::from_def(meta_for("x"), &def, "rules/x.yaml").unwrap_err();
         match err {
-            LoadError::InvalidRegex { file, field, pattern, .. } => {
+            LoadError::InvalidRegex {
+                file,
+                field,
+                pattern,
+                ..
+            } => {
                 assert_eq!(file, "rules/x.yaml");
                 assert_eq!(field, "patterns[0]");
                 assert_eq!(pattern, "(");
@@ -300,7 +312,10 @@ mod tests {
         let mut e = engine(r"perhaps", 1.0, "Reduce hedging.");
         let src = hedged(3);
         let reports = run(&mut e, &src, 100, None);
-        assert_eq!(reports[0].message, "Reduce hedging. (3 occurrences in 100 words)");
+        assert_eq!(
+            reports[0].message,
+            "Reduce hedging. (3 occurrences in 100 words)"
+        );
     }
 
     #[test]
@@ -322,7 +337,10 @@ mod tests {
         };
         let b2 = Block {
             kind: BlockKind::Paragraph,
-            range: TextRange { start: 15, end: source.len() },
+            range: TextRange {
+                start: 15,
+                end: source.len(),
+            },
             sentences: vec![],
         };
         let mut e = engine(r"perhaps", 1.0, "m");

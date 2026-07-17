@@ -68,7 +68,11 @@ pub fn parse(source: &str, markdown: bool) -> Document {
             } else {
                 crate::segment::split_sentences(source, range)
             };
-            Block { kind, range, sentences }
+            Block {
+                kind,
+                range,
+                sentences,
+            }
         })
         .collect();
     Document { blocks }
@@ -111,7 +115,11 @@ mod tests {
         );
         assert_eq!(doc.blocks[1].sentences.len(), 2);
         // Code blocks get NO sentences.
-        let code = doc.blocks.iter().find(|b| b.kind == BlockKind::CodeBlock).unwrap();
+        let code = doc
+            .blocks
+            .iter()
+            .find(|b| b.kind == BlockKind::CodeBlock)
+            .unwrap();
         assert!(code.sentences.is_empty());
         // Non-code blocks all segmented.
         assert!(doc.blocks[0].sentences.len() == 1);
@@ -152,7 +160,11 @@ mod tests {
         }
         // Spot-check exact reproduction through nested ranges.
         let doc = parse(src, true);
-        let para = doc.blocks.iter().find(|b| b.kind == BlockKind::Paragraph).unwrap();
+        let para = doc
+            .blocks
+            .iter()
+            .find(|b| b.kind == BlockKind::Paragraph)
+            .unwrap();
         assert_eq!(para.sentences.len(), 2);
         assert_eq!(
             para.sentences[0].range.slice(src),
@@ -168,7 +180,10 @@ mod tests {
             .filter(|t| t.kind == TokenKind::Word)
             .map(|t| t.range.slice(src))
             .collect();
-        assert_eq!(words, vec!["The", "naïve", "party’s", "brief", "was", "filed"]);
+        assert_eq!(
+            words,
+            vec!["The", "naïve", "party’s", "brief", "was", "filed"]
+        );
     }
 
     #[test]

@@ -127,7 +127,11 @@ fn disable_flag_silences_a_rule_by_flat_alias() {
 #[test]
 fn config_file_is_discovered_and_applied() {
     let dir = TempDir::new().unwrap();
-    write(&dir, "lawlint.config.json", r#"{"disable": ["no-ai-cliches"]}"#);
+    write(
+        &dir,
+        "lawlint.config.json",
+        r#"{"disable": ["no-ai-cliches"]}"#,
+    );
     cmd(&dir)
         .write_stdin("We map the landscape of it.")
         .assert()
@@ -179,7 +183,11 @@ fn bad_rule_dir_prints_load_error_verbatim_and_exits_2() {
 fn markdown_auto_enables_for_md_files() {
     let dir = TempDir::new().unwrap();
     // Code block content must not be linted when markdown is on.
-    let path = write(&dir, "doc.md", "Clean prose here.\n\n```\nwe delve — daily\n```\n");
+    let path = write(
+        &dir,
+        "doc.md",
+        "Clean prose here.\n\n```\nwe delve — daily\n```\n",
+    );
     cmd(&dir)
         .arg(path.to_str().unwrap())
         .assert()
@@ -212,7 +220,13 @@ fn fix_with_json_format_keeps_stdout_machine_parseable() {
     let file = write(&dir, "brief.txt", "We utilize tools.");
     let output = cmd(&dir)
         .arg(file.to_str().unwrap())
-        .args(["--rule-dir", pkg.to_str().unwrap(), "--format", "json", "--fix"])
+        .args([
+            "--rule-dir",
+            pkg.to_str().unwrap(),
+            "--format",
+            "json",
+            "--fix",
+        ])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -220,7 +234,10 @@ fn fix_with_json_format_keeps_stdout_machine_parseable() {
         .expect("stdout must be pure JSON when --format json is combined with --fix");
     assert_eq!(json["diagnostics"][0]["ruleId"], "firm/use-plain");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Applied 1 fix"), "status line moved to stderr: {stderr}");
+    assert!(
+        stderr.contains("Applied 1 fix"),
+        "status line moved to stderr: {stderr}"
+    );
     assert_eq!(fs::read_to_string(&file).unwrap(), "We use tools.");
 }
 
@@ -245,7 +262,10 @@ fn fix_without_applicable_fixes_leaves_file_alone() {
         .assert()
         .code(0)
         .stderr(predicate::str::contains("Applied 0 fixes"));
-    assert_eq!(fs::read_to_string(&file).unwrap(), "We map the landscape of it.");
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "We map the landscape of it."
+    );
 }
 
 // ---- rules subcommand --------------------------------------------------
@@ -264,16 +284,23 @@ fn rules_json_lists_all_built_ins_in_website_contract_shape() {
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
         assert!(!id.contains('/'), "ids must be flat, got {id}");
-        let meta = rule.get("meta").unwrap_or_else(|| panic!("{id}: missing meta wrapper"));
+        let meta = rule
+            .get("meta")
+            .unwrap_or_else(|| panic!("{id}: missing meta wrapper"));
         assert!(meta["description"].is_string());
         assert!(meta["severity"].is_string());
         assert!(meta["tier"].is_string());
-        let docs_url = meta["docsUrl"].as_str().unwrap_or_else(|| panic!("{id}: docsUrl"));
+        let docs_url = meta["docsUrl"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{id}: docsUrl"));
         assert!(
             docs_url.ends_with(&format!("/rules/{id}")),
             "{id}: docsUrl slug must match the flat id, got {docs_url}"
         );
-        assert!(meta.get("docs_url").is_none(), "{id}: docs_url must be camelCase");
+        assert!(
+            meta.get("docs_url").is_none(),
+            "{id}: docs_url must be camelCase"
+        );
     }
 }
 
@@ -356,7 +383,11 @@ fn rules_test_package_dir_uses_manifest_name_and_invalid_rule_fails() {
             "  - { bad: \"One zebra.\", good: \"One horse.\" }\n",
         ),
     );
-    write(&dir, "pkg/rules/broken.yaml", "id: broken\nengine: phrase\npatterns: [\"(\"]\n");
+    write(
+        &dir,
+        "pkg/rules/broken.yaml",
+        "id: broken\nengine: phrase\npatterns: [\"(\"]\n",
+    );
     cmd(&dir)
         .args(["rules", "test", "pkg"])
         .assert()
@@ -447,7 +478,13 @@ fn rules_test_offline_flag_skips_inferential_examples() {
         .stdout(predicate::str::contains("0 failed, 6 skipped"));
     // --offline contradicts --judge; clap rejects the combination.
     cmd(&dir)
-        .args(["rules", "test", rule.to_str().unwrap(), "--offline", "--judge"])
+        .args([
+            "rules",
+            "test",
+            rule.to_str().unwrap(),
+            "--offline",
+            "--judge",
+        ])
         .assert()
         .code(2);
 }

@@ -136,8 +136,14 @@ mod tests {
 
     #[test]
     fn severity_serde_lowercase_with_info_alias() {
-        assert_eq!(serde_json::to_string(&Severity::Error).unwrap(), "\"error\"");
-        assert_eq!(serde_json::to_string(&Severity::Warning).unwrap(), "\"warning\"");
+        assert_eq!(
+            serde_json::to_string(&Severity::Error).unwrap(),
+            "\"error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Severity::Warning).unwrap(),
+            "\"warning\""
+        );
         assert_eq!(
             serde_json::to_string(&Severity::Suggestion).unwrap(),
             "\"suggestion\""
@@ -151,7 +157,10 @@ mod tests {
 
     #[test]
     fn tier_and_scope_serde_lowercase() {
-        assert_eq!(serde_json::to_string(&Tier::Inferential).unwrap(), "\"inferential\"");
+        assert_eq!(
+            serde_json::to_string(&Tier::Inferential).unwrap(),
+            "\"inferential\""
+        );
         assert_eq!(serde_json::to_string(&Scope::Prose).unwrap(), "\"prose\"");
         let sc: Scope = serde_json::from_str("\"all\"").unwrap();
         assert_eq!(sc, Scope::All);
@@ -207,7 +216,11 @@ mod tests {
 
     #[test]
     fn stats_json_field_names() {
-        let s = Stats { word_count: 10, sentence_count: 2, score: 100 };
+        let s = Stats {
+            word_count: 10,
+            sentence_count: 2,
+            score: 100,
+        };
         let v: serde_json::Value = serde_json::to_value(&s).unwrap();
         assert!(v.get("wordCount").is_some());
         assert!(v.get("sentenceCount").is_some());

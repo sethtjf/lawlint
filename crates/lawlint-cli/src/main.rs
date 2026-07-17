@@ -474,7 +474,10 @@ fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
         return Ok(vec![path.to_path_buf()]);
     }
     if !path.is_dir() {
-        return Err(format!("failed to read {}: no such file or directory", path.display()));
+        return Err(format!(
+            "failed to read {}: no such file or directory",
+            path.display()
+        ));
     }
     let rules_dir = if path.join("style.yaml").is_file() && path.join("rules").is_dir() {
         path.join("rules")
@@ -494,7 +497,10 @@ fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
         .collect();
     files.sort();
     if files.is_empty() {
-        return Err(format!("no rule YAML files found in {}", rules_dir.display()));
+        return Err(format!(
+            "no rule YAML files found in {}",
+            rules_dir.display()
+        ));
     }
     Ok(files)
 }
@@ -559,12 +565,20 @@ impl TestTally {
         match outcome {
             Ok(()) => {
                 self.passed += 1;
-                let tag = if color { "pass".green().to_string() } else { "pass".into() };
+                let tag = if color {
+                    "pass".green().to_string()
+                } else {
+                    "pass".into()
+                };
                 println!("  {label:<10} {tag}");
             }
             Err(reason) => {
                 self.failed += 1;
-                let tag = if color { "FAIL".red().to_string() } else { "FAIL".into() };
+                let tag = if color {
+                    "FAIL".red().to_string()
+                } else {
+                    "FAIL".into()
+                };
                 println!("  {label:<10} {tag} — {reason}");
             }
         }
@@ -572,7 +586,11 @@ impl TestTally {
 
     fn skip(&mut self, label: &str, reason: &str, color: bool) {
         self.skipped += 1;
-        let tag = if color { "skip".yellow().to_string() } else { "skip".into() };
+        let tag = if color {
+            "skip".yellow().to_string()
+        } else {
+            "skip".into()
+        };
         println!("  {label:<10} {tag} ({reason})");
     }
 
@@ -635,7 +653,11 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
     let (config, _) = find_config(cwd)?;
     let files = collect_rule_files(path)?;
     let color = colors_enabled();
-    let mut tally = TestTally { passed: 0, failed: 0, skipped: 0 };
+    let mut tally = TestTally {
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+    };
 
     // Judge built lazily on the first inferential example; a build failure
     // downgrades to "no judge" (examples skipped), never a crash.
@@ -681,7 +703,14 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
         };
         let package = package_name_for(file);
         let full_id = format!("{package}/{}", def.id);
-        println!("{}", if color { full_id.bold().to_string() } else { full_id.clone() });
+        println!(
+            "{}",
+            if color {
+                full_id.bold().to_string()
+            } else {
+                full_id.clone()
+            }
+        );
         let set = match single_rule_set(file, &package) {
             Ok(set) => set,
             Err(error) => {
@@ -693,10 +722,18 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
         if def.engine == "inferential" {
             if judge_model.is_none() {
                 for index in 0..def.flag_examples.len() {
-                    tally.skip(&format!("flag[{index}]"), "inferential; run with --judge", color);
+                    tally.skip(
+                        &format!("flag[{index}]"),
+                        "inferential; run with --judge",
+                        color,
+                    );
                 }
                 for index in 0..def.pass_examples.len() {
-                    tally.skip(&format!("pass[{index}]"), "inferential; run with --judge", color);
+                    tally.skip(
+                        &format!("pass[{index}]"),
+                        "inferential; run with --judge",
+                        color,
+                    );
                 }
                 continue;
             }
@@ -772,7 +809,11 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
 fn run(cli: Cli) -> Result<i32, String> {
     match &cli.command {
         Some(Command::Rules { json, action }) => match action {
-            Some(RulesAction::Test { path, judge, offline }) => rules_test(path, judge, *offline),
+            Some(RulesAction::Test {
+                path,
+                judge,
+                offline,
+            }) => rules_test(path, judge, *offline),
             None => rules_list(*json, &cli.rule_dir),
         },
         None => lint_command(&cli),
@@ -819,7 +860,11 @@ mod tests {
         });
         let cli = options_with(|o| {
             o.enable = Some(vec!["b".into()]);
-            o.severity = Some([("x".to_string(), Severity::Suggestion)].into_iter().collect());
+            o.severity = Some(
+                [("x".to_string(), Severity::Suggestion)]
+                    .into_iter()
+                    .collect(),
+            );
         });
         let merged = merge_options(config, cli);
         assert_eq!(merged.enable, Some(vec!["b".to_string()]));
@@ -1025,7 +1070,10 @@ mod tests {
         // Package dir → rules/*.yaml|yml, sorted.
         let files = collect_rule_files(&base).unwrap();
         assert_eq!(
-            files.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect::<Vec<_>>(),
+            files
+                .iter()
+                .map(|p| p.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
             vec!["a.yml", "b.yaml"]
         );
         // Loose dir (no manifest) → its yaml files, style.yaml excluded.
@@ -1076,8 +1124,11 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let good = base.join("no-x.yaml");
-        fs::write(&good, "id: no-x\nengine: phrase\nseverity: error\npatterns: [\"zebra\"]\n")
-            .unwrap();
+        fs::write(
+            &good,
+            "id: no-x\nengine: phrase\nseverity: error\npatterns: [\"zebra\"]\n",
+        )
+        .unwrap();
         let set = single_rule_set(&good, "firm").unwrap();
         assert_eq!(set.metas().len(), 1);
         assert_eq!(set.metas()[0].id.0, "firm/no-x");

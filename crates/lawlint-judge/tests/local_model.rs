@@ -2,7 +2,9 @@
 //!
 //! Run with: `cargo test -p lawlint-judge -- --ignored`
 
-use lawlint_core::{parse, plan_judge, Granularity, JudgeOptions, RubricFragment, RuleId, Severity};
+use lawlint_core::{
+    parse, plan_judge, Granularity, JudgeOptions, RubricFragment, RuleId, Severity,
+};
 
 #[test]
 #[ignore = "downloads and runs a real local model"]
@@ -17,8 +19,7 @@ fn local_candle_judge_evaluates_a_real_chunk() {
         rule: RuleId("core/empty-hedge".to_string()),
         severity: Severity::Warning,
         granularity: Granularity::Sentence,
-        rubric: "Flag hedges that carry no information about actual uncertainty."
-            .to_string(),
+        rubric: "Flag hedges that carry no information about actual uncertainty.".to_string(),
         flag_examples: vec![
             "It could perhaps be argued that the clause fails.".to_string(),
             "One might possibly conclude the point.".to_string(),

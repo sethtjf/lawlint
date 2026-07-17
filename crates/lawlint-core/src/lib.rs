@@ -112,7 +112,10 @@ pub fn lint_full(
             finding.explanation.clone()
         };
         let fix = finding.suggested_rewrite.as_ref().map(|replacement| Fix {
-            edits: vec![Edit { range: span, replacement: replacement.clone() }],
+            edits: vec![Edit {
+                range: span,
+                replacement: replacement.clone(),
+            }],
             applicability: Applicability::MaybeIncorrect, // tier-3 fixes always
         });
         tier3.push(Diagnostic {
@@ -199,8 +202,14 @@ mod tests {
 
     #[test]
     fn basics() {
-        assert!(has("We should delve into this issue.", "core/no-ai-cliches"));
-        assert!(has("The parties are Alice, Bob and Carol.", "core/oxford-comma"));
+        assert!(has(
+            "We should delve into this issue.",
+            "core/no-ai-cliches"
+        ));
+        assert!(has(
+            "The parties are Alice, Bob and Carol.",
+            "core/oxford-comma"
+        ));
         assert!(!has("The range spans 2020–2024.", "core/no-en-dash"));
     }
 
@@ -281,22 +290,26 @@ mod tests {
                 .map(|d| d.rule_id.0.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "core/no-ai-cliches",        // "It is important to note"
-                "core/no-ai-cliches",        // "delve"
+                "core/no-ai-cliches",         // "It is important to note"
+                "core/no-ai-cliches",         // "delve"
                 "core/no-marketing-language", // "delve"
-                "core/no-ai-cliches",        // "landscape of"
-                "core/no-legalese",          // "Pursuant to"
-                "core/no-legalese",          // "aforementioned"
-                "core/oxford-comma",         // "terms, the parties … and …"
-                "core/no-doublets",          // "cease and desist"
-                "core/no-doublets",          // "any and all"
-                "core/no-passive-overuse",   // "be flagged" (density span)
+                "core/no-ai-cliches",         // "landscape of"
+                "core/no-legalese",           // "Pursuant to"
+                "core/no-legalese",           // "aforementioned"
+                "core/oxford-comma",          // "terms, the parties … and …"
+                "core/no-doublets",           // "cease and desist"
+                "core/no-doublets",           // "any and all"
+                "core/no-passive-overuse",    // "be flagged" (density span)
             ]
         );
 
         let clean = include_str!("../tests/fixtures/clean.txt");
         let clean_result = lint(clean, &LintOptions::default());
-        assert!(clean_result.diagnostics.is_empty(), "{:?}", clean_result.diagnostics);
+        assert!(
+            clean_result.diagnostics.is_empty(),
+            "{:?}",
+            clean_result.diagnostics
+        );
         assert_eq!(clean_result.stats.word_count, 20);
         assert_eq!(clean_result.stats.sentence_count, 2);
         assert_eq!(clean_result.stats.score, 100);
@@ -425,7 +438,10 @@ mod tests {
 
     #[test]
     fn leading_rules_fire_only_at_sentence_start() {
-        assert!(has("Great question! The answer is no.", "core/no-sycophantic-openers"));
+        assert!(has(
+            "Great question! The answer is no.",
+            "core/no-sycophantic-openers"
+        ));
         assert!(has(
             "Fine. Here's my take on the motion.",
             "core/no-throat-clearing"
@@ -491,7 +507,8 @@ mod tests {
 
     #[test]
     fn suppression_comments_silence_rules() {
-        let text = "<!-- lawlint-disable-next-line no-ai-cliches -->\nWe delve into it.\nWe delve again.";
+        let text =
+            "<!-- lawlint-disable-next-line no-ai-cliches -->\nWe delve into it.\nWe delve again.";
         let o = LintOptions {
             markdown: Some(true),
             enable: Some(vec!["no-ai-cliches".into()]),
@@ -606,13 +623,7 @@ mod tests {
                 finding("core/empty-hedge", "the claim fails", 0.3, None),
             ],
         );
-        let result = lint_full(
-            text,
-            &LintOptions::default(),
-            built_in_set(),
-            &judge,
-            None,
-        );
+        let result = lint_full(text, &LintOptions::default(), built_in_set(), &judge, None);
         let tier3: Vec<&Diagnostic> = result
             .diagnostics
             .iter()
@@ -630,7 +641,10 @@ mod tests {
         assert_eq!(d.severity, Severity::Warning);
         assert_eq!(d.confidence, Some(0.9));
         // Tier-3 fixes are always MaybeIncorrect.
-        assert_eq!(d.fix.as_ref().unwrap().applicability, Applicability::MaybeIncorrect);
+        assert_eq!(
+            d.fix.as_ref().unwrap().applicability,
+            Applicability::MaybeIncorrect
+        );
         assert_eq!(d.suggestion.as_deref(), Some("The claim fails because"));
         // Judge stats surfaced.
         let stats = result.judge.as_ref().unwrap();
@@ -643,7 +657,12 @@ mod tests {
         let text = "It could perhaps be argued that the claim fails.";
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 0.95, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                0.95,
+                None,
+            )],
         );
         let o = LintOptions {
             severity: Some(
@@ -666,7 +685,12 @@ mod tests {
         let mk_judge = || {
             MockJudge::new().respond(
                 "",
-                vec![finding("core/empty-hedge", "could perhaps be argued", 0.7, None)],
+                vec![finding(
+                    "core/empty-hedge",
+                    "could perhaps be argued",
+                    0.7,
+                    None,
+                )],
             )
         };
         let base = LintOptions {
@@ -697,7 +721,12 @@ mod tests {
         let text = format!("{filler}It could perhaps be argued that fine.");
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 1.0, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                1.0,
+                None,
+            )],
         );
         let o = LintOptions {
             enable: Some(vec!["empty-hedge".into()]),
@@ -709,7 +738,12 @@ mod tests {
 
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 0.6, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                0.6,
+                None,
+            )],
         );
         let result = lint_full(&text, &o, built_in_set(), &judge, None);
         assert_eq!(result.stats.score, 84);
@@ -734,20 +768,29 @@ mod tests {
         // sentence that tiers 1–2 may never touch.
         let rs = inferential_set("prose", "sentence");
         let text = "See Roe v. Wade, 410 U.S. 113 (1973). The claim fails badly.";
-        let judge = MockJudge::new()
-            .respond("", vec![finding("core/judge-me", "Roe v. Wade", 0.9, None)]);
+        let judge =
+            MockJudge::new().respond("", vec![finding("core/judge-me", "Roe v. Wade", 0.9, None)]);
         let result = lint_full(text, &LintOptions::default(), &rs, &judge, None);
         assert!(
-            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            result
+                .diagnostics
+                .iter()
+                .all(|d| d.tier != Tier::Inferential),
             "{:?}",
             result.diagnostics
         );
         // Control: the same rule may report in the non-citation sentence.
-        let judge = MockJudge::new()
-            .respond("", vec![finding("core/judge-me", "claim fails badly", 0.9, None)]);
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/judge-me", "claim fails badly", 0.9, None)],
+        );
         let result = lint_full(text, &LintOptions::default(), &rs, &judge, None);
         assert_eq!(
-            result.diagnostics.iter().filter(|d| d.tier == Tier::Inferential).count(),
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.tier == Tier::Inferential)
+                .count(),
             1
         );
     }
@@ -759,12 +802,20 @@ mod tests {
         // block must still be masked out for the default text scope.
         let rs = inferential_set("text", "document");
         let text = "Fine prose here.\n\n```\nsecret code target\n```\n";
-        let judge = MockJudge::new()
-            .respond("", vec![finding("core/judge-me", "secret code target", 0.9, None)]);
-        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let judge = MockJudge::new().respond(
+            "",
+            vec![finding("core/judge-me", "secret code target", 0.9, None)],
+        );
+        let o = LintOptions {
+            markdown: Some(true),
+            ..Default::default()
+        };
         let result = lint_full(text, &o, &rs, &judge, None);
         assert!(
-            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            result
+                .diagnostics
+                .iter()
+                .all(|d| d.tier != Tier::Inferential),
             "{:?}",
             result.diagnostics
         );
@@ -778,12 +829,23 @@ mod tests {
             "Para one is fine.\n\n<div>hidden could perhaps be argued html</div>\n\nPara two is fine.";
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                0.9,
+                None,
+            )],
         );
-        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let o = LintOptions {
+            markdown: Some(true),
+            ..Default::default()
+        };
         let result = lint_full(text, &o, built_in_set(), &judge, None);
         assert!(
-            result.diagnostics.iter().all(|d| d.tier != Tier::Inferential),
+            result
+                .diagnostics
+                .iter()
+                .all(|d| d.tier != Tier::Inferential),
             "{:?}",
             result.diagnostics
         );
@@ -800,7 +862,10 @@ mod tests {
         for i in 0..5 {
             src.push_str(&format!("| row {i} cell alpha | row {i} cell beta |\n"));
         }
-        let o = LintOptions { markdown: Some(true), ..Default::default() };
+        let o = LintOptions {
+            markdown: Some(true),
+            ..Default::default()
+        };
         let result = lint(&src, &o);
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
         assert_eq!(result.stats.score, 100);
@@ -812,7 +877,12 @@ mod tests {
             "<!-- lawlint-disable-next-line empty-hedge -->\nIt could perhaps be argued that the claim fails.";
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                0.9,
+                None,
+            )],
         );
         let o = LintOptions {
             markdown: Some(true),
@@ -828,7 +898,12 @@ mod tests {
         let text = "It could perhaps be argued that the claim fails.";
         let judge = MockJudge::new().respond(
             "",
-            vec![finding("core/empty-hedge", "could perhaps be argued", 0.9, None)],
+            vec![finding(
+                "core/empty-hedge",
+                "could perhaps be argued",
+                0.9,
+                None,
+            )],
         );
         let o = LintOptions {
             disable: Some(vec!["empty-hedge".into(), "padded-elaboration".into()]),

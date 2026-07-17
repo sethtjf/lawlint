@@ -44,7 +44,12 @@ impl PhraseEngine {
         for (i, p) in def.patterns.iter().enumerate() {
             let (pattern, message, suggestion, fix) = match p {
                 PatternDef::Bare(s) => (s.as_str(), None, None, None),
-                PatternDef::Detailed { pattern, message, suggestion, fix } => (
+                PatternDef::Detailed {
+                    pattern,
+                    message,
+                    suggestion,
+                    fix,
+                } => (
                     pattern.as_str(),
                     message.clone(),
                     suggestion.clone(),
@@ -57,7 +62,12 @@ impl PhraseEngine {
                 pattern: pattern.to_string(),
                 message: e.to_string(),
             })?;
-            items.push(PhraseItem { regex, message, suggestion, fix });
+            items.push(PhraseItem {
+                regex,
+                message,
+                suggestion,
+                fix,
+            });
         }
 
         let allow_context = match &def.allow_context {
@@ -78,7 +88,12 @@ impl PhraseEngine {
             .clone()
             .unwrap_or_else(|| meta.description.clone());
 
-        Ok(PhraseEngine { meta, items, default_message, allow_context })
+        Ok(PhraseEngine {
+            meta,
+            items,
+            default_message,
+            allow_context,
+        })
     }
 
     /// Expand `[start, end)` by `window` bytes each side, clamped to
@@ -102,7 +117,10 @@ impl Rule for PhraseEngine {
     }
 
     fn interests(&self) -> Interests {
-        Interests { blocks: true, ..Interests::default() }
+        Interests {
+            blocks: true,
+            ..Interests::default()
+        }
     }
 
     fn check_block(&mut self, b: &Block, ctx: &mut Ctx) {
@@ -125,7 +143,10 @@ impl Rule for PhraseEngine {
 
                 let span = TextRange { start, end };
                 let fix = item.fix.as_ref().map(|replacement| Fix {
-                    edits: vec![Edit { range: span, replacement: replacement.clone() }],
+                    edits: vec![Edit {
+                        range: span,
+                        replacement: replacement.clone(),
+                    }],
                     applicability: Applicability::MachineApplicable,
                 });
                 ctx.report(Report {
@@ -183,15 +204,13 @@ mod tests {
     #[test]
     fn matches_at_absolute_offsets_in_later_block() {
         let source = "Intro paragraph.\n\nWe must delve deeper here.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: test-phrase
 engine: phrase
 message: "Avoid delve"
 patterns:
   - "(?i)\\bdelve\\b"
-"#,
-        );
+"#);
         let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
         // Second block only.
         let b = block(18, source.len());
@@ -218,24 +237,28 @@ patterns:
     #[test]
     fn per_item_message_suggestion_override_and_default_fallback() {
         let source = "We leverage tapestry.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: t
 engine: phrase
 message: "default msg"
 patterns:
   - { pattern: "(?i)\\bleverage\\b", message: "no leverage", suggestion: "use" }
   - "(?i)\\btapestry\\b"
-"#,
-        );
+"#);
         let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let b = block(0, source.len());
         let reports = run(&mut e, source, &b);
         assert_eq!(reports.len(), 2);
-        let lev = reports.iter().find(|r| r.span.slice(source) == "leverage").unwrap();
+        let lev = reports
+            .iter()
+            .find(|r| r.span.slice(source) == "leverage")
+            .unwrap();
         assert_eq!(lev.message, "no leverage");
         assert_eq!(lev.suggestion.as_deref(), Some("use"));
-        let tap = reports.iter().find(|r| r.span.slice(source) == "tapestry").unwrap();
+        let tap = reports
+            .iter()
+            .find(|r| r.span.slice(source) == "tapestry")
+            .unwrap();
         assert_eq!(tap.message, "default msg");
         assert!(tap.suggestion.is_none());
     }
@@ -278,15 +301,13 @@ patterns:
     #[test]
     fn allow_context_skips_en_dash_in_numeric_range() {
         let source = "The years 1994–2001 were formative. A dash – here is stray.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: no-en-dash
 engine: phrase
 message: "En dashes belong only in numeric ranges."
 patterns: ["–"]
 allow_context: { pattern: '\d\s?–\s?\d', window: 8 }
-"#,
-        );
+"#);
         let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let b = block(0, source.len());
         let reports = run(&mut e, source, &b);
@@ -331,14 +352,12 @@ allow_context: { pattern: '\d\s?–\s?\d', window: 8 }
     #[test]
     fn fix_string_emits_machine_applicable_single_edit() {
         let source = "Please delve into it.";
-        let d = def(
-            r#"
+        let d = def(r#"
 id: t
 engine: phrase
 patterns:
   - { pattern: "(?i)\\bdelve\\b", message: "no delve", suggestion: "examine", fix: "examine" }
-"#,
-        );
+"#);
         let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
         let b = block(0, source.len());
         let reports = run(&mut e, source, &b);
@@ -356,7 +375,12 @@ patterns:
         let d = def("id: t\nengine: phrase\npatterns: [\"ok\", \"(\"]");
         let err = PhraseEngine::from_def(meta(), &d, "rules/t.yaml").unwrap_err();
         match err {
-            LoadError::InvalidRegex { file, field, pattern, .. } => {
+            LoadError::InvalidRegex {
+                file,
+                field,
+                pattern,
+                ..
+            } => {
                 assert_eq!(file, "rules/t.yaml");
                 assert_eq!(field, "patterns[1]");
                 assert_eq!(pattern, "(");
