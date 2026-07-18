@@ -57,8 +57,9 @@ for (const line of raw.split("\n")) {
     continue;
   }
   const item = line.match(/^\*\s+(.+)/);
-  if (item && current.sections.length > 0) {
-    current.sections.at(-1)!.items.push(item[1].trim());
+  const openSection = current.sections.at(-1);
+  if (item && openSection) {
+    openSection.items.push(item[1].trim());
   }
 }
 
@@ -77,6 +78,25 @@ function splitScope(item: string): { scope: string | null; rest: string } {
   const match = item.match(/^\*\*([^*]+):\*\*\s*(.*)$/);
   return match ? { scope: match[1], rest: match[2] } : { scope: null, rest: item };
 }
+
+interface Ref {
+  label: string;
+  href: string;
+}
+
+// Release-please appends `([#12](url)) ([abc1234](url))` to each entry. Left
+// inline they read as parenthetical asides (lawlint flags them as such), so
+// pull them off the sentence and render them as trailing metadata instead.
+function splitRefs(text: string): { body: string; refs: Ref[] } {
+  const trailing = /\s*\(\[([^\]]+)\]\(([^)\s]+)\)\)\s*$/;
+  const refs: Ref[] = [];
+  let body = text;
+  for (let match = body.match(trailing); match; match = body.match(trailing)) {
+    refs.unshift({ label: match[1], href: match[2] });
+    body = body.slice(0, match.index).trimEnd();
+  }
+  return { body, refs };
+}
 ---
 <Layout title="Changelog" description="Every lawlint release: what changed, and the pull requests behind each change.">
   <section class="changelog">
@@ -84,7 +104,7 @@ function splitScope(item: string): { scope: string | null; rest: string } {
     <h1>What changed.</h1>
     <p class="intro">
       Every release, with the pull request behind each change. Assembled automatically
-      from merged work — the same notes ship with each
+      from merged work, so the same notes ship with each
       <a href="https://github.com/sethtjf/lawlint/releases">GitHub release</a>.
     </p>
 
@@ -104,10 +124,16 @@ function splitScope(item: string): { scope: string | null; rest: string } {
             <ul>
               {section.items.map((item) => {
                 const { scope, rest } = splitScope(item);
+                const { body, refs } = splitRefs(rest);
                 return (
                   <li>
                     {scope && <span class="scope">{scope}</span>}
-                    <span set:html={inlineHtml(rest)} />
+                    <span class="entry" set:html={inlineHtml(body)} />
+                    {refs.length > 0 && (
+                      <span class="refs">
+                        {refs.map((ref) => <a href={ref.href}>{ref.label}</a>)}
+                      </span>
+                    )}
                   </li>
                 );
               })}
@@ -135,6 +161,10 @@ function splitScope(item: string): { scope: string | null; rest: string } {
   .section li { display: flex; gap: 0.7rem; align-items: baseline; padding: 0.55rem 0; border-top: 1px solid color-mix(in srgb, var(--line) 45%, transparent); font-size: 1rem; }
   .section li:first-child { border-top: 0; }
   .scope { flex-shrink: 0; color: var(--oxblood); font: 0.7rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid color-mix(in srgb, var(--oxblood) 35%, transparent); padding: 0.1rem 0.45rem; }
+  .entry { flex: 1; }
+  .refs { display: flex; gap: 0.6rem; flex-shrink: 0; }
+  .refs a { font: 0.72rem "IBM Plex Mono", monospace; color: var(--muted); text-decoration: none; }
+  .refs a:hover { color: var(--oxblood); text-decoration: underline; text-underline-offset: 0.18em; }
   .section li :global(a) { font-size: 0.85em; color: var(--muted); }
   .section li :global(a:hover) { color: var(--oxblood); }
   .section li :global(code) { font: 0.86em "IBM Plex Mono", monospace; background: var(--paper-deep); padding: 0.05em 0.3em; }

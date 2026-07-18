@@ -299,7 +299,7 @@ export default function LawlintPlayground() {
         </h1>
         <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
           Paste a draft, drop in a file, or start from the sample. Everything runs locally in your
-          browser — nothing you write leaves this page.
+          browser. Nothing you write leaves this page.
         </p>
       </div>
 
