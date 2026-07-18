@@ -1,0 +1,31 @@
+---
+// Shared sub-navigation for the documentation area. Rules live at /rules for
+// URL stability but belong to the same docs surface.
+interface Props {
+  active: "getting-started" | "cli" | "sdk" | "rules";
+}
+const { active } = Astro.props;
+const items = [
+  { id: "getting-started", label: "Getting started", href: "/docs/getting-started" },
+  { id: "cli", label: "CLI", href: "/docs/cli" },
+  { id: "sdk", label: "SDK", href: "/docs/sdk" },
+  { id: "rules", label: "Rules", href: "/rules" },
+] as const;
+---
+<nav class="docs-nav" aria-label="Documentation">
+  <span class="docs-label">Docs</span>
+  {items.map((item) => (
+    <a
+      href={item.href}
+      class:list={[{ active: item.id === active }]}
+      aria-current={item.id === active ? "page" : undefined}
+    >{item.label}</a>
+  ))}
+</nav>
+<style>
+  .docs-nav { display: flex; gap: 1.3rem; align-items: baseline; flex-wrap: wrap; font: 0.72rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.06em; }
+  .docs-label { color: var(--oxblood); letter-spacing: 0.13em; }
+  .docs-nav a { text-decoration: none; color: var(--muted); }
+  .docs-nav a:hover { color: var(--oxblood); }
+  .docs-nav a.active { color: var(--ink); box-shadow: 0 2px 0 var(--oxblood); }
+</style>
