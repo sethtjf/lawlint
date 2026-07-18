@@ -1,9 +1,12 @@
 //! Interactive TUI launched by a bare `lawlint` command.
 //!
-//! - Type or paste text in the editor and press `Ctrl+L` to lint.
-//! - Press `Ctrl+O` to open a single-line file path field. `Enter` loads the path,
+//! Interface inspired by the OpenAI Codex CLI: results/conversation at the top,
+//! a text composer at the bottom, and a single-line status bar beneath it.
+//!
+//! - Type or paste text in the composer and press `Ctrl+L` to lint.
+//! - Press `Ctrl+O` to open a single-line file-path field. `Enter` loads the path,
 //!   a second `Ctrl+O` opens a native file picker, and the field expands into the
-//!   multi-line content editor once a file is loaded.
+//!   multi-line composer once a file is loaded.
 //! - Press `Esc`/`Ctrl+Q` to quit.
 
 use crate::{build_rule_set, find_config, judge_spec, lint_text};
@@ -22,8 +25,8 @@ use ratatui_textarea::TextArea;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::Path;
 
-const CONTENT_TITLE: &str = "Input — Ctrl+L lint | Ctrl+F fix | Ctrl+O open | Esc quit";
-const PATH_TITLE: &str = "File path — Enter load | Ctrl+O browse | Esc cancel";
+const CONTENT_TITLE: &str = "Text";
+const PATH_TITLE: &str = "File path";
 
 struct TerminalGuard;
 
@@ -86,7 +89,7 @@ impl TuiApp {
 
         Ok(Self {
             mode: Mode::Content,
-            textarea: build_textarea(&content_text, CONTENT_TITLE, Color::Cyan),
+            textarea: build_textarea(&content_text, CONTENT_TITLE),
             content_text,
             path_text,
             loaded_path: None,
@@ -103,52 +106,33 @@ impl TuiApp {
             terminal
                 .draw(|f| {
                     let area = f.area();
-                    let [header_area, path_area, editor_area, output_area, footer_area] = area
-                        .layout(&Layout::vertical([
-                            Constraint::Length(1),
-                            if self.mode == Mode::Path {
-                                Constraint::Length(3)
-                            } else {
-                                Constraint::Length(0)
-                            },
-                            if self.mode == Mode::Content {
-                                Constraint::Fill(1)
-                            } else {
-                                Constraint::Length(0)
-                            },
+                    let [results_area, editor_area, footer_area] =
+                        area.layout(&Layout::vertical([
                             Constraint::Fill(1),
+                            if self.mode == Mode::Content {
+                                Constraint::Min(6)
+                            } else {
+                                Constraint::Length(3)
+                            },
                             Constraint::Length(1),
                         ]));
-
-                    let header = Paragraph::new(Text::from(vec![Line::from(vec![Span::styled(
-                        "lawlint interactive",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )])]))
-                    .centered();
-                    f.render_widget(header, header_area);
-
-                    if self.mode == Mode::Path {
-                        f.render_widget(&self.textarea, path_area);
-                    } else {
-                        f.render_widget(&self.textarea, editor_area);
-                    }
 
                     let output = Paragraph::new(self.output.clone())
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(Color::Magenta))
+                                .border_style(Style::default().fg(Color::DarkGray))
                                 .title("Results")
-                                .title_style(Style::default().fg(Color::Yellow)),
+                                .title_style(Style::default().fg(Color::DarkGray)),
                         )
                         .wrap(Wrap { trim: true });
-                    f.render_widget(output, output_area);
+                    f.render_widget(output, results_area);
 
-                    let footer =
-                        Paragraph::new(Text::from(vec![Line::from(footer_spans(self.mode))]))
-                            .alignment(Alignment::Center);
+                    f.render_widget(&self.textarea, editor_area);
+
+                    let footer = Paragraph::new(Text::from(vec![status_line(&self)]))
+                        .alignment(Alignment::Left)
+                        .style(Style::default().fg(Color::Reset));
                     f.render_widget(footer, footer_area);
                 })
                 .map_err(|e| e.to_string())?;
@@ -224,7 +208,7 @@ impl TuiApp {
     fn enter_path_mode(&mut self) {
         self.content_text = self.textarea.lines().join("\n");
         self.mode = Mode::Path;
-        self.textarea = build_textarea(&self.path_text, PATH_TITLE, Color::Yellow);
+        self.textarea = build_textarea(&self.path_text, PATH_TITLE);
         self.output = Text::from(vec![Line::from(vec![Span::styled(
             "Enter a file path and press Enter, or press Ctrl+O to browse.",
             Style::default().fg(Color::DarkGray),
@@ -234,7 +218,7 @@ impl TuiApp {
     fn cancel_path_mode(&mut self) {
         self.path_text = self.textarea.lines().join("\n");
         self.mode = Mode::Content;
-        self.textarea = build_textarea(&self.content_text, CONTENT_TITLE, Color::Cyan);
+        self.textarea = build_textarea(&self.content_text, CONTENT_TITLE);
         self.output = if let Some(path) = &self.loaded_path {
             Text::from(vec![Line::from(vec![Span::styled(
                 format!("Loaded: {}", path),
@@ -280,7 +264,7 @@ impl TuiApp {
         if let Some(path) = result {
             let path_str = path.display().to_string();
             self.path_text = path_str.clone();
-            self.textarea = build_textarea(&path_str, PATH_TITLE, Color::Yellow);
+            self.textarea = build_textarea(&path_str, PATH_TITLE);
             self.load_file()?;
         }
         Ok(())
@@ -289,13 +273,13 @@ impl TuiApp {
     fn set_content(&mut self, text: &str) {
         self.content_text = text.to_string();
         self.mode = Mode::Content;
-        self.textarea = build_textarea(text, CONTENT_TITLE, Color::Cyan);
+        self.textarea = build_textarea(text, CONTENT_TITLE);
     }
 
     fn show_error(&mut self, msg: String) {
         self.output = Text::from(vec![Line::from(vec![
             Span::styled("Error: ", Style::default().fg(Color::Red)),
-            Span::styled(msg, Style::default().fg(Color::White)),
+            Span::raw(msg),
         ])]);
     }
 
@@ -308,29 +292,29 @@ impl TuiApp {
     }
 }
 
-fn build_textarea(text: &str, title: &'static str, border_color: Color) -> TextArea<'static> {
+fn build_textarea(text: &str, title: &'static str) -> TextArea<'static> {
     let mut t = TextArea::from(text.lines());
     t.set_block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color))
+            .border_style(Style::default().fg(Color::Cyan))
             .title(title)
-            .title_style(Style::default().fg(Color::Yellow)),
+            .title_style(Style::default().fg(Color::Cyan)),
     );
-    t.set_style(Style::default().fg(Color::White));
-    t.set_cursor_style(Style::default().bg(Color::Yellow).fg(Color::Black));
+    t.set_style(Style::default().fg(Color::Reset));
+    t.set_cursor_style(Style::default().bg(Color::Cyan).fg(Color::Black));
     t.set_cursor_line_style(Style::default().bg(Color::DarkGray));
     t
 }
 
 fn help_text() -> Text<'static> {
     Text::from(vec![Line::from(vec![Span::styled(
-        "Type or paste text and press Ctrl+L to lint, or Ctrl+O to open a file.",
+        "Ready. Type text and press Ctrl+L, or Ctrl+O to open a file.",
         Style::default().fg(Color::DarkGray),
     )])])
 }
 
-fn footer_spans(mode: Mode) -> Vec<Span<'static>> {
+fn status_line(app: &TuiApp) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
             "lawlint",
@@ -338,30 +322,68 @@ fn footer_spans(mode: Mode) -> Vec<Span<'static>> {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" "),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
     ];
-    if mode == Mode::Path {
+
+    let mode_span = if app.mode == Mode::Path {
+        Span::styled(
+            "PATH",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            "TEXT",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+    };
+    spans.push(mode_span);
+
+    if let Some(path) = &app.loaded_path {
         spans.extend([
-            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+            Span::styled(path.clone(), Style::default().fg(Color::Green)),
+        ]);
+    }
+
+    if let Some(result) = &app.last_result {
+        spans.extend([
+            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("score {}/100", result.stats.score),
+                Style::default().fg(Color::Green),
+            ),
+        ]);
+    }
+
+    spans.push(Span::styled("  ", Style::default()));
+
+    if app.mode == Mode::Path {
+        spans.extend([
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
             Span::styled(" load ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+O", Style::default().fg(Color::Green)),
+            Span::styled("Ctrl+O", Style::default().fg(Color::Cyan)),
             Span::styled(" browse ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Esc", Style::default().fg(Color::Green)),
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
             Span::styled(" cancel", Style::default().fg(Color::DarkGray)),
         ]);
     } else {
         spans.extend([
-            Span::styled("Ctrl+L", Style::default().fg(Color::Green)),
+            Span::styled("Ctrl+L", Style::default().fg(Color::Cyan)),
             Span::styled(" lint ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+F", Style::default().fg(Color::Green)),
+            Span::styled("Ctrl+F", Style::default().fg(Color::Cyan)),
             Span::styled(" fix ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+O", Style::default().fg(Color::Green)),
+            Span::styled("Ctrl+O", Style::default().fg(Color::Cyan)),
             Span::styled(" open ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Esc", Style::default().fg(Color::Green)),
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
             Span::styled(" quit", Style::default().fg(Color::DarkGray)),
         ]);
     }
-    spans
+
+    Line::from(spans)
 }
 
 fn format_colored_output(result: &LintResult) -> Text<'static> {
@@ -369,8 +391,8 @@ fn format_colored_output(result: &LintResult) -> Text<'static> {
     for d in &result.diagnostics {
         let (marker_color, label) = match d.severity {
             Severity::Error => (Color::Red, "error"),
-            Severity::Warning => (Color::Yellow, "warn"),
-            Severity::Suggestion => (Color::Cyan, "info"),
+            Severity::Warning => (Color::Cyan, "warn"),
+            Severity::Suggestion => (Color::Green, "info"),
         };
         let marker = Span::styled(format!("{}: ", label), Style::default().fg(marker_color));
         let location = Span::styled(
@@ -378,7 +400,7 @@ fn format_colored_output(result: &LintResult) -> Text<'static> {
             Style::default().fg(Color::DarkGray),
         );
         let rule = Span::styled(d.rule_id.0.clone(), Style::default().fg(Color::Magenta));
-        let message = Span::styled(d.message.clone(), Style::default().fg(Color::White));
+        let message = Span::raw(d.message.clone());
         lines.push(Line::from(vec![
             marker,
             location,
@@ -390,7 +412,7 @@ fn format_colored_output(result: &LintResult) -> Text<'static> {
         if !d.excerpt.is_empty() {
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(d.excerpt.clone(), Style::default().fg(Color::Blue)),
+                Span::styled(d.excerpt.clone(), Style::default().fg(Color::DarkGray)),
             ]));
         }
         if let Some(s) = &d.suggestion {
