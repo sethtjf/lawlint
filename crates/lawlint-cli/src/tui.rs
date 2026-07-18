@@ -426,7 +426,10 @@ impl TuiApp {
             self.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(format!("{label:<5} "), Style::default().fg(color)),
-                Span::styled(format!("{}:{} ", d.line, d.column), Style::default().fg(DIM)),
+                Span::styled(
+                    format!("{}:{} ", d.line, d.column),
+                    Style::default().fg(DIM),
+                ),
                 Span::styled(d.rule_id.0.clone(), Style::default().fg(BRAND)),
                 Span::raw(" "),
                 Span::raw(d.message.clone()),
@@ -715,7 +718,10 @@ fn render_browser(f: &mut ratatui::Frame, browser: &FileBrowser, host: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BRAND_DARK))
         .title(Line::from(Span::styled(
-            format!(" open file · {} ", tilde(&browser.dir.display().to_string())),
+            format!(
+                " open file · {} ",
+                tilde(&browser.dir.display().to_string())
+            ),
             Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
         )))
         .title_bottom(Line::from(Span::styled(
@@ -849,7 +855,10 @@ fn banner_lines(banner: &Banner) -> Vec<Line<'static>> {
         )]),
         Line::default(),
         Line::from(vec![
-            Span::styled("  Type or paste text, then press ", Style::default().fg(DIM)),
+            Span::styled(
+                "  Type or paste text, then press ",
+                Style::default().fg(DIM),
+            ),
             Span::styled("Enter", Style::default().fg(BRAND)),
             Span::styled(" to lint it", Style::default().fg(DIM)),
         ]),
