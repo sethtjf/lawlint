@@ -125,9 +125,16 @@ impl TuiApp {
             version: env!("CARGO_PKG_VERSION").to_string(),
             rule_count: rules.metas().len(),
             judge_on: judge.is_some(),
-            config: config_dir
-                .as_deref()
-                .map(|d| d.join("lawlint.config.json").display().to_string()),
+            config: config_dir.as_deref().map(|d| {
+                // Mirror find_config's preference: .lawlint/config.json wins
+                // over the legacy top-level name.
+                let nested = d.join(".lawlint").join("config.json");
+                if nested.is_file() {
+                    nested.display().to_string()
+                } else {
+                    d.join("lawlint.config.json").display().to_string()
+                }
+            }),
             cwd: cwd.display().to_string(),
         };
 

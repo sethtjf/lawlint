@@ -61,7 +61,11 @@ compiled to WebAssembly.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
 - `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
 
-The CLI discovers `lawlint.config.json` from the current directory upward.
+Run `lawlint init` to set up a project: it walks through judge, Markdown, and
+custom-rule choices and writes `.lawlint/config.json` (plus an optional starter
+rules package in `.lawlint/rules/`). Use `--yes` for defaults without prompts.
+The CLI discovers `.lawlint/config.json` — or the legacy `lawlint.config.json`
+— from the current directory upward.
 
 ## Maintainer releases
 

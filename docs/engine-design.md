@@ -417,9 +417,23 @@ Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or i
 
 ## 11. Consumers (phase 2)
 
-- **CLI**: new API; config `lawlint.config.json` → `LintOptions` (+ `ruleDirs`); flags `--rules/--disable/--markdown/--format/--max-warnings/--quiet` as today, plus `--judge`, `--fix`, `rules` (list, `--json`), **`rules test <file-or-dir>`** — runs each YAML rule's own examples (`patterns` vs `examples.bad/good`; inferential: flag/pass via judge or `--offline` skip) and reports pass/fail per example. Exit codes: 1 findings-over-limit, 2 I/O or config error.
+- **CLI**: new API; config `.lawlint/config.json` (or legacy `lawlint.config.json`; walk-up discovery, `.lawlint` wins with a warning when both exist in one directory, `ruleDirs` relative to the project root either way) → `LintOptions` (+ `ruleDirs`); flags `--rules/--disable/--markdown/--format/--max-warnings/--quiet` as today, plus `--judge`, `--fix`, `rules` (list, `--json`), **`rules test <file-or-dir>`** — runs each YAML rule's own examples (`patterns` vs `examples.bad/good`; inferential: flag/pass via judge or `--offline` skip) and reports pass/fail per example. Exit codes: 1 findings-over-limit, 2 I/O or config error.
 - **WASM**: `lint(text, options)`, `builtInRulesMeta()` (now `RuleSet::metas()`), `loadRules(yamlFiles)` for playground-authored rules. Tier-3 **inference** is a host concern in the browser: wasm exports the host-driven pair `planJudge(text, options, extraRules?) -> JudgeRequest[]` and `applyJudgeFindings(text, options, requests, findingsPerRequest, extraRules?) -> LintResult` (grounding, hallucination counters, confidence floor, Warning cap all enforced inside wasm — the core invariant holds in-browser). The JS host runs inference however it likes (transformers.js/WebLLM on WebGPU, or cloud). In-process candle-wasm is a possible later addition, not the browser default.
 - **Desktop**: keep compiling against new `lint`.
+
+### CLI `init` (added post-v0.3.0)
+
+- `lawlint init [--yes] [--force]` — interactive project setup writing `.lawlint/config.json`:
+  judge backend choice (disabled / `local:` / `anthropic:` / `openai:`), confidence floor
+  (written only when ≠ 0.6), markdown default, and an optional starter rules package
+  (`.lawlint/rules/` — `style.yaml` named after the project directory + one example phrase
+  rule, wired up via `ruleDirs`; existing package files are never overwritten).
+- Prompts read stdin line-by-line; empty line or EOF accepts the shown default, so piped/CI
+  runs degrade to defaults instead of hanging. `--yes` skips prompts; `--force` overwrites an
+  existing `.lawlint/config.json` (exit 2 otherwise).
+- A legacy `lawlint.config.json` seeds the prompt defaults; its uncovered keys
+  (enable/disable/severity/thresholds/…) carry over verbatim, and the interactive flow offers
+  to delete the legacy file (`--yes` always keeps it).
 
 ### CLI versioning & self-update (added post-v0.2.0)
 

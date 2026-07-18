@@ -16,6 +16,7 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod init;
 mod tui;
 mod update;
 
@@ -62,6 +63,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Set up lawlint here: walks through judge/markdown/custom-rule choices
+    /// and writes .lawlint/config.json.
+    Init {
+        /// Accept the default answer for every prompt (non-interactive).
+        #[arg(long)]
+        yes: bool,
+        /// Overwrite an existing .lawlint/config.json.
+        #[arg(long)]
+        force: bool,
+    },
     /// List rules, or test rule packages.
     Rules {
         #[arg(long)]
@@ -100,14 +111,33 @@ enum RulesAction {
 
 // ---- config ------------------------------------------------------------
 
-/// Walk up from `directory` looking for `lawlint.config.json`. A file that
-/// exists but does not parse is a config error (exit 2), not a silent skip.
+/// Walk up from `directory` looking for `.lawlint/config.json` (created by
+/// `lawlint init`), falling back to the legacy `lawlint.config.json` at each
+/// level. The returned directory is the project root — `ruleDirs` resolve
+/// relative to it under both layouts. A file that exists but does not parse
+/// is a config error (exit 2), not a silent skip.
 pub(crate) fn find_config(
     mut directory: PathBuf,
 ) -> Result<(LintOptions, Option<PathBuf>), String> {
     loop {
-        let path = directory.join("lawlint.config.json");
-        if path.is_file() {
+        let nested = directory.join(".lawlint").join("config.json");
+        let legacy = directory.join("lawlint.config.json");
+        let path = if nested.is_file() {
+            if legacy.is_file() {
+                eprintln!(
+                    "lawlint: warning: both {} and {} exist; using {}",
+                    nested.display(),
+                    legacy.display(),
+                    nested.display()
+                );
+            }
+            Some(nested)
+        } else if legacy.is_file() {
+            Some(legacy)
+        } else {
+            None
+        };
+        if let Some(path) = path {
             let text = fs::read_to_string(&path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
             let options: LintOptions = serde_json::from_str(&text)
@@ -846,6 +876,7 @@ fn run(cli: Cli) -> Result<i32, String> {
     }
 
     match &cli.command {
+        Some(Command::Init { yes, force }) => init::init_command(*yes, *force),
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
                 path,
