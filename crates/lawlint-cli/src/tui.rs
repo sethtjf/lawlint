@@ -21,7 +21,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Terminal;
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 use std::io::{self, IsTerminal, Stdout};
 use std::path::Path;
 
@@ -304,6 +304,8 @@ fn build_textarea(text: &str, title: &'static str) -> TextArea<'static> {
     t.set_style(Style::default().fg(Color::Reset));
     t.set_cursor_style(Style::default().bg(Color::Cyan).fg(Color::Black));
     t.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+    t.move_cursor(CursorMove::Bottom);
+    t.move_cursor(CursorMove::End);
     t
 }
 
