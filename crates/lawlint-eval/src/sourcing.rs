@@ -111,14 +111,11 @@ pub fn strip_html(html: &str) -> String {
         } else if !entity.is_empty() && !in_tag {
             entity.push(character);
             if character == ';' {
-                text.push(match entity.as_str() {
-                    "&amp;" => '&',
-                    "&lt;" => '<',
-                    "&gt;" => '>',
-                    "&quot;" => '"',
-                    "&#39;" | "&apos;" => '\'',
-                    _ => ' ',
-                });
+                if let Some(decoded) = decode_entity(&entity) {
+                    text.push(decoded);
+                } else {
+                    text.push(' ');
+                }
                 entity.clear();
             }
         } else if !in_tag {
@@ -126,6 +123,26 @@ pub fn strip_html(html: &str) -> String {
         }
     }
     normalize_whitespace(&text)
+}
+
+fn decode_entity(entity: &str) -> Option<char> {
+    match entity {
+        "&amp;" => Some('&'),
+        "&lt;" => Some('<'),
+        "&gt;" => Some('>'),
+        "&quot;" => Some('"'),
+        "&#39;" | "&#x27;" | "&#X27;" | "&apos;" => Some('\''),
+        "&nbsp;" | "&#160;" | "&#xA0;" | "&#XA0;" => Some(' '),
+        "&ndash;" => Some('–'),
+        "&mdash;" => Some('—'),
+        "&sect;" => Some('§'),
+        "&hellip;" => Some('…'),
+        _ if entity.starts_with("&#x") || entity.starts_with("&#X") => {
+            char::from_u32(u32::from_str_radix(&entity[3..entity.len() - 1], 16).ok()?)
+        }
+        _ if entity.starts_with("&#") => char::from_u32(entity[2..entity.len() - 1].parse().ok()?),
+        _ => None,
+    }
 }
 
 fn is_block_tag(tag: &str) -> bool {
