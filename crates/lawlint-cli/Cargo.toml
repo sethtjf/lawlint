@@ -23,6 +23,10 @@ sha2.workspace = true
 flate2 = "1"         # tar.gz extraction
 tar = "0.4"
 self-replace = "1"   # atomic replace of the running executable
+# TUI for bare `lawlint` invocations.
+ratatui = "0.30"
+crossterm = "0.29"
+ratatui-textarea = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 zip = "0.6"          # Windows release archives are .zip
