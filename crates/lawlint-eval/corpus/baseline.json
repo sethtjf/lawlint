@@ -1,9 +1,9 @@
 {
-  "overall_auc": 0.7344632768361582,
+  "overall_auc": 0.7627118644067796,
   "slice_auc": {
     "naive": 0.9152542372881356,
-    "rule-evading": 0.7372881355932204,
-    "self-edit": 0.5508474576271186
+    "rule-evading": 0.7966101694915254,
+    "self-edit": 0.576271186440678
   },
   "per_rule_recall": {
     "core/empty-hedge": 0.0,

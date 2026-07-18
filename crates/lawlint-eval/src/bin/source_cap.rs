@@ -62,6 +62,7 @@ mod app {
                     for text in segment(opinion, 100, 500) {
                         if !text.chars().next().is_some_and(char::is_uppercase)
                             || starts_with_citation_fragment(&text)
+                            || has_ocr_fragment(&text)
                         {
                             continue;
                         }
@@ -120,6 +121,28 @@ mod app {
         ]
         .iter()
         .any(|prefix| text.starts_with(prefix))
+    }
+
+    fn has_ocr_fragment(text: &str) -> bool {
+        [
+            "eviden-tiary",
+            "formu-lae",
+            "nonat-tainment",
+            "sen-fencing",
+            "re-fleets",
+            "ag-grievement",
+            "spe-val",
+            "uro-cedural",
+            "non-diseiplinary",
+            "excluda-ble",
+            "pri-ma",
+            "eontract-i",
+            "mini-mus",
+            "exac-tions",
+            "es-toppel",
+        ]
+        .iter()
+        .any(|fragment| text.contains(fragment))
     }
 
     fn get_json<T: for<'de> serde::Deserialize<'de>>(
