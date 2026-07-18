@@ -109,6 +109,70 @@ mod app {
                 "statute",
                 "USCODE-2018-title28/html/USCODE-2018-title28-partIV-chap85-sec1291.htm",
             ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partI-chap51-sec1030.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partII-chap96-sec1961.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partII-chap96-sec1962.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partII-chap113B-sec2339B.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title26/html/USCODE-2018-title26-subtitleA-chap1-subchapB-sec162.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title42/html/USCODE-2018-title42-chap21-sec1983.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title15/html/USCODE-2018-title15-chap2B-sec78j.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title17/html/USCODE-2018-title17-chap1-sec106.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title8/html/USCODE-2018-title8-chap12-subchapII-sec1324.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partII-chap96-sec1964.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title18/html/USCODE-2018-title18-partII-chap96-sec1968.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title42/html/USCODE-2018-title42-chap21-sec2000e.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title29/html/USCODE-2018-title29-chap7-subchapII-sec621.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title26/html/USCODE-2018-title26-subtitleA-chap1-subchapB-sec280A.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title15/html/USCODE-2018-title15-chap41-sec1692.htm",
+            ),
+            (
+                "statute",
+                "USCODE-2018-title35/html/USCODE-2018-title35-partIII-chap27-sec271.htm",
+            ),
             ("regulation", "CFR-2019-title17-vol4-sec240-10b-5.htm"),
             ("regulation", "CFR-2019-title29-vol4-sec1910-1200.htm"),
             ("regulation", "CFR-2019-title40-vol30-sec261-4.htm"),
@@ -125,15 +189,13 @@ mod app {
                     continue;
                 }
             };
-            let body = html
-                .split_once("<body")
-                .and_then(|(_, remainder)| remainder.split_once('>').map(|(_, body)| body))
-                .unwrap_or(&html);
-            for text in segment(&strip_html(body), 100, 500)
+            let statute = html
+                .split_once("<!-- field-start:statute -->")
+                .and_then(|(_, remainder)| remainder.split_once("<!-- field-end:statute -->"))
+                .map_or("", |(statute, _)| statute);
+            for text in segment(&strip_html(statute), 100, 500)
                 .into_iter()
-                .filter(|text| {
-                    !text.contains("{\"path\"") && text.split_whitespace().count() <= 500
-                })
+                .filter(|text| text.split_whitespace().count() <= 500)
                 .take(2)
             {
                 samples.push(Sample {

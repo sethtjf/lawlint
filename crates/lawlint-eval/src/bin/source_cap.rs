@@ -39,7 +39,7 @@ mod app {
                     volume.volume_number
                 ))?;
                 for case in cases {
-                    if passages.len() >= 120 {
+                    if passages.len() >= 137 {
                         break;
                     }
                     let date = case["decision_date"].as_str().unwrap_or_default();
@@ -60,7 +60,9 @@ mod app {
                         .and_then(Value::as_str)
                         .unwrap_or_default();
                     for text in segment(opinion, 100, 500) {
-                        if !text.chars().next().is_some_and(char::is_uppercase) {
+                        if !text.chars().next().is_some_and(char::is_uppercase)
+                            || starts_with_citation_fragment(&text)
+                        {
                             continue;
                         }
                         passages.push(Sample {
@@ -78,17 +80,17 @@ mod app {
                             pair_id: Some(format!("pair-cap-{:06}", passages.len() + 1)),
                             split: None,
                         });
-                        if passages.len() >= 120 {
+                        if passages.len() >= 137 {
                             break;
                         }
                     }
                     sleep(Duration::from_millis(100));
                 }
-                if passages.len() >= 120 {
+                if passages.len() >= 137 {
                     break;
                 }
             }
-            if passages.len() >= 120 {
+            if passages.len() >= 137 {
                 break;
             }
         }
@@ -105,6 +107,19 @@ mod app {
         });
         append_samples(output, passages)?;
         Ok(())
+    }
+
+    fn starts_with_citation_fragment(text: &str) -> bool {
+        [
+            "See ",
+            "Id. ",
+            "Schoonejongen,",
+            "Rec. ",
+            "Or.Rev.Stat.",
+            "Mt. Healthy,",
+        ]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
     }
 
     fn get_json<T: for<'de> serde::Deserialize<'de>>(

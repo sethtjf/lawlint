@@ -38,10 +38,26 @@ mod app {
 
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut samples = Vec::new();
+        let mut seen_filings = std::collections::HashSet::new();
+        let mut genre_counts = std::collections::HashMap::new();
         for year in (2015..=2019).rev() {
-            for query in ["agreement", "employment", "services", "purchase"] {
+            for query in [
+                "credit agreement",
+                "loan agreement",
+                "lease agreement",
+                "license agreement",
+                "supply agreement",
+                "services agreement",
+                "merger agreement",
+                "asset purchase agreement",
+                "employment agreement",
+            ] {
+                if samples.len() >= 70 {
+                    break;
+                }
                 let url = format!(
-                    "https://efts.sec.gov/LATEST/search-index?q={query}&startdt={year}-01-01&enddt={year}-12-31&from=0&size=100"
+                    "https://efts.sec.gov/LATEST/search-index?q={}&startdt={year}-01-01&enddt={year}-12-31&from=0&size=100",
+                    query.replace(' ', "%20")
                 );
                 let response: SearchResponse = match get_json(&url) {
                     Ok(response) => response,
@@ -52,6 +68,9 @@ mod app {
                 };
                 for hit in response.hits.hits {
                     if !hit.source.file_type.starts_with("EX-10") || hit.source.ciks.is_empty() {
+                        continue;
+                    }
+                    if !seen_filings.insert(hit.source.adsh.clone()) {
                         continue;
                     }
                     let filename = hit.id.split_once(':').map(|(_, name)| name).unwrap_or("");
@@ -65,15 +84,28 @@ mod app {
                         accession,
                         filename
                     );
-                    let html = ureq::get(&url)
-                        .set("User-Agent", USER_AGENT)
-                        .call()?
-                        .into_string()?;
+                    let response = ureq::get(&url).set("User-Agent", USER_AGENT).call()?;
+                    let content_type = response.header("Content-Type").unwrap_or_default();
+                    if content_type.contains("pdf") {
+                        continue;
+                    }
+                    let html = response.into_string()?;
+                    if html.as_bytes().iter().filter(|byte| **byte >= 32).count() * 100
+                        < html.len() * 90
+                    {
+                        continue;
+                    }
                     let body = html
                         .split_once("<body")
                         .and_then(|(_, remainder)| remainder.split_once('>').map(|(_, body)| body))
                         .unwrap_or(&html);
                     let cleaned = trim_contract_preamble(&strip_html(body));
+                    let genre = contract_genre(&cleaned);
+                    let count = genre_counts.entry(genre).or_insert(0);
+                    let quota = genre_quota(genre);
+                    if *count >= quota {
+                        continue;
+                    }
                     for text in segment(&cleaned, 100, 500)
                         .into_iter()
                         .filter(|text| text.split_whitespace().count() <= 500)
@@ -94,6 +126,7 @@ mod app {
                             pair_id: Some(format!("pair-edgar-{:06}", samples.len() + 1)),
                             split: None,
                         });
+                        *count += 1;
                     }
                     if samples.len() >= 70 {
                         break;
@@ -110,6 +143,51 @@ mod app {
         }
         append_samples("crates/lawlint-eval/corpus/corpus.jsonl", samples)?;
         Ok(())
+    }
+
+    fn contract_genre(text: &str) -> &'static str {
+        let upper = text.to_ascii_uppercase();
+        if upper.contains("CREDIT AGREEMENT")
+            || upper.contains("TERM LOAN")
+            || upper.contains("REVOLVING LOAN")
+        {
+            "credit"
+        } else if upper.contains("LEASE AGREEMENT") || upper.contains("LANDLORD") {
+            "lease"
+        } else if upper.contains("LICENSE AGREEMENT") || upper.contains("LICENCE AGREEMENT") {
+            "license"
+        } else if upper.contains("SUPPLY AGREEMENT")
+            || upper.contains("MANUFACTURING AGREEMENT")
+            || upper.contains("DISTRIBUTION AGREEMENT")
+        {
+            "supply"
+        } else if upper.contains("MERGER AGREEMENT")
+            || upper.contains("ASSET PURCHASE")
+            || upper.contains("PURCHASE AGREEMENT")
+        {
+            "merger"
+        } else if upper.contains("SERVICES AGREEMENT")
+            || upper.contains("SERVICE AGREEMENT")
+            || upper.contains("CONSULTING AGREEMENT")
+        {
+            "services"
+        } else if upper.contains("EMPLOYMENT AGREEMENT")
+            || upper.contains("OFFER OF EMPLOYMENT")
+            || upper.contains("SEVERANCE AGREEMENT")
+        {
+            "employment"
+        } else {
+            "other"
+        }
+    }
+
+    fn genre_quota(genre: &str) -> usize {
+        match genre {
+            "employment" => 20,
+            "credit" => 12,
+            "lease" | "license" | "supply" | "merger" | "services" => 8,
+            _ => 0,
+        }
     }
 
     fn get_json<T: for<'de> serde::Deserialize<'de>>(
