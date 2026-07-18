@@ -5,6 +5,9 @@ severity: warning
 description: "Flags sentences that restate the previous point without adding new information."
 rationale: "Restating a point in different words pads the text without informing the reader. Every sentence should add a fact, reason, example, or consequence."
 message: "This sentence restates the previous point without adding new information."
+examples:
+  - bad: "The statute of limitations has expired. In other words, the deadline for filing has passed."
+    good: "The statute of limitations has expired. The plaintiff filed on March 3, sixty days late."
 granularity: paragraph
 rubric: >-
   Flag a sentence or clause that repeats the point of the sentence before it

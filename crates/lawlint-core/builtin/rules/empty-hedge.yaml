@@ -5,6 +5,9 @@ severity: warning
 description: "Flags hedges that carry no information about actual uncertainty."
 rationale: "A hedge earns its place only when it tells the reader what is uncertain and why. Stacked qualifiers with no stated reason are AI filler."
 message: "This hedge carries no information about actual uncertainty."
+examples:
+  - bad: "It might be said that the contract is, in some sense, ambiguous."
+    good: "The contract is ambiguous because clause 4 conflicts with clause 9."
 granularity: sentence
 rubric: >-
   Flag a sentence when it hedges a claim without saying what is uncertain

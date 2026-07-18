@@ -14,6 +14,7 @@ pub mod error;
 pub mod judge;
 pub mod loader;
 pub mod markdown;
+pub mod prompt;
 pub mod registry;
 pub mod rule;
 pub mod scoring;
@@ -33,6 +34,7 @@ pub use judge::{
     JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment, PROMPT_VERSION,
 };
 pub use loader::{AllowContextDef, PackageManifest, PatternDef, RuleDef};
+pub use prompt::{remediation_prompt, PromptSource};
 pub use registry::{InferentialRule, RuleSet};
 pub use rule::{Ctx, Interests, Report, Rule, RuleExample, RuleMeta};
 pub use scoring::finalize;
@@ -185,6 +187,38 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.rule_id.0 == id)
+    }
+
+    #[test]
+    fn parenthetical_asides_exempt_statutory_subdivisions() {
+        // Subdivision refs attach to the preceding token; asides follow a space.
+        assert!(!has(
+            "Under Section 4(b), the agreement is binding.",
+            "core/no-parenthetical-asides"
+        ));
+        assert!(!has(
+            "Section 12(a)(1) controls the filing deadline.",
+            "core/no-parenthetical-asides"
+        ));
+        assert!(has(
+            "The court (again) delayed the ruling (twice).",
+            "core/no-parenthetical-asides"
+        ));
+
+        // The consumed leading whitespace must not enter the reported span:
+        // an aside opening line 2 reports line 2, column 1 — not the end of
+        // line 1.
+        let result = lint(
+            "Intro line here.\n(again) the court delayed (twice) more.",
+            &LintOptions::default(),
+        );
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/no-parenthetical-asides")
+            .expect("aside flagged");
+        assert_eq!((d.line, d.column), (2, 1));
+        assert!(d.excerpt.starts_with("(again)"));
     }
 
     // ---- ported: registry ----------------------------------------------
@@ -593,6 +627,14 @@ mod tests {
         // Out-of-bounds edit ignored entirely.
         let diags = vec![mk(0, 99, "X")];
         assert_eq!(apply_fixes(text, &diags), "abcdef");
+    }
+
+    #[test]
+    fn apply_fixes_preserves_leading_capital_end_to_end() {
+        // Engine emits the fix, case logic capitalizes it, apply_fixes composes.
+        let text = "Pursuant to Section 4(b), the fee is due.";
+        let result = lint(text, &LintOptions::default());
+        assert!(apply_fixes(text, &result.diagnostics).starts_with("Under Section 4(b)"));
     }
 
     // ---- tier-3 end-to-end ----------------------------------------------

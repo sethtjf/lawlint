@@ -82,9 +82,14 @@ impl Rule for DensityEngine {
 
     fn check_block(&mut self, b: &Block, ctx: &mut Ctx) {
         let text = b.range.slice(ctx.source);
-        for m in self.re.find_iter(text) {
+        for caps in self.re.captures_iter(text) {
             self.count += 1;
             if self.first_span.is_none() {
+                // A capture group 1 marks the reportable part of the match —
+                // patterns without lookbehind consume leading context (e.g.
+                // the whitespace before a parenthetical aside) that must not
+                // land in the diagnostic span.
+                let m = caps.get(1).or_else(|| caps.get(0)).expect("group 0");
                 let start = b.range.start + m.start();
                 // Parity with the old engine: guard zero-width matches so the
                 // span is at least one byte wide.

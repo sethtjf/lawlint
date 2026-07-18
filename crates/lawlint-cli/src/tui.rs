@@ -8,8 +8,9 @@
 //!   `Alt+Enter` (or `Ctrl+J`) inserts a newline; pasted newlines are kept.
 //! - Slash commands: `/open <path>` lints a file (bare `/open` or `Ctrl+O`
 //!   opens the built-in file browser), `/fix` applies fixes to the last
-//!   linted text, `/clear` clears the transcript, `/help` lists commands,
-//!   `/quit` exits.
+//!   linted text, `/prompt` generates an AI revision prompt from the last
+//!   lint, `/clear` clears the transcript, `/help` lists commands, `/quit`
+//!   exits.
 //! - The file browser is an in-TUI overlay: arrow keys move, typing filters,
 //!   `Enter` descends into a directory or picks a file, `Left`/`Backspace`
 //!   go up, `Esc` cancels.
@@ -104,6 +105,9 @@ struct TuiApp {
     scroll_up: usize,
     last_text: Option<String>,
     loaded_path: Option<String>,
+    /// Whether `last_text` still matches `loaded_path` on disk; `/fix`
+    /// clears it, and `/prompt` falls back to embedding the text then.
+    text_matches_disk: bool,
     last_result: Option<LintResult>,
     rules: RuleSet,
     judge: Option<Option<String>>,
@@ -146,6 +150,7 @@ impl TuiApp {
             scroll_up: 0,
             last_text: None,
             loaded_path: None,
+            text_matches_disk: false,
             last_result: None,
             rules,
             judge,
@@ -281,6 +286,11 @@ impl TuiApp {
                         self.push_error(e);
                     }
                 }
+                "prompt" => {
+                    if let Err(e) = self.cmd_prompt() {
+                        self.push_error(e);
+                    }
+                }
                 "clear" => self.transcript.clear(),
                 "help" => self.push_help(),
                 "quit" | "exit" | "q" => return Some(self.exit_code()),
@@ -291,6 +301,7 @@ impl TuiApp {
 
         self.last_text = Some(trimmed.clone());
         self.loaded_path = None;
+        self.text_matches_disk = false;
         self.lint_and_push(&trimmed);
         None
     }
@@ -360,6 +371,7 @@ impl TuiApp {
         ));
         self.loaded_path = Some(raw.to_string());
         self.last_text = Some(text.clone());
+        self.text_matches_disk = true;
         self.lint_and_push(&text);
         Ok(())
     }
@@ -378,18 +390,65 @@ impl TuiApp {
 
         self.push_blank();
         self.push(bullet_line(
-            Span::styled("Fixed text", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("Changes", Style::default().add_modifier(Modifier::BOLD)),
             match &self.loaded_path {
                 Some(path) => format!(" · {path} is unchanged on disk"),
                 None => String::new(),
             },
         ));
-        for line in fixed.lines() {
-            self.push(Line::from(format!("  {line}")));
+        let diff = crate::diff::diff_lines(&text, &fixed);
+        for entry in crate::diff::with_context(&diff, 1) {
+            let (prefix, content, color) = match &entry {
+                Some(crate::diff::DiffLine::Removed(s)) => ("- ", s.as_str(), BRAND),
+                Some(crate::diff::DiffLine::Added(s)) => ("+ ", s.as_str(), GOOD),
+                Some(crate::diff::DiffLine::Same(s)) => ("  ", s.as_str(), DIM),
+                None => ("···", "", DIM),
+            };
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{prefix}{content}"), Style::default().fg(color)),
+            ]));
         }
 
         self.last_text = Some(fixed.clone());
+        self.text_matches_disk = false;
         self.lint_and_push(&fixed);
+        Ok(())
+    }
+
+    fn cmd_prompt(&mut self) -> Result<(), String> {
+        let Some(text) = self.last_text.clone() else {
+            return Err("Nothing to prompt yet — lint some text first.".into());
+        };
+        // Re-lint so the brief reflects the current text and its offsets.
+        let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
+        // Reference the file by path while the buffer still matches disk;
+        // otherwise (typed text, or after /fix) embed the text itself.
+        let source = match &self.loaded_path {
+            Some(path) if self.text_matches_disk => lawlint_core::PromptSource::File(path),
+            _ => lawlint_core::PromptSource::Text(&text),
+        };
+        let Some(prompt) = lawlint_core::remediation_prompt(source, &result, &self.rules) else {
+            self.push_note("No issues found — nothing to fix.");
+            return Ok(());
+        };
+
+        self.push_blank();
+        self.push(bullet_line(
+            Span::styled(
+                "Copy this into your AI model",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            String::new(),
+        ));
+        for line in prompt.lines() {
+            let color = if line.starts_with("## ") { BRAND } else { DIM };
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(line.to_string(), Style::default().fg(color)),
+            ]));
+        }
+        self.push_blank();
         Ok(())
     }
 
@@ -466,6 +525,10 @@ impl TuiApp {
         let rows: &[(&str, &str)] = &[
             ("/open <path>", "lint a file (bare /open browses)"),
             ("/fix", "apply fixes to the last linted text"),
+            (
+                "/prompt",
+                "generate an AI revision prompt from the last lint",
+            ),
             ("/clear", "clear the transcript"),
             ("/help", "show this help"),
             ("/quit", "exit (also Ctrl+C)"),

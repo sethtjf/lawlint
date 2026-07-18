@@ -347,6 +347,192 @@ fn fix_without_applicable_fixes_leaves_file_alone() {
     );
 }
 
+// ---- --diff ------------------------------------------------------------
+
+#[test]
+fn diff_previews_without_modifying_the_file() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), the parties proceed.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .arg("--diff")
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"));
+    // Preview only: the file is untouched.
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "Pursuant to Section 4(b), the parties proceed."
+    );
+}
+
+#[test]
+fn diff_renders_context_lines_and_gap_separators() {
+    let dir = TempDir::new().unwrap();
+    // Two fixable findings separated by enough clean lines that the
+    // unchanged run between them collapses into a separator.
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), rent is due.\n\
+         The lease term is five years.\n\
+         The premises are in good repair.\n\
+         The deposit is held in escrow.\n\
+         The landlord waives none of its rights.\n\
+         Fees accrue pursuant to the rider.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .arg("--diff")
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"))
+        .stdout(predicate::str::contains("- Fees accrue pursuant to"))
+        .stdout(predicate::str::contains("+ Fees accrue under"))
+        // One unchanged context line around each hunk, dim-rendered with a
+        // two-space prefix, and the collapsed run between hunks as "···".
+        .stdout(predicate::str::contains("  The lease term is five years."))
+        .stdout(predicate::str::contains("···"));
+}
+
+#[test]
+fn prompt_format_with_quiet_suppresses_stdout_but_keeps_exit_code() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["-", "--format", "prompt", "--quiet"])
+        .write_stdin("It was—wrong.")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn diff_with_json_format_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--diff", "--format", "json"])
+        .write_stdin("Pursuant to Section 4(b), the parties proceed.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--diff requires --format pretty"));
+}
+
+#[test]
+fn diff_reports_no_applicable_fixes() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .arg("--diff")
+        .write_stdin("The court granted the motion.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no applicable fixes"));
+}
+
+#[test]
+fn fix_and_diff_rewrites_file_and_prints_markers() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), the parties proceed.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .args(["--fix", "--diff"])
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"))
+        .stderr(predicate::str::contains("Applied 1 fix"));
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "Under Section 4(b), the parties proceed."
+    );
+}
+
+// ---- --format prompt ---------------------------------------------------
+
+#[test]
+fn prompt_format_emits_revision_brief_with_section_and_excerpt() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt"])
+        .write_stdin("Great question! The answer is no.")
+        .assert()
+        .code(1) // error-severity finding drives the exit code, not the format
+        .stdout(predicate::str::contains("## core/no-sycophantic-openers"))
+        .stdout(predicate::str::contains("The answer is no."))
+        // Stdin input is embedded so the brief is self-contained.
+        .stdout(predicate::str::contains("Document to revise:"));
+}
+
+#[test]
+fn prompt_format_file_input_references_path_without_embedding() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), rent is due.\nThe lease term is five years.",
+    );
+    let path = file.to_str().unwrap();
+    cmd(&dir)
+        .arg(path)
+        .args(["--format", "prompt"])
+        .assert()
+        .stdout(predicate::str::contains(format!(
+            "Revise the document at `{path}`."
+        )))
+        .stdout(predicate::str::contains(format!("Edit `{path}` in place")))
+        // The document body stays out of the brief — the receiving agent
+        // reads the file itself. The un-flagged line must not appear.
+        .stdout(predicate::str::contains("Document to revise:").not())
+        .stdout(predicate::str::contains("The lease term is five years.").not());
+}
+
+#[test]
+fn prompt_format_clean_text_prints_nothing_but_notes_on_stderr() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt"])
+        .write_stdin("The court granted the motion.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "no issues found; no prompt generated",
+        ));
+}
+
+#[test]
+fn prompt_format_with_fix_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    let file = write(&dir, "brief.txt", "Great question! The answer is no.");
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .args(["--format", "prompt", "--fix"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "--fix and --diff require --format pretty",
+        ));
+}
+
+#[test]
+fn prompt_format_with_diff_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt", "--diff"])
+        .write_stdin("Great question! The answer is no.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "--fix and --diff require --format pretty",
+        ));
+}
+
 // ---- rules subcommand --------------------------------------------------
 
 #[test]
