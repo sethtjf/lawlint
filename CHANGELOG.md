@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/sethtjf/lawlint/compare/v0.4.0...v0.5.0) (2026-07-18)
+
+
+### Features
+
+* mechanical fixes, diff view, and AI remediation prompts ([#32](https://github.com/sethtjf/lawlint/issues/32)) ([75ef160](https://github.com/sethtjf/lawlint/commit/75ef160299cee27fd08afb7cdfcd4295e3b20454))
+* **website:** simplify navigation, hero, and docs structure ([#28](https://github.com/sethtjf/lawlint/issues/28)) ([d8ae603](https://github.com/sethtjf/lawlint/commit/d8ae6030d05972e614b256d734faedc22a26e1a5))
+
 ## [0.4.0](https://github.com/sethtjf/lawlint/compare/v0.3.0...v0.4.0) (2026-07-18)
 
 
