@@ -464,7 +464,32 @@ fn prompt_format_emits_revision_brief_with_section_and_excerpt() {
         .assert()
         .code(1) // error-severity finding drives the exit code, not the format
         .stdout(predicate::str::contains("## core/no-sycophantic-openers"))
-        .stdout(predicate::str::contains("The answer is no."));
+        .stdout(predicate::str::contains("The answer is no."))
+        // Stdin input is embedded so the brief is self-contained.
+        .stdout(predicate::str::contains("Document to revise:"));
+}
+
+#[test]
+fn prompt_format_file_input_references_path_without_embedding() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), rent is due.\nThe lease term is five years.",
+    );
+    let path = file.to_str().unwrap();
+    cmd(&dir)
+        .arg(path)
+        .args(["--format", "prompt"])
+        .assert()
+        .stdout(predicate::str::contains(format!(
+            "Revise the document at `{path}`."
+        )))
+        .stdout(predicate::str::contains(format!("Edit `{path}` in place")))
+        // The document body stays out of the brief — the receiving agent
+        // reads the file itself. The un-flagged line must not appear.
+        .stdout(predicate::str::contains("Document to revise:").not())
+        .stdout(predicate::str::contains("The lease term is five years.").not());
 }
 
 #[test]

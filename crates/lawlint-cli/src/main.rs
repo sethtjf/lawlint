@@ -495,7 +495,17 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
         ),
         // The brief is fed to an AI model, so it replaces diagnostics output.
         // --quiet suppresses stdout; the None note stays on stderr regardless.
-        "prompt" => match lawlint_core::remediation_prompt(&text, &result, &rules) {
+        // A file input is referenced by path — the receiving agent reads it
+        // itself; embedding a large document would blow up its context.
+        "prompt" => match lawlint_core::remediation_prompt(
+            if cli.file == "-" {
+                lawlint_core::PromptSource::Text(&text)
+            } else {
+                lawlint_core::PromptSource::File(&cli.file)
+            },
+            &result,
+            &rules,
+        ) {
             Some(prompt) => {
                 if !cli.quiet {
                     print!("{prompt}");

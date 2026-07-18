@@ -105,6 +105,9 @@ struct TuiApp {
     scroll_up: usize,
     last_text: Option<String>,
     loaded_path: Option<String>,
+    /// Whether `last_text` still matches `loaded_path` on disk; `/fix`
+    /// clears it, and `/prompt` falls back to embedding the text then.
+    text_matches_disk: bool,
     last_result: Option<LintResult>,
     rules: RuleSet,
     judge: Option<Option<String>>,
@@ -147,6 +150,7 @@ impl TuiApp {
             scroll_up: 0,
             last_text: None,
             loaded_path: None,
+            text_matches_disk: false,
             last_result: None,
             rules,
             judge,
@@ -297,6 +301,7 @@ impl TuiApp {
 
         self.last_text = Some(trimmed.clone());
         self.loaded_path = None;
+        self.text_matches_disk = false;
         self.lint_and_push(&trimmed);
         None
     }
@@ -366,6 +371,7 @@ impl TuiApp {
         ));
         self.loaded_path = Some(raw.to_string());
         self.last_text = Some(text.clone());
+        self.text_matches_disk = true;
         self.lint_and_push(&text);
         Ok(())
     }
@@ -405,6 +411,7 @@ impl TuiApp {
         }
 
         self.last_text = Some(fixed.clone());
+        self.text_matches_disk = false;
         self.lint_and_push(&fixed);
         Ok(())
     }
@@ -415,7 +422,13 @@ impl TuiApp {
         };
         // Re-lint so the brief reflects the current text and its offsets.
         let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
-        let Some(prompt) = lawlint_core::remediation_prompt(&text, &result, &self.rules) else {
+        // Reference the file by path while the buffer still matches disk;
+        // otherwise (typed text, or after /fix) embed the text itself.
+        let source = match &self.loaded_path {
+            Some(path) if self.text_matches_disk => lawlint_core::PromptSource::File(path),
+            _ => lawlint_core::PromptSource::Text(&text),
+        };
+        let Some(prompt) = lawlint_core::remediation_prompt(source, &result, &self.rules) else {
             self.push_note("No issues found — nothing to fix.");
             return Ok(());
         };

@@ -34,7 +34,7 @@ pub use judge::{
     JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment, PROMPT_VERSION,
 };
 pub use loader::{AllowContextDef, PackageManifest, PatternDef, RuleDef};
-pub use prompt::remediation_prompt;
+pub use prompt::{remediation_prompt, PromptSource};
 pub use registry::{InferentialRule, RuleSet};
 pub use rule::{Ctx, Interests, Report, Rule, RuleExample, RuleMeta};
 pub use scoring::finalize;

@@ -18,12 +18,27 @@ use crate::rule::RuleMeta;
 use crate::types::LintResult;
 use crate::RuleSet;
 
-/// Build a revision brief for `result`'s diagnostics over `text`, the
-/// document that was linted — the brief embeds it, so the output is a
-/// self-contained work order. Returns `None` when there are no diagnostics —
-/// an empty brief would instruct a model to do nothing. Rules appear in
-/// first-violation order; instances in document order under each rule.
-pub fn remediation_prompt(text: &str, result: &LintResult, rules: &RuleSet) -> Option<String> {
+/// Where the linted document lives, which decides how the brief hands it to
+/// the model.
+pub enum PromptSource<'a> {
+    /// Inline text (stdin, a TUI buffer, the playground). The brief embeds
+    /// the document so it is self-contained.
+    Text(&'a str),
+    /// A file on disk. The brief references the path and instructs the model
+    /// to edit the file in place — embedding a large document would blow up
+    /// the receiving agent's context, and it can read the file itself.
+    File(&'a str),
+}
+
+/// Build a revision brief for `result`'s diagnostics over the document in
+/// `source`. Returns `None` when there are no diagnostics — an empty brief
+/// would instruct a model to do nothing. Rules appear in first-violation
+/// order; instances in document order under each rule.
+pub fn remediation_prompt(
+    source: PromptSource<'_>,
+    result: &LintResult,
+    rules: &RuleSet,
+) -> Option<String> {
     if result.diagnostics.is_empty() {
         return None;
     }
@@ -40,7 +55,37 @@ pub fn remediation_prompt(text: &str, result: &LintResult, rules: &RuleSet) -> O
     }
 
     let mut out = String::new();
-    out.push_str(PREAMBLE);
+    match &source {
+        PromptSource::Text(_) => out.push_str(
+            "Revise the document that follows. It was flagged by lawlint, a \
+             linter for legal and general prose. Apply the fixes described \
+             below and return the corrected document.\n",
+        ),
+        PromptSource::File(path) => {
+            let _ = writeln!(
+                out,
+                "Revise the document at `{path}`. It was flagged by lawlint, \
+                 a linter for legal and general prose. Read the file, apply \
+                 the fixes described below, and write the corrected document \
+                 back to the same path."
+            );
+        }
+    }
+    out.push_str(CONSTRAINTS);
+    match &source {
+        PromptSource::Text(_) => out.push_str(
+            "- Return only the revised document text. Do not add commentary, \
+             explanations, or code fences.\n",
+        ),
+        PromptSource::File(_) => out.push_str(
+            "- Line numbers in the findings refer to the file as it exists \
+             now, before any edits.\n",
+        ),
+    }
+    out.push_str(
+        "\nEach section names a violated rule, explains it, gives \
+         before/after examples, then lists the findings to fix.\n",
+    );
 
     for rule_id in order {
         let _ = write!(out, "\n## {rule_id}\n");
@@ -69,36 +114,38 @@ pub fn remediation_prompt(text: &str, result: &LintResult, rules: &RuleSet) -> O
         }
     }
 
-    out.push_str("\n---\nDocument to revise:\n\n");
-    out.push_str(text);
-    if !text.ends_with('\n') {
-        out.push('\n');
+    match &source {
+        PromptSource::Text(text) => {
+            out.push_str("\n---\nDocument to revise:\n\n");
+            out.push_str(text);
+            if !text.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("---\n\n");
+            out.push_str(
+                "Return only the revised document text, with every listed \
+                 finding fixed and nothing else changed.\n",
+            );
+        }
+        PromptSource::File(path) => {
+            let _ = writeln!(
+                out,
+                "\nEdit `{path}` in place, fixing every listed finding and \
+                 changing nothing else."
+            );
+        }
     }
-    out.push_str("---\n\n");
-    out.push_str(CLOSING);
     Some(out)
 }
 
-const PREAMBLE: &str = "\
-Revise the document that follows. It was flagged by lawlint, a linter for \
-legal and general prose. Apply the fixes described below and return the \
-corrected document.
-
+const CONSTRAINTS: &str = "
 Hard constraints:
 - Preserve the document's meaning and legal precision exactly.
 - Change only the text a finding covers. Leave every other character \
 byte-for-byte identical, including whitespace, capitalization, and \
 punctuation.
 - Do not introduce new stylistic problems while fixing the listed ones.
-- Return only the revised document text. Do not add commentary, \
-explanations, or code fences.
-
-Each section names a violated rule, explains it, gives before/after \
-examples, then lists the findings to fix.
 ";
-
-const CLOSING: &str =
-    "Return only the revised document text, with every listed finding fixed and nothing else changed.\n";
 
 #[cfg(test)]
 mod tests {
@@ -122,7 +169,7 @@ mod tests {
             },
             judge: None,
         };
-        assert!(remediation_prompt("", &result, &built_in()).is_none());
+        assert!(remediation_prompt(PromptSource::Text(""), &result, &built_in()).is_none());
     }
 
     #[test]
@@ -132,7 +179,8 @@ mod tests {
         // (core/no-em-dash), so the cliché section must come first.
         let text = "We should delve into this matter—now.";
         let result = lint_with(text, &LintOptions::default(), &rules);
-        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
+        let prompt =
+            remediation_prompt(PromptSource::Text(text), &result, &rules).expect("has diagnostics");
 
         let cliches = prompt
             .find("## core/no-ai-cliches")
@@ -159,11 +207,29 @@ mod tests {
     }
 
     #[test]
+    fn file_source_references_path_and_never_embeds_the_document() {
+        let rules = built_in();
+        let text = "We should delve into this matter—now.";
+        let result = lint_with(text, &LintOptions::default(), &rules);
+        let prompt = remediation_prompt(PromptSource::File("docs/brief.md"), &result, &rules)
+            .expect("has diagnostics");
+
+        assert!(prompt.contains("Revise the document at `docs/brief.md`."));
+        assert!(prompt.contains("Edit `docs/brief.md` in place"));
+        // The document body must NOT be embedded — that is the point of the
+        // file variant. Excerpts inside findings still quote flagged lines.
+        assert!(!prompt.contains("Document to revise:"));
+        assert!(!prompt.contains("Return only the revised document text"));
+        assert!(prompt.contains("Line numbers in the findings refer to the file"));
+    }
+
+    #[test]
     fn multiple_findings_of_one_rule_list_in_document_order() {
         let rules = built_in();
         let text = "Pursuant to the lease, rent is due.\nFees accrue pursuant to the rider.";
         let result = lint_with(text, &LintOptions::default(), &rules);
-        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
+        let prompt =
+            remediation_prompt(PromptSource::Text(text), &result, &rules).expect("has diagnostics");
 
         let section = prompt
             .find("## core/no-legalese")
@@ -184,7 +250,8 @@ mod tests {
             .iter()
             .any(|d| d.rule_id.0 == "core/no-em-dash" && d.suggestion.is_some()));
 
-        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
+        let prompt =
+            remediation_prompt(PromptSource::Text(text), &result, &rules).expect("has diagnostics");
         assert!(prompt.contains("(suggestion: "));
     }
 }

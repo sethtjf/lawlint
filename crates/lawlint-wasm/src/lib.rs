@@ -42,8 +42,8 @@ use std::sync::OnceLock;
 use lawlint_core::loader::parse_rule;
 use lawlint_core::{
     lint as core_lint, lint_full, lint_with, plan_judge, remediation_prompt, Judge, JudgeError,
-    JudgeFinding, JudgeRequest, LintOptions, LintResult, LoadError, RubricFragment, RuleExample,
-    RuleId, RuleMeta, RuleSet, Scope, Severity, Tier,
+    JudgeFinding, JudgeRequest, LintOptions, LintResult, LoadError, PromptSource, RubricFragment,
+    RuleExample, RuleId, RuleMeta, RuleSet, Scope, Severity, Tier,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -319,10 +319,12 @@ pub fn remediation_prompt_js(text: &str, options: JsValue) -> Result<JsValue, Js
     let options = options_from_js(options)?;
     let set = built_in_set();
     let result = lint_with(text, &options, set);
-    Ok(match remediation_prompt(text, &result, set) {
-        Some(prompt) => JsValue::from_str(&prompt),
-        None => JsValue::NULL,
-    })
+    Ok(
+        match remediation_prompt(PromptSource::Text(text), &result, set) {
+            Some(prompt) => JsValue::from_str(&prompt),
+            None => JsValue::NULL,
+        },
+    )
 }
 
 /// Metadata for every built-in rule (camelCase field names).
