@@ -1,9 +1,10 @@
 ---
+import DocsNav from "../../components/DocsNav.astro";
 import Layout from "../../layouts/Layout.astro";
 ---
 <Layout title="CLI reference">
   <article class="doc">
-    <div class="eyebrow">Docs / 02</div>
+    <DocsNav active="cli" />
     <h1>CLI reference</h1>
     <p class="intro">Install the native CLI from the <a href="/download">download page</a>, then pass it a file or stdin with a handful of controls.</p>
     <pre>lawlint [options] &lt;file.txt|file.md|-&gt;

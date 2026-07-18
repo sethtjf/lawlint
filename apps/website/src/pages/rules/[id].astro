@@ -1,5 +1,6 @@
 ---
 import rules from "../../generated/rules.json";
+import DocsNav from "../../components/DocsNav.astro";
 import Layout from "../../layouts/Layout.astro";
 
 export function getStaticPaths() {
@@ -9,7 +10,7 @@ const { rule } = Astro.props;
 ---
 <Layout title={rule.id} description={rule.meta.description}>
   <article class="rule-doc">
-    <div class="eyebrow">Rule / {rule.id}</div>
+    <DocsNav active="rules" />
     <h1>{rule.id}</h1>
     <p class="intro">{rule.meta.description}</p>
     <div class="rule-meta"><span>severity</span><strong>{rule.meta.severity ?? "warning"}</strong><span>documentation</span><a href={rule.meta.docsUrl}>{rule.meta.docsUrl}</a></div>
