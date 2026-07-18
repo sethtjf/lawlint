@@ -415,7 +415,7 @@ impl TuiApp {
         };
         // Re-lint so the brief reflects the current text and its offsets.
         let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
-        let Some(prompt) = lawlint_core::remediation_prompt(&result, &self.rules) else {
+        let Some(prompt) = lawlint_core::remediation_prompt(&text, &result, &self.rules) else {
             self.push_note("No issues found — nothing to fix.");
             return Ok(());
         };

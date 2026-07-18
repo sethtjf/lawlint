@@ -371,6 +371,46 @@ fn diff_previews_without_modifying_the_file() {
 }
 
 #[test]
+fn diff_renders_context_lines_and_gap_separators() {
+    let dir = TempDir::new().unwrap();
+    // Two fixable findings separated by enough clean lines that the
+    // unchanged run between them collapses into a separator.
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), rent is due.\n\
+         The lease term is five years.\n\
+         The premises are in good repair.\n\
+         The deposit is held in escrow.\n\
+         The landlord waives none of its rights.\n\
+         Fees accrue pursuant to the rider.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .arg("--diff")
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"))
+        .stdout(predicate::str::contains("- Fees accrue pursuant to"))
+        .stdout(predicate::str::contains("+ Fees accrue under"))
+        // One unchanged context line around each hunk, dim-rendered with a
+        // two-space prefix, and the collapsed run between hunks as "···".
+        .stdout(predicate::str::contains("  The lease term is five years."))
+        .stdout(predicate::str::contains("···"));
+}
+
+#[test]
+fn prompt_format_with_quiet_suppresses_stdout_but_keeps_exit_code() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["-", "--format", "prompt", "--quiet"])
+        .write_stdin("It was—wrong.")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
 fn diff_with_json_format_is_a_config_error() {
     let dir = TempDir::new().unwrap();
     cmd(&dir)

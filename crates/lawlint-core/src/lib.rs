@@ -204,6 +204,21 @@ mod tests {
             "The court (again) delayed the ruling (twice).",
             "core/no-parenthetical-asides"
         ));
+
+        // The consumed leading whitespace must not enter the reported span:
+        // an aside opening line 2 reports line 2, column 1 — not the end of
+        // line 1.
+        let result = lint(
+            "Intro line here.\n(again) the court delayed (twice) more.",
+            &LintOptions::default(),
+        );
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/no-parenthetical-asides")
+            .expect("aside flagged");
+        assert_eq!((d.line, d.column), (2, 1));
+        assert!(d.excerpt.starts_with("(again)"));
     }
 
     // ---- ported: registry ----------------------------------------------

@@ -495,7 +495,7 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
         ),
         // The brief is fed to an AI model, so it replaces diagnostics output.
         // --quiet suppresses stdout; the None note stays on stderr regardless.
-        "prompt" => match lawlint_core::remediation_prompt(&result, &rules) {
+        "prompt" => match lawlint_core::remediation_prompt(&text, &result, &rules) {
             Some(prompt) => {
                 if !cli.quiet {
                     print!("{prompt}");

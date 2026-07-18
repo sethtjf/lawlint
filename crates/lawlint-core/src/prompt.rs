@@ -18,11 +18,12 @@ use crate::rule::RuleMeta;
 use crate::types::LintResult;
 use crate::RuleSet;
 
-/// Build a revision brief for `result`'s diagnostics. Returns `None` when
-/// there are no diagnostics — an empty brief would instruct a model to do
-/// nothing. Rules appear in first-violation order; instances in document
-/// order under each rule.
-pub fn remediation_prompt(result: &LintResult, rules: &RuleSet) -> Option<String> {
+/// Build a revision brief for `result`'s diagnostics over `text`, the
+/// document that was linted — the brief embeds it, so the output is a
+/// self-contained work order. Returns `None` when there are no diagnostics —
+/// an empty brief would instruct a model to do nothing. Rules appear in
+/// first-violation order; instances in document order under each rule.
+pub fn remediation_prompt(text: &str, result: &LintResult, rules: &RuleSet) -> Option<String> {
     if result.diagnostics.is_empty() {
         return None;
     }
@@ -57,11 +58,10 @@ pub fn remediation_prompt(result: &LintResult, rules: &RuleSet) -> Option<String
 
         out.push_str("Findings:\n");
         for d in result.diagnostics.iter().filter(|d| d.rule_id.0 == rule_id) {
-            let _ = write!(
-                out,
-                "- line {}, column {}: \"{}\"",
-                d.line, d.column, d.excerpt
-            );
+            // Line + excerpt locate the finding; a column offset would be
+            // measured against the untrimmed source line, not the trimmed
+            // excerpt quoted here, so it is omitted rather than misleading.
+            let _ = write!(out, "- line {}: \"{}\"", d.line, d.excerpt);
             if let Some(suggestion) = &d.suggestion {
                 let _ = write!(out, " (suggestion: {suggestion})");
             }
@@ -69,7 +69,12 @@ pub fn remediation_prompt(result: &LintResult, rules: &RuleSet) -> Option<String
         }
     }
 
-    out.push('\n');
+    out.push_str("\n---\nDocument to revise:\n\n");
+    out.push_str(text);
+    if !text.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("---\n\n");
     out.push_str(CLOSING);
     Some(out)
 }
@@ -117,7 +122,7 @@ mod tests {
             },
             judge: None,
         };
-        assert!(remediation_prompt(&result, &built_in()).is_none());
+        assert!(remediation_prompt("", &result, &built_in()).is_none());
     }
 
     #[test]
@@ -127,7 +132,7 @@ mod tests {
         // (core/no-em-dash), so the cliché section must come first.
         let text = "We should delve into this matter—now.";
         let result = lint_with(text, &LintOptions::default(), &rules);
-        let prompt = remediation_prompt(&result, &rules).expect("has diagnostics");
+        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
 
         let cliches = prompt
             .find("## core/no-ai-cliches")
@@ -145,9 +150,27 @@ mod tests {
         // The offending source line is surfaced as the finding excerpt.
         assert!(prompt.contains("We should delve into this matter"));
 
+        // The brief is self-contained: the document itself is embedded.
+        assert!(prompt.contains("Document to revise:\n\nWe should delve into this matter—now.\n"));
+
         // Framing is present and stable.
         assert!(prompt.starts_with("Revise the document that follows."));
         assert!(prompt.trim_end().ends_with("nothing else changed."));
+    }
+
+    #[test]
+    fn multiple_findings_of_one_rule_list_in_document_order() {
+        let rules = built_in();
+        let text = "Pursuant to the lease, rent is due.\nFees accrue pursuant to the rider.";
+        let result = lint_with(text, &LintOptions::default(), &rules);
+        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
+
+        let section = prompt
+            .find("## core/no-legalese")
+            .expect("legalese section present");
+        let first = prompt[section..].find("- line 1:").expect("line 1 finding");
+        let second = prompt[section..].find("- line 2:").expect("line 2 finding");
+        assert!(first < second, "instances listed in document order");
     }
 
     #[test]
@@ -161,7 +184,7 @@ mod tests {
             .iter()
             .any(|d| d.rule_id.0 == "core/no-em-dash" && d.suggestion.is_some()));
 
-        let prompt = remediation_prompt(&result, &rules).expect("has diagnostics");
+        let prompt = remediation_prompt(text, &result, &rules).expect("has diagnostics");
         assert!(prompt.contains("(suggestion: "));
     }
 }

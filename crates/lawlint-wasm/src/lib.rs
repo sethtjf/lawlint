@@ -319,7 +319,7 @@ pub fn remediation_prompt_js(text: &str, options: JsValue) -> Result<JsValue, Js
     let options = options_from_js(options)?;
     let set = built_in_set();
     let result = lint_with(text, &options, set);
-    Ok(match remediation_prompt(&result, set) {
+    Ok(match remediation_prompt(text, &result, set) {
         Some(prompt) => JsValue::from_str(&prompt),
         None => JsValue::NULL,
     })
