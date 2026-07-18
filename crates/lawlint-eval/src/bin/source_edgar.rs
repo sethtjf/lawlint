@@ -95,11 +95,23 @@ mod app {
                     {
                         continue;
                     }
+                    if html
+                        .chars()
+                        .any(|character| ('\u{0080}'..='\u{009f}').contains(&character))
+                    {
+                        continue;
+                    }
                     let body = html
                         .split_once("<body")
                         .and_then(|(_, remainder)| remainder.split_once('>').map(|(_, body)| body))
                         .unwrap_or(&html);
                     let cleaned = trim_contract_preamble(&strip_html(body));
+                    if cleaned
+                        .chars()
+                        .any(|character| ('\u{0080}'..='\u{009f}').contains(&character))
+                    {
+                        continue;
+                    }
                     let genre = contract_genre(&cleaned);
                     let count = genre_counts.entry(genre).or_insert(0);
                     let quota = genre_quota(genre);
