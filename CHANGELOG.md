@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/sethtjf/lawlint/compare/v0.3.0...v0.4.0) (2026-07-18)
+
+
+### Features
+
+* **cli:** add lawlint init and .lawlint/config.json discovery ([#25](https://github.com/sethtjf/lawlint/issues/25)) ([528be79](https://github.com/sethtjf/lawlint/commit/528be790b9e1c5441087e0fd9d28e18b8f9a16b3))
+* **cli:** launch ratatui TUI on bare lawlint invocation ([#24](https://github.com/sethtjf/lawlint/issues/24)) ([311219e](https://github.com/sethtjf/lawlint/commit/311219e42d329ff532a917d94ea99adf0dbb03a5))
+* **website:** add changelog page rendering release notes ([#27](https://github.com/sethtjf/lawlint/issues/27)) ([350326e](https://github.com/sethtjf/lawlint/commit/350326e79f5d956b671247d3f296fede199f2404))
+
 ## [0.3.0](https://github.com/sethtjf/lawlint/compare/v0.2.0...v0.3.0) (2026-07-17)
 
 
