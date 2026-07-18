@@ -1,39 +1,65 @@
 //! Interactive TUI launched by a bare `lawlint` command.
 //!
-//! Interface inspired by the OpenAI Codex CLI: results/conversation at the top,
-//! a text composer at the bottom, and a single-line status bar beneath it.
+//! A transcript-style interface in the Litvue oxblood palette: a wordmark
+//! header, a scrolling transcript of inputs and results, a borderless `§`
+//! composer at the bottom, and a single dim status line under that.
 //!
-//! - Type or paste text in the composer and press `Ctrl+L` to lint.
-//! - Press `Ctrl+O` to open a single-line file-path field. `Enter` loads the path,
-//!   a second `Ctrl+O` opens a native file picker, and the field expands into the
-//!   multi-line composer once a file is loaded.
-//! - Press `Esc`/`Ctrl+Q` to quit.
+//! - Type or paste text in the composer and press `Enter` to lint it.
+//!   `Alt+Enter` (or `Ctrl+J`) inserts a newline; pasted newlines are kept.
+//! - Slash commands: `/open <path>` lints a file (bare `/open` or `Ctrl+O`
+//!   opens the built-in file browser), `/fix` applies fixes to the last
+//!   linted text, `/clear` clears the transcript, `/help` lists commands,
+//!   `/quit` exits.
+//! - The file browser is an in-TUI overlay: arrow keys move, typing filters,
+//!   `Enter` descends into a directory or picks a file, `Left`/`Backspace`
+//!   go up, `Esc` cancels.
+//! - `PageUp`/`PageDown` scroll the transcript; `Esc` clears the composer;
+//!   `Ctrl+C`/`Ctrl+Q` quit.
 
 use crate::{build_rule_set, find_config, judge_spec, lint_text};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use lawlint_core::{LintOptions, LintResult, RuleSet, Severity};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Terminal;
-use ratatui_textarea::{CursorMove, TextArea};
+use ratatui_textarea::TextArea;
 use std::io::{self, IsTerminal, Stdout};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const CONTENT_TITLE: &str = "Text";
-const PATH_TITLE: &str = "File path";
+// Litvue palette, from apps/desktop/src/styles.css. Foreground accents use a
+// lighter tint of the oxblood hue so they stay readable on dark terminals.
+/// Oxblood tinted up for foreground accents (base: --oxblood #7e2528).
+const BRAND: Color = Color::Rgb(199, 62, 71);
+/// True oxblood, for borders and quiet accents.
+const BRAND_DARK: Color = Color::Rgb(126, 37, 40);
+/// Warm muted gray (--muted #82796f).
+const DIM: Color = Color::Rgb(130, 121, 111);
+/// Red-tinted bar behind echoed input.
+const INPUT_BAR_BG: Color = Color::Rgb(56, 40, 40);
+/// Selected row in the file browser.
+const SELECT_BG: Color = Color::Rgb(94, 32, 34);
+/// Green from the desktop app's status dot (#557b59, tinted up).
+const GOOD: Color = Color::Rgb(118, 160, 123);
+/// Warm amber for warnings.
+const AMBER: Color = Color::Rgb(202, 152, 74);
+/// Slate for suggestions.
+const SLATE: Color = Color::Rgb(126, 148, 158);
 
 struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen, DisableBracketedPaste);
     }
 }
 
@@ -43,7 +69,8 @@ pub fn run_tui() -> Result<i32, String> {
     }
 
     enable_raw_mode().map_err(|e| e.to_string())?;
-    crossterm::execute!(io::stdout(), EnterAlternateScreen).map_err(|e| e.to_string())?;
+    crossterm::execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
+        .map_err(|e| e.to_string())?;
     let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -53,19 +80,30 @@ pub fn run_tui() -> Result<i32, String> {
     app.run(&mut terminal)
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Content,
-    Path,
+/// One transcript line plus an optional style used to pad it to the full
+/// terminal width (the highlighted bar behind echoed input).
+struct TranscriptLine {
+    line: Line<'static>,
+    fill: Option<Style>,
+}
+
+struct Banner {
+    version: String,
+    rule_count: usize,
+    judge_on: bool,
+    config: Option<String>,
+    cwd: String,
 }
 
 struct TuiApp {
-    mode: Mode,
-    textarea: TextArea<'static>,
-    content_text: String,
-    path_text: String,
+    transcript: Vec<TranscriptLine>,
+    composer: TextArea<'static>,
+    banner: Banner,
+    browser: Option<FileBrowser>,
+    /// Scroll distance up from the bottom of the transcript; 0 follows new output.
+    scroll_up: usize,
+    last_text: Option<String>,
     loaded_path: Option<String>,
-    output: Text<'static>,
     last_result: Option<LintResult>,
     rules: RuleSet,
     judge: Option<Option<String>>,
@@ -75,7 +113,7 @@ struct TuiApp {
 impl TuiApp {
     fn new() -> Result<Self, String> {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-        let (config, config_dir) = find_config(cwd)?;
+        let (config, config_dir) = find_config(cwd.clone())?;
         let rules = build_rule_set(&config, config_dir.as_deref(), &[])?;
         let judge = judge_spec(&None, &config);
         let options = LintOptions {
@@ -83,17 +121,24 @@ impl TuiApp {
             ..Default::default()
         };
 
-        let content_text = String::new();
-        let path_text = String::new();
-        let output = help_text();
+        let banner = Banner {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            rule_count: rules.metas().len(),
+            judge_on: judge.is_some(),
+            config: config_dir
+                .as_deref()
+                .map(|d| d.join("lawlint.config.json").display().to_string()),
+            cwd: cwd.display().to_string(),
+        };
 
         Ok(Self {
-            mode: Mode::Content,
-            textarea: build_textarea(&content_text, CONTENT_TITLE),
-            content_text,
-            path_text,
+            transcript: Vec::new(),
+            composer: build_composer(),
+            banner,
+            browser: None,
+            scroll_up: 0,
+            last_text: None,
             loaded_path: None,
-            output,
             last_result: None,
             rules,
             judge,
@@ -106,181 +151,418 @@ impl TuiApp {
             terminal
                 .draw(|f| {
                     let area = f.area();
-                    let [results_area, editor_area, footer_area] =
+                    let composer_height = (self.composer.lines().len() as u16).clamp(1, 8);
+                    let [transcript_area, _, composer_area, footer_area] =
                         area.layout(&Layout::vertical([
                             Constraint::Fill(1),
-                            if self.mode == Mode::Content {
-                                Constraint::Min(6)
-                            } else {
-                                Constraint::Length(3)
-                            },
+                            Constraint::Length(1),
+                            Constraint::Length(composer_height),
                             Constraint::Length(1),
                         ]));
 
-                    let output = Paragraph::new(self.output.clone())
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(Color::DarkGray))
-                                .title("Results")
-                                .title_style(Style::default().fg(Color::DarkGray)),
-                        )
-                        .wrap(Wrap { trim: true });
-                    f.render_widget(output, results_area);
+                    let width = transcript_area.width as usize;
+                    let height = transcript_area.height as usize;
+                    if width >= 8 && height > 0 {
+                        let mut lines: Vec<Line> = Vec::new();
+                        for line in banner_lines(&self.banner) {
+                            lines.extend(wrap_line(&line, width));
+                        }
+                        for entry in &self.transcript {
+                            for wrapped in wrap_line(&entry.line, width) {
+                                lines.push(match entry.fill {
+                                    Some(fill) => pad_line(wrapped, width, fill),
+                                    None => wrapped,
+                                });
+                            }
+                        }
+                        let max_scroll = lines.len().saturating_sub(height);
+                        self.scroll_up = self.scroll_up.min(max_scroll);
+                        let end = lines.len() - self.scroll_up;
+                        let start = end.saturating_sub(height);
+                        let visible = lines[start..end].to_vec();
+                        f.render_widget(Paragraph::new(Text::from(visible)), transcript_area);
+                    }
 
-                    f.render_widget(&self.textarea, editor_area);
+                    let [prompt_area, input_area] = composer_area.layout(&Layout::horizontal([
+                        Constraint::Length(2),
+                        Constraint::Fill(1),
+                    ]));
+                    let prompt = Paragraph::new(Span::styled(
+                        "§",
+                        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+                    ));
+                    f.render_widget(prompt, prompt_area);
+                    f.render_widget(&self.composer, input_area);
 
-                    let footer = Paragraph::new(Text::from(vec![status_line(&self)]))
-                        .alignment(Alignment::Left)
-                        .style(Style::default().fg(Color::Reset));
-                    f.render_widget(footer, footer_area);
+                    f.render_widget(Paragraph::new(self.footer_line()), footer_area);
+
+                    if let Some(browser) = &self.browser {
+                        render_browser(f, browser, transcript_area);
+                    }
                 })
                 .map_err(|e| e.to_string())?;
 
-            if let Event::Key(key) = event::read().map_err(|e| e.to_string())? {
-                if self.mode == Mode::Path && key.code == KeyCode::Esc {
-                    self.cancel_path_mode();
-                    continue;
-                }
-                if should_quit(&key) {
-                    return Ok(self.exit_code());
-                }
-                if is_lint_shortcut(&key) && self.mode == Mode::Content {
-                    if let Err(e) = self.lint() {
-                        self.show_error(e);
+            match event::read().map_err(|e| e.to_string())? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if should_quit(&key) {
+                        return Ok(self.exit_code());
                     }
-                    continue;
-                }
-                if is_fix_shortcut(&key) && self.mode == Mode::Content {
-                    if let Err(e) = self.apply_fixes() {
-                        self.show_error(e);
+                    if self.browser.is_some() {
+                        self.browser_key(key);
+                        continue;
                     }
-                    continue;
-                }
-                if is_open_shortcut(&key) {
-                    if let Err(e) = self.open_file(terminal) {
-                        self.show_error(e);
+                    match key.code {
+                        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.open_browser();
+                        }
+                        KeyCode::PageUp => self.scroll_up += 10,
+                        KeyCode::PageDown => self.scroll_up = self.scroll_up.saturating_sub(10),
+                        KeyCode::Esc => self.composer = build_composer(),
+                        KeyCode::Enter
+                            if key.modifiers.contains(KeyModifiers::ALT)
+                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            self.composer.insert_newline();
+                        }
+                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.composer.insert_newline();
+                        }
+                        KeyCode::Enter => {
+                            if let Some(code) = self.submit() {
+                                return Ok(code);
+                            }
+                        }
+                        _ => {
+                            self.composer.input(key);
+                        }
                     }
-                    continue;
                 }
-                if self.mode == Mode::Path && key.code == KeyCode::Enter {
-                    if let Err(e) = self.load_file() {
-                        self.show_error(e);
-                    }
-                    continue;
+                Event::Paste(text) => {
+                    self.composer.insert_str(text);
                 }
-                self.textarea.input(key);
+                _ => {}
             }
         }
     }
 
-    fn lint(&mut self) -> Result<(), String> {
-        let text = self.textarea.lines().join("\n");
-        let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
-        self.last_result = Some(result.clone());
-        self.output = format_colored_output(&result);
-        Ok(())
-    }
-
-    fn apply_fixes(&mut self) -> Result<(), String> {
-        self.lint()?;
-        let text = self.textarea.lines().join("\n");
-        let Some(result) = &self.last_result else {
-            return Ok(());
-        };
-        let fixed = lawlint_core::apply_fixes(&text, &result.diagnostics);
-        self.set_content(&fixed);
-        self.lint()
-    }
-
-    fn open_file(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    ) -> Result<(), String> {
-        if self.mode == Mode::Path {
-            self.browse_file(terminal)?;
-        } else {
-            self.enter_path_mode();
+    /// Handle a submitted composer line. Returns an exit code when the user
+    /// asked to quit.
+    fn submit(&mut self) -> Option<i32> {
+        let text = self.composer.lines().join("\n");
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            return None;
         }
-        Ok(())
-    }
+        self.composer = build_composer();
+        self.push_input_bar(&text);
+        self.scroll_up = 0;
 
-    fn enter_path_mode(&mut self) {
-        self.content_text = self.textarea.lines().join("\n");
-        self.mode = Mode::Path;
-        self.textarea = build_textarea(&self.path_text, PATH_TITLE);
-        self.output = Text::from(vec![Line::from(vec![Span::styled(
-            "Enter a file path and press Enter, or press Ctrl+O to browse.",
-            Style::default().fg(Color::DarkGray),
-        )])]);
-    }
-
-    fn cancel_path_mode(&mut self) {
-        self.path_text = self.textarea.lines().join("\n");
-        self.mode = Mode::Content;
-        self.textarea = build_textarea(&self.content_text, CONTENT_TITLE);
-        self.output = if let Some(path) = &self.loaded_path {
-            Text::from(vec![Line::from(vec![Span::styled(
-                format!("Loaded: {}", path),
-                Style::default().fg(Color::Green),
-            )])])
-        } else {
-            help_text()
-        };
-    }
-
-    fn load_file(&mut self) -> Result<(), String> {
-        let raw = self.textarea.lines().join("").trim().to_string();
-        if raw.is_empty() {
-            return Err("Enter a file path".into());
+        if let Some(command) = trimmed.strip_prefix('/') {
+            let mut parts = command.splitn(2, char::is_whitespace);
+            let name = parts.next().unwrap_or_default();
+            let arg = parts.next().unwrap_or("").trim().to_string();
+            match name {
+                "open" => {
+                    if arg.is_empty() {
+                        self.open_browser();
+                    } else if let Err(e) = self.open_path(&arg) {
+                        self.push_error(e);
+                    }
+                }
+                "fix" => {
+                    if let Err(e) = self.cmd_fix() {
+                        self.push_error(e);
+                    }
+                }
+                "clear" => self.transcript.clear(),
+                "help" => self.push_help(),
+                "quit" | "exit" | "q" => return Some(self.exit_code()),
+                other => self.push_error(format!("Unknown command: /{other} — try /help")),
+            }
+            return None;
         }
-        let path = Path::new(&raw);
+
+        self.last_text = Some(trimmed.clone());
+        self.loaded_path = None;
+        self.lint_and_push(&trimmed);
+        None
+    }
+
+    fn open_browser(&mut self) {
+        let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.browser = Some(FileBrowser::new(dir));
+    }
+
+    fn browser_key(&mut self, key: KeyEvent) {
+        let Some(browser) = self.browser.as_mut() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.browser = None,
+            KeyCode::Up => browser.move_selection(-1),
+            KeyCode::Down => browser.move_selection(1),
+            KeyCode::PageUp => browser.move_selection(-10),
+            KeyCode::PageDown => browser.move_selection(10),
+            KeyCode::Left => browser.ascend(),
+            KeyCode::Backspace => {
+                if browser.filter.is_empty() {
+                    browser.ascend();
+                } else {
+                    browser.filter.pop();
+                    browser.selected = 0;
+                }
+            }
+            KeyCode::Right => {
+                if browser.selected_is_dir() {
+                    browser.descend();
+                }
+            }
+            KeyCode::Enter => {
+                if browser.selected_is_dir() {
+                    browser.descend();
+                } else if let Some(path) = browser.selected_path() {
+                    self.browser = None;
+                    let raw = path.display().to_string();
+                    self.push_input_bar(&format!("/open {raw}"));
+                    self.scroll_up = 0;
+                    if let Err(e) = self.open_path(&raw) {
+                        self.push_error(e);
+                    }
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                browser.filter.push(c);
+                browser.selected = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn open_path(&mut self, raw: &str) -> Result<(), String> {
+        let path = Path::new(raw);
         if !path.exists() {
-            return Err(format!("Path does not exist: {}", raw));
+            return Err(format!("Path does not exist: {raw}"));
         }
         if !path.is_file() {
-            return Err(format!("Not a file: {}", raw));
+            return Err(format!("Not a file: {raw}"));
         }
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        self.loaded_path = Some(raw);
-        self.path_text = self.loaded_path.clone().unwrap_or_default();
-        self.set_content(&text);
-        self.lint()
-    }
-
-    fn browse_file(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    ) -> Result<(), String> {
-        let _ = disable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
-        let result = rfd::FileDialog::new()
-            .set_directory(std::env::current_dir().map_err(|e| e.to_string())?)
-            .pick_file();
-        let _ = enable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), EnterAlternateScreen);
-        let _ = terminal.clear();
-
-        if let Some(path) = result {
-            let path_str = path.display().to_string();
-            self.path_text = path_str.clone();
-            self.textarea = build_textarea(&path_str, PATH_TITLE);
-            self.load_file()?;
-        }
+        self.push_note(&format!(
+            "Loaded {raw} ({})",
+            plural(text.lines().count(), "line")
+        ));
+        self.loaded_path = Some(raw.to_string());
+        self.last_text = Some(text.clone());
+        self.lint_and_push(&text);
         Ok(())
     }
 
-    fn set_content(&mut self, text: &str) {
-        self.content_text = text.to_string();
-        self.mode = Mode::Content;
-        self.textarea = build_textarea(text, CONTENT_TITLE);
+    fn cmd_fix(&mut self) -> Result<(), String> {
+        let Some(text) = self.last_text.clone() else {
+            return Err("Nothing to fix yet — lint some text first.".into());
+        };
+        // Re-lint so fix offsets match the text they are applied to.
+        let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
+        let fixed = lawlint_core::apply_fixes(&text, &result.diagnostics);
+        if fixed == text {
+            self.push_note("No applicable fixes.");
+            return Ok(());
+        }
+
+        self.push_blank();
+        self.push(bullet_line(
+            Span::styled("Fixed text", Style::default().add_modifier(Modifier::BOLD)),
+            match &self.loaded_path {
+                Some(path) => format!(" · {path} is unchanged on disk"),
+                None => String::new(),
+            },
+        ));
+        for line in fixed.lines() {
+            self.push(Line::from(format!("  {line}")));
+        }
+
+        self.last_text = Some(fixed.clone());
+        self.lint_and_push(&fixed);
+        Ok(())
     }
 
-    fn show_error(&mut self, msg: String) {
-        self.output = Text::from(vec![Line::from(vec![
-            Span::styled("Error: ", Style::default().fg(Color::Red)),
-            Span::raw(msg),
-        ])]);
+    fn lint_and_push(&mut self, text: &str) {
+        let result = lint_text(text, &self.options, &self.rules, self.judge.clone());
+        self.push_result(&result);
+        self.last_result = Some(result);
+    }
+
+    fn push_result(&mut self, result: &LintResult) {
+        self.push_blank();
+
+        let issue_count = result.diagnostics.len();
+        let headline = if issue_count == 0 {
+            Span::styled(
+                "No issues found",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(
+                plural(issue_count, "issue"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )
+        };
+        self.push(bullet_line(
+            headline,
+            format!(
+                " · score {}/100 · {}, {}",
+                result.stats.score,
+                plural(result.stats.word_count, "word"),
+                plural(result.stats.sentence_count, "sentence")
+            ),
+        ));
+
+        for d in &result.diagnostics {
+            let (color, label) = match d.severity {
+                Severity::Error => (BRAND, "error"),
+                Severity::Warning => (AMBER, "warn"),
+                Severity::Suggestion => (SLATE, "info"),
+            };
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{label:<5} "), Style::default().fg(color)),
+                Span::styled(format!("{}:{} ", d.line, d.column), Style::default().fg(DIM)),
+                Span::styled(d.rule_id.0.clone(), Style::default().fg(BRAND)),
+                Span::raw(" "),
+                Span::raw(d.message.clone()),
+            ]));
+            if !d.excerpt.is_empty() {
+                self.push(Line::from(vec![
+                    Span::raw("        "),
+                    Span::styled(d.excerpt.clone(), Style::default().fg(DIM)),
+                ]));
+            }
+            if let Some(s) = &d.suggestion {
+                self.push(Line::from(vec![
+                    Span::raw("        "),
+                    Span::styled(format!("→ {s}"), Style::default().fg(GOOD)),
+                ]));
+            }
+        }
+        self.push_blank();
+    }
+
+    fn push_help(&mut self) {
+        self.push_blank();
+        self.push(bullet_line(
+            Span::styled("Commands", Style::default().add_modifier(Modifier::BOLD)),
+            String::new(),
+        ));
+        let rows: &[(&str, &str)] = &[
+            ("/open <path>", "lint a file (bare /open browses)"),
+            ("/fix", "apply fixes to the last linted text"),
+            ("/clear", "clear the transcript"),
+            ("/help", "show this help"),
+            ("/quit", "exit (also Ctrl+C)"),
+        ];
+        for (cmd, desc) in rows {
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{cmd:<14}"), Style::default().fg(BRAND)),
+                Span::styled((*desc).to_string(), Style::default().fg(DIM)),
+            ]));
+        }
+        self.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "Enter lint · Alt+Enter newline · Ctrl+O browse · PgUp/PgDn scroll · Esc clear input",
+                Style::default().fg(DIM),
+            ),
+        ]));
+        self.push_blank();
+    }
+
+    fn push_input_bar(&mut self, text: &str) {
+        self.push_blank();
+        let bar = Style::default().bg(INPUT_BAR_BG);
+        for (i, line) in text.lines().enumerate() {
+            let prefix = if i == 0 { "§ " } else { "  " };
+            let mut spans = Vec::new();
+            if i == 0 {
+                spans.push(Span::styled(
+                    "§ ",
+                    Style::default().fg(BRAND).bg(INPUT_BAR_BG),
+                ));
+            } else {
+                spans.push(Span::styled(prefix.to_string(), bar));
+            }
+            spans.push(Span::styled(line.to_string(), bar));
+            self.transcript.push(TranscriptLine {
+                line: Line::from(spans),
+                fill: Some(bar),
+            });
+        }
+    }
+
+    fn push_note(&mut self, message: &str) {
+        self.push_blank();
+        self.push(bullet_line(Span::raw(message.to_string()), String::new()));
+    }
+
+    fn push_error(&mut self, message: String) {
+        self.push_blank();
+        self.push(Line::from(vec![
+            Span::styled("◆ ", Style::default().fg(BRAND)),
+            Span::styled(message, Style::default().fg(BRAND)),
+        ]));
+    }
+
+    fn push(&mut self, line: Line<'static>) {
+        self.transcript.push(TranscriptLine { line, fill: None });
+    }
+
+    fn push_blank(&mut self) {
+        self.push(Line::default());
+    }
+
+    fn footer_line(&self) -> Line<'static> {
+        if self.browser.is_some() {
+            return Line::from(vec![
+                Span::styled(
+                    "open file",
+                    Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " · ↑↓ select · Enter open · ← parent · type to filter · Esc cancel",
+                    Style::default().fg(DIM),
+                ),
+            ]);
+        }
+        let mut spans = vec![
+            Span::styled(
+                "lawlint",
+                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " · Enter to lint · /help for commands · Ctrl+C to quit",
+                Style::default().fg(DIM),
+            ),
+        ];
+        if let Some(path) = &self.loaded_path {
+            spans.push(Span::styled(" · ", Style::default().fg(DIM)));
+            spans.push(Span::styled(path.clone(), Style::default().fg(BRAND)));
+        }
+        if let Some(result) = &self.last_result {
+            let score = result.stats.score;
+            let color = if score >= 80 {
+                GOOD
+            } else if score >= 50 {
+                AMBER
+            } else {
+                BRAND
+            };
+            spans.push(Span::styled(" · ", Style::default().fg(DIM)));
+            spans.push(Span::styled(
+                format!("score {score}/100"),
+                Style::default().fg(color),
+            ));
+        }
+        Line::from(spans)
     }
 
     fn exit_code(&self) -> i32 {
@@ -292,174 +574,375 @@ impl TuiApp {
     }
 }
 
-fn build_textarea(text: &str, title: &'static str) -> TextArea<'static> {
-    let mut t = TextArea::from(text.lines());
-    t.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(title)
-            .title_style(Style::default().fg(Color::Cyan)),
-    );
+// ---- file browser ------------------------------------------------------
+
+struct DirRow {
+    name: String,
+    is_dir: bool,
+}
+
+struct FileBrowser {
+    dir: PathBuf,
+    entries: Vec<DirRow>,
+    error: Option<String>,
+    filter: String,
+    selected: usize,
+}
+
+impl FileBrowser {
+    fn new(dir: PathBuf) -> Self {
+        let mut browser = Self {
+            dir,
+            entries: Vec::new(),
+            error: None,
+            filter: String::new(),
+            selected: 0,
+        };
+        browser.reload();
+        browser
+    }
+
+    fn reload(&mut self) {
+        self.entries.clear();
+        self.error = None;
+        self.filter.clear();
+        self.selected = 0;
+        if self.dir.parent().is_some() {
+            self.entries.push(DirRow {
+                name: "..".into(),
+                is_dir: true,
+            });
+        }
+        let read = match std::fs::read_dir(&self.dir) {
+            Ok(read) => read,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return;
+            }
+        };
+        let mut rows: Vec<DirRow> = read
+            .filter_map(|entry| entry.ok())
+            .map(|entry| DirRow {
+                is_dir: entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
+                name: entry.file_name().to_string_lossy().into_owned(),
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        self.entries.extend(rows);
+    }
+
+    /// Indices into `entries` that match the current filter. While a filter
+    /// is active `..` is hidden too, so the first match is always selected;
+    /// `Left`/`Backspace` still navigate to the parent.
+    fn visible(&self) -> Vec<usize> {
+        let needle = self.filter.to_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| needle.is_empty() || row.name.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let count = self.visible().len();
+        if count == 0 {
+            return;
+        }
+        let current = self.selected.min(count - 1) as isize;
+        self.selected = (current + delta).clamp(0, count as isize - 1) as usize;
+    }
+
+    fn selected_row(&self) -> Option<&DirRow> {
+        let visible = self.visible();
+        visible
+            .get(self.selected.min(visible.len().saturating_sub(1)))
+            .map(|&i| &self.entries[i])
+    }
+
+    fn selected_is_dir(&self) -> bool {
+        self.selected_row().map(|row| row.is_dir).unwrap_or(false)
+    }
+
+    fn selected_path(&self) -> Option<PathBuf> {
+        self.selected_row().map(|row| self.dir.join(&row.name))
+    }
+
+    fn descend(&mut self) {
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        if row.name == ".." {
+            self.ascend();
+            return;
+        }
+        self.dir = self.dir.join(&row.name);
+        self.reload();
+    }
+
+    fn ascend(&mut self) {
+        if let Some(parent) = self.dir.parent() {
+            self.dir = parent.to_path_buf();
+            self.reload();
+        }
+    }
+}
+
+fn render_browser(f: &mut ratatui::Frame, browser: &FileBrowser, host: Rect) {
+    if host.height < 5 || host.width < 20 {
+        return;
+    }
+    let height = host.height.min(16);
+    let area = Rect {
+        x: host.x,
+        y: host.y + host.height - height,
+        width: host.width,
+        height,
+    };
+    f.render_widget(Clear, area);
+
+    let filter_hint = if browser.filter.is_empty() {
+        " type to filter ".to_string()
+    } else {
+        format!(" filter: {} ", browser.filter)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BRAND_DARK))
+        .title(Line::from(Span::styled(
+            format!(" open file · {} ", tilde(&browser.dir.display().to_string())),
+            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+        )))
+        .title_bottom(Line::from(Span::styled(
+            filter_hint,
+            Style::default().fg(DIM),
+        )));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(error) = &browser.error {
+        lines.push(Line::from(Span::styled(
+            format!("cannot read directory: {error}"),
+            Style::default().fg(BRAND),
+        )));
+    } else {
+        let visible = browser.visible();
+        if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "no matches",
+                Style::default().fg(DIM),
+            )));
+        }
+        let rows = inner.height as usize;
+        let selected = browser.selected.min(visible.len().saturating_sub(1));
+        let start = (selected + 1).saturating_sub(rows);
+        for (pos, &index) in visible.iter().enumerate().skip(start).take(rows) {
+            let row = &browser.entries[index];
+            let is_selected = pos == selected;
+            let name = if row.is_dir {
+                format!("{}/", row.name)
+            } else {
+                row.name.clone()
+            };
+            let base = if is_selected {
+                Style::default().bg(SELECT_BG).add_modifier(Modifier::BOLD)
+            } else if row.name.starts_with('.') && row.name != ".." {
+                Style::default().fg(DIM)
+            } else if row.is_dir {
+                Style::default().fg(BRAND)
+            } else {
+                Style::default()
+            };
+            let marker = if is_selected { "▸ " } else { "  " };
+            let mut line = Line::from(vec![
+                Span::styled(marker.to_string(), base),
+                Span::styled(name, base),
+            ]);
+            if is_selected {
+                line = pad_line(line, inner.width as usize, Style::default().bg(SELECT_BG));
+            }
+            lines.push(line);
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Shorten a path for display by replacing the home directory with `~`.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
+    }
+}
+
+// ---- shared rendering --------------------------------------------------
+
+fn build_composer() -> TextArea<'static> {
+    let mut t = TextArea::default();
     t.set_style(Style::default().fg(Color::Reset));
-    t.set_cursor_style(Style::default().bg(Color::Cyan).fg(Color::Black));
-    t.set_cursor_line_style(Style::default().bg(Color::DarkGray));
-    t.move_cursor(CursorMove::Bottom);
-    t.move_cursor(CursorMove::End);
+    t.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+    t.set_cursor_line_style(Style::default());
+    t.set_placeholder_text("Type or paste text to lint, /help for commands");
+    t.set_placeholder_style(Style::default().fg(DIM));
     t
 }
 
-fn help_text() -> Text<'static> {
-    Text::from(vec![Line::from(vec![Span::styled(
-        "Ready. Type text and press Ctrl+L, or Ctrl+O to open a file.",
-        Style::default().fg(Color::DarkGray),
-    )])])
-}
-
-fn status_line(app: &TuiApp) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(
-            "lawlint",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-    ];
-
-    let mode_span = if app.mode == Mode::Path {
-        Span::styled(
-            "PATH",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(
-            "TEXT",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    spans.push(mode_span);
-
-    if let Some(path) = &app.loaded_path {
-        spans.extend([
-            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-            Span::styled(path.clone(), Style::default().fg(Color::Green)),
-        ]);
+fn bullet_line(head: Span<'static>, dim_tail: String) -> Line<'static> {
+    let mut spans = vec![Span::styled("◆ ", Style::default().fg(BRAND)), head];
+    if !dim_tail.is_empty() {
+        spans.push(Span::styled(dim_tail, Style::default().fg(DIM)));
     }
-
-    if let Some(result) = &app.last_result {
-        spans.extend([
-            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("score {}/100", result.stats.score),
-                Style::default().fg(Color::Green),
-            ),
-        ]);
-    }
-
-    spans.push(Span::styled("  ", Style::default()));
-
-    if app.mode == Mode::Path {
-        spans.extend([
-            Span::styled("Enter", Style::default().fg(Color::Cyan)),
-            Span::styled(" load ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+O", Style::default().fg(Color::Cyan)),
-            Span::styled(" browse ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
-            Span::styled(" cancel", Style::default().fg(Color::DarkGray)),
-        ]);
-    } else {
-        spans.extend([
-            Span::styled("Ctrl+L", Style::default().fg(Color::Cyan)),
-            Span::styled(" lint ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+F", Style::default().fg(Color::Cyan)),
-            Span::styled(" fix ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+O", Style::default().fg(Color::Cyan)),
-            Span::styled(" open ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
-            Span::styled(" quit", Style::default().fg(Color::DarkGray)),
-        ]);
-    }
-
     Line::from(spans)
 }
 
-fn format_colored_output(result: &LintResult) -> Text<'static> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for d in &result.diagnostics {
-        let (marker_color, label) = match d.severity {
-            Severity::Error => (Color::Red, "error"),
-            Severity::Warning => (Color::Cyan, "warn"),
-            Severity::Suggestion => (Color::Green, "info"),
-        };
-        let marker = Span::styled(format!("{}: ", label), Style::default().fg(marker_color));
-        let location = Span::styled(
-            format!("{}:{} ", d.line, d.column),
-            Style::default().fg(Color::DarkGray),
-        );
-        let rule = Span::styled(d.rule_id.0.clone(), Style::default().fg(Color::Magenta));
-        let message = Span::raw(d.message.clone());
-        lines.push(Line::from(vec![
-            marker,
-            location,
-            rule,
-            Span::raw(" "),
-            message,
-        ]));
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
 
-        if !d.excerpt.is_empty() {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(d.excerpt.clone(), Style::default().fg(Color::DarkGray)),
-            ]));
+/// The Litvue wordmark header: an oxblood left bar with the tool name and
+/// session facts, followed by dim getting-started hints.
+fn banner_lines(banner: &Banner) -> Vec<Line<'static>> {
+    let bar = Span::styled("▌ ", Style::default().fg(BRAND_DARK));
+    let with_bar = |spans: Vec<Span<'static>>| {
+        let mut all = vec![bar.clone()];
+        all.extend(spans);
+        Line::from(all)
+    };
+
+    vec![
+        with_bar(vec![
+            Span::styled(
+                "LAWLINT",
+                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  v{}", banner.version), Style::default().fg(DIM)),
+        ]),
+        with_bar(vec![Span::styled(
+            "human-writing linter for legal text",
+            Style::default().fg(DIM),
+        )]),
+        with_bar(Vec::new()),
+        with_bar(vec![Span::styled(
+            format!(
+                "{} · judge {} · {}",
+                plural(banner.rule_count, "rule"),
+                if banner.judge_on { "on" } else { "off" },
+                banner
+                    .config
+                    .clone()
+                    .map(|p| tilde(&p))
+                    .unwrap_or_else(|| "no config file".to_string())
+            ),
+            Style::default().fg(DIM),
+        )]),
+        with_bar(vec![Span::styled(
+            tilde(&banner.cwd),
+            Style::default().fg(DIM),
+        )]),
+        Line::default(),
+        Line::from(vec![
+            Span::styled("  Type or paste text, then press ", Style::default().fg(DIM)),
+            Span::styled("Enter", Style::default().fg(BRAND)),
+            Span::styled(" to lint it", Style::default().fg(DIM)),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("/open", Style::default().fg(BRAND)),
+            Span::styled(" browse files · ", Style::default().fg(DIM)),
+            Span::styled("/fix", Style::default().fg(BRAND)),
+            Span::styled(" apply fixes · ", Style::default().fg(DIM)),
+            Span::styled("/help", Style::default().fg(BRAND)),
+            Span::styled(" all commands", Style::default().fg(DIM)),
+        ]),
+        Line::default(),
+    ]
+}
+
+// ---- line wrapping -----------------------------------------------------
+
+/// Word-wrap a styled line to `width` characters, preserving span styles.
+fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
+    let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if total <= width || width == 0 {
+        return vec![line.clone()];
+    }
+
+    let chars: Vec<(char, Style)> = line
+        .spans
+        .iter()
+        .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
+        .collect();
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        // Skip leading spaces on continuation rows.
+        if !rows.is_empty() {
+            while start < chars.len() && chars[start].0 == ' ' {
+                start += 1;
+            }
         }
-        if let Some(s) = &d.suggestion {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("Suggestion: {}", s),
-                    Style::default().fg(Color::Green),
-                ),
-            ]));
+        if start >= chars.len() {
+            break;
+        }
+        let hard_end = (start + width).min(chars.len());
+        let end = if hard_end == chars.len() {
+            hard_end
+        } else {
+            // Break at the last space in the window, or hard-break mid-word.
+            (start..hard_end)
+                .rev()
+                .find(|&i| chars[i].0 == ' ')
+                .map(|i| i + 1)
+                .unwrap_or(hard_end)
+        };
+        rows.push(spans_from_chars(&chars[start..end]));
+        start = end;
+    }
+    rows
+}
+
+/// Rebuild spans from styled characters, merging consecutive equal styles.
+fn spans_from_chars(chars: &[(char, Style)]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current = String::new();
+    let mut style = Style::default();
+    for (c, s) in chars {
+        if current.is_empty() || *s == style {
+            style = *s;
+            current.push(*c);
+        } else {
+            spans.push(Span::styled(current.clone(), style));
+            current.clear();
+            current.push(*c);
+            style = *s;
         }
     }
-    lines.push(Line::default());
-    lines.push(Line::from(vec![
-        Span::styled("Human-likeness score: ", Style::default().fg(Color::Green)),
-        Span::styled(
-            format!("{}/100", result.stats.score),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(
-                " ({} words, {} sentences)",
-                result.stats.word_count, result.stats.sentence_count
-            ),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
-    Text::from(lines)
+    if !current.is_empty() {
+        spans.push(Span::styled(current, style));
+    }
+    Line::from(spans)
+}
+
+/// Extend a line with `fill`-styled spaces out to the full terminal width.
+fn pad_line(mut line: Line<'static>, width: usize, fill: Style) -> Line<'static> {
+    let used: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if used < width {
+        line.spans
+            .push(Span::styled(" ".repeat(width - used), fill));
+    }
+    line
 }
 
 fn should_quit(key: &KeyEvent) -> bool {
-    key.code == KeyCode::Esc
-        || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q'))
-}
-
-fn is_lint_shortcut(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l')
-}
-
-fn is_fix_shortcut(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f')
-}
-
-fn is_open_shortcut(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o')
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
 }
