@@ -4,8 +4,9 @@
 //!
 //! Prompts read stdin line by line; an empty line or EOF accepts the shown
 //! default, so a piped or CI invocation degrades to defaults instead of
-//! hanging. `--yes` skips the prompts entirely. An existing legacy
-//! `lawlint.config.json` seeds the prompt defaults and its settings are
+//! hanging. `--yes` skips the prompts entirely. An existing config —
+//! `.lawlint/config.json` under `--force`, else a legacy
+//! `lawlint.config.json` — seeds the prompt defaults and its settings are
 //! carried into the new file.
 
 use std::fs;
@@ -241,8 +242,9 @@ impl<R: BufRead, W: Write> Prompter<R, W> {
     }
 }
 
-/// The interactive walkthrough. `base` (legacy config or `{}`) seeds the
-/// defaults so re-running init preserves earlier choices by default.
+/// The interactive walkthrough. `base` (the existing or legacy config, or
+/// `{}`) seeds the defaults so re-running init preserves earlier choices
+/// by default.
 fn ask<R: BufRead, W: Write>(
     base: &Value,
     prompter: &mut Prompter<R, W>,
@@ -314,9 +316,13 @@ fn ask<R: BufRead, W: Write>(
     let floor = if judge == JudgeChoice::Disabled {
         None
     } else {
+        // An out-of-range floor in the seeding config must not become the
+        // prompt default: on EOF the default is re-fed to the validation
+        // loop, which would then never terminate.
         let base_floor = base_judge
             .and_then(|judge| judge.get("floor"))
             .and_then(Value::as_f64)
+            .filter(|floor| (0.0..=1.0).contains(floor))
             .unwrap_or(DEFAULT_FLOOR);
         let floor = prompter.floor(base_floor)?;
         (floor != DEFAULT_FLOOR).then_some(floor)
@@ -388,6 +394,21 @@ fn scaffold_rules_package(directory: &Path, package: &str) -> Result<Vec<String>
 
 // ---- command -----------------------------------------------------------
 
+/// A config file as a seed source: `None` when absent or not a JSON object
+/// (init overwrites/ignores broken files rather than erroring — it is the
+/// tool you would reach for to fix one).
+fn read_config_object(path: &Path) -> Result<Option<Value>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    Ok(match serde_json::from_str::<Value>(&text) {
+        Ok(value @ Value::Object(_)) => Some(value),
+        Ok(_) | Err(_) => None,
+    })
+}
+
 fn run_init<R: BufRead, W: Write>(
     directory: &Path,
     yes: bool,
@@ -403,31 +424,40 @@ fn run_init<R: BufRead, W: Write>(
         ));
     }
 
+    // Seed order mirrors discovery precedence: the existing
+    // .lawlint/config.json (reachable only under --force), then the legacy
+    // lawlint.config.json, then empty — so re-running init preserves prior
+    // settings instead of regenerating from scratch.
     let legacy_path = directory.join("lawlint.config.json");
-    let base = if legacy_path.is_file() {
-        let text = fs::read_to_string(&legacy_path)
-            .map_err(|error| format!("failed to read {}: {error}", legacy_path.display()))?;
-        match serde_json::from_str::<Value>(&text) {
-            Ok(value @ Value::Object(_)) => {
-                prompter.say(&format!(
-                    "Found lawlint.config.json — its settings seed the defaults below and \
-                     carry over to {}.",
-                    ".lawlint/config.json".bold()
-                ))?;
-                value
-            }
-            Ok(_) | Err(_) => {
+    let existing = read_config_object(&config_path)?;
+    let legacy = read_config_object(&legacy_path)?;
+    let legacy_exists = legacy_path.is_file();
+    let (base, legacy_carried) = match (existing, &legacy) {
+        (Some(existing), _) => {
+            prompter.say(&format!(
+                "Existing {} found — its settings seed the defaults below and carry over.",
+                ".lawlint/config.json".bold()
+            ))?;
+            (existing, false)
+        }
+        (None, Some(legacy)) => {
+            prompter.say(&format!(
+                "Found lawlint.config.json — its settings seed the defaults below and \
+                 carry over to {}.",
+                ".lawlint/config.json".bold()
+            ))?;
+            (legacy.clone(), true)
+        }
+        (None, None) => {
+            if legacy_exists {
                 prompter.say(
                     "Found lawlint.config.json but it is not valid JSON; starting fresh \
                      (the old file is left untouched).",
                 )?;
-                json!({})
             }
+            (json!({}), false)
         }
-    } else {
-        json!({})
     };
-    let has_legacy = legacy_path.is_file();
 
     let answers = if yes {
         Answers::accept_defaults(&base)
@@ -453,14 +483,18 @@ fn run_init<R: BufRead, W: Write>(
     }
 
     // The new file shadows the legacy one (same-directory precedence), so
-    // offer to remove it; under --yes never delete, just explain.
-    if has_legacy {
-        let remove = !yes
-            && prompter.confirm(
-                "Remove the old lawlint.config.json? (its settings were carried over; \
-                 .lawlint/config.json now takes precedence)",
-                true,
-            )?;
+    // offer to remove it; under --yes never delete, just explain. The offer
+    // only fires when the legacy file parsed cleanly — an unparseable one
+    // stays untouched, as promised above.
+    if legacy.is_some() {
+        let prompt = if legacy_carried {
+            "Remove the old lawlint.config.json? (its settings were carried over; \
+             .lawlint/config.json now takes precedence)"
+        } else {
+            "Remove the old lawlint.config.json? (.lawlint/config.json takes \
+             precedence, so it is unused)"
+        };
+        let remove = !yes && prompter.confirm(prompt, true)?;
         if remove {
             fs::remove_file(&legacy_path)
                 .map_err(|error| format!("failed to remove {}: {error}", legacy_path.display()))?;
@@ -701,6 +735,77 @@ mod tests {
         assert!(fs::read_to_string(&manifest_path)
             .unwrap()
             .starts_with("name: edited"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ask_clamps_out_of_range_seed_floor() {
+        // Regression: an invalid floor in the seeding config must not become
+        // the prompt default — on EOF it would re-feed the validation loop
+        // forever. It falls back to the engine default instead.
+        let base = json!({"judge": {"enabled": true, "floor": 5.0}});
+        let mut p = prompter("");
+        let answers = ask(&base, &mut p).unwrap();
+        assert_eq!(answers.floor, None); // 0.6 == engine default, omitted
+    }
+
+    #[test]
+    fn run_init_force_preserves_existing_nested_config() {
+        // Regression: a forced re-init must seed from the existing
+        // .lawlint/config.json, not regenerate from scratch.
+        let dir = std::env::temp_dir().join(format!("lawlint-init-renit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".lawlint")).unwrap();
+        fs::write(
+            dir.join(".lawlint/config.json"),
+            r#"{"disable": ["core/no-semicolons"], "severity": {"no-hedging": "error"}, "judge": {"enabled": true, "floor": 0.8}}"#,
+        )
+        .unwrap();
+
+        // --yes: everything preserved verbatim.
+        let mut p = prompter("");
+        assert_eq!(run_init(&dir, true, true, &mut p).unwrap(), 0);
+        let config: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
+                .unwrap();
+        assert_eq!(config["disable"], json!(["core/no-semicolons"]));
+        assert_eq!(config["severity"], json!({"no-hedging": "error"}));
+        assert_eq!(config["judge"], json!({"enabled": true, "floor": 0.8}));
+
+        // Interactive, accepting every default: uncovered keys survive and
+        // the prompts re-seed from the existing values (judge stays enabled
+        // with its 0.8 floor).
+        let mut p = prompter("");
+        assert_eq!(run_init(&dir, false, true, &mut p).unwrap(), 0);
+        let config: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
+                .unwrap();
+        assert_eq!(config["disable"], json!(["core/no-semicolons"]));
+        assert_eq!(config["severity"], json!({"no-hedging": "error"}));
+        assert_eq!(config["judge"], json!({"enabled": true, "floor": 0.8}));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_init_leaves_unparseable_legacy_untouched() {
+        // Regression: an invalid legacy file is promised "left untouched" —
+        // the removal offer (whose EOF default is yes) must not fire.
+        let dir = std::env::temp_dir().join(format!("lawlint-init-broken-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lawlint.config.json"), "{not json").unwrap();
+
+        let mut p = prompter("");
+        assert_eq!(run_init(&dir, false, false, &mut p).unwrap(), 0);
+        assert_eq!(
+            fs::read_to_string(dir.join("lawlint.config.json")).unwrap(),
+            "{not json"
+        );
+        let transcript = String::from_utf8(p.output).unwrap();
+        assert!(transcript.contains("left untouched"));
+        assert!(!transcript.contains("Remove the old"));
 
         fs::remove_dir_all(&dir).unwrap();
     }
