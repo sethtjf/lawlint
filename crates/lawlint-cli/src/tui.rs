@@ -378,14 +378,24 @@ impl TuiApp {
 
         self.push_blank();
         self.push(bullet_line(
-            Span::styled("Fixed text", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("Changes", Style::default().add_modifier(Modifier::BOLD)),
             match &self.loaded_path {
                 Some(path) => format!(" · {path} is unchanged on disk"),
                 None => String::new(),
             },
         ));
-        for line in fixed.lines() {
-            self.push(Line::from(format!("  {line}")));
+        let diff = crate::diff::diff_lines(&text, &fixed);
+        for entry in crate::diff::with_context(&diff, 1) {
+            let (prefix, content, color) = match &entry {
+                Some(crate::diff::DiffLine::Removed(s)) => ("- ", s.as_str(), BRAND),
+                Some(crate::diff::DiffLine::Added(s)) => ("+ ", s.as_str(), GOOD),
+                Some(crate::diff::DiffLine::Same(s)) => ("  ", s.as_str(), DIM),
+                None => ("···", "", DIM),
+            };
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{prefix}{content}"), Style::default().fg(color)),
+            ]));
         }
 
         self.last_text = Some(fixed.clone());

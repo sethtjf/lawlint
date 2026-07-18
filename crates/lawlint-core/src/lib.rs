@@ -595,6 +595,14 @@ mod tests {
         assert_eq!(apply_fixes(text, &diags), "abcdef");
     }
 
+    #[test]
+    fn apply_fixes_preserves_leading_capital_end_to_end() {
+        // Engine emits the fix, case logic capitalizes it, apply_fixes composes.
+        let text = "Pursuant to Section 4(b), the fee is due.";
+        let result = lint(text, &LintOptions::default());
+        assert!(apply_fixes(text, &result.diagnostics).starts_with("Under Section 4(b)"));
+    }
+
     // ---- tier-3 end-to-end ----------------------------------------------
 
     fn finding(rule: &str, quote: &str, confidence: f32, rewrite: Option<&str>) -> JudgeFinding {

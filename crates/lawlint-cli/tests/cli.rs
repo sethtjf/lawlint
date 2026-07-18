@@ -347,6 +347,72 @@ fn fix_without_applicable_fixes_leaves_file_alone() {
     );
 }
 
+// ---- --diff ------------------------------------------------------------
+
+#[test]
+fn diff_previews_without_modifying_the_file() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), the parties proceed.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .arg("--diff")
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"));
+    // Preview only: the file is untouched.
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "Pursuant to Section 4(b), the parties proceed."
+    );
+}
+
+#[test]
+fn diff_with_json_format_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--diff", "--format", "json"])
+        .write_stdin("Pursuant to Section 4(b), the parties proceed.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--diff requires --format pretty"));
+}
+
+#[test]
+fn diff_reports_no_applicable_fixes() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .arg("--diff")
+        .write_stdin("The court granted the motion.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no applicable fixes"));
+}
+
+#[test]
+fn fix_and_diff_rewrites_file_and_prints_markers() {
+    let dir = TempDir::new().unwrap();
+    let file = write(
+        &dir,
+        "brief.txt",
+        "Pursuant to Section 4(b), the parties proceed.",
+    );
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .args(["--fix", "--diff"])
+        .assert()
+        .stdout(predicate::str::contains("- Pursuant to Section 4(b),"))
+        .stdout(predicate::str::contains("+ Under Section 4(b),"))
+        .stderr(predicate::str::contains("Applied 1 fix"));
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "Under Section 4(b), the parties proceed."
+    );
+}
+
 // ---- rules subcommand --------------------------------------------------
 
 #[test]

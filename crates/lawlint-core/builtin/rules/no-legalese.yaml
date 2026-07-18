@@ -18,9 +18,11 @@ patterns:
   - pattern: '(?i)\bpursuant to\b'
     message: "Consider replacing “pursuant to”."
     suggestion: "Use “under” or “by”."
+    fix: "under"
   - pattern: '(?i)\bnotwithstanding the foregoing\b'
     message: "Avoid “notwithstanding the foregoing”."
     suggestion: "State the exception directly."
+    fix: "despite the foregoing"
   - pattern: '(?i)\bherein\b|\bthereto\b'
     message: "Avoid archaic legalese."
     suggestion: "Use a specific noun or pronoun."

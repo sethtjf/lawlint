@@ -16,6 +16,7 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod diff;
 mod init;
 mod tui;
 mod update;
@@ -56,6 +57,9 @@ struct Cli {
     /// Apply MachineApplicable fixes to FILE in place.
     #[arg(long)]
     fix: bool,
+    /// Show what --fix would change (or changed) as a colored diff.
+    #[arg(long)]
+    diff: bool,
     /// Skip the once-a-day check for a newer lawlint release.
     #[arg(long, global = true)]
     no_update_check: bool,
@@ -385,6 +389,46 @@ fn pretty(result: &LintResult, quiet: bool) {
     println!("{}", format_pretty(result, false, colors_enabled()));
 }
 
+/// Render the before/after diff for `--diff` (pretty output only). Empty when
+/// nothing changed except a single dimmed "no applicable fixes" line.
+fn format_diff(before: &str, after: &str, color: bool) -> String {
+    let dim = |value: String| {
+        if color {
+            value.dimmed().to_string()
+        } else {
+            value
+        }
+    };
+    if after == before {
+        return dim("no applicable fixes".to_string());
+    }
+    let lines = diff::diff_lines(before, after);
+    let mut out = Vec::new();
+    for entry in diff::with_context(&lines, 1) {
+        out.push(match entry {
+            Some(diff::DiffLine::Removed(line)) => {
+                let value = format!("- {line}");
+                if color {
+                    value.red().to_string()
+                } else {
+                    value
+                }
+            }
+            Some(diff::DiffLine::Added(line)) => {
+                let value = format!("+ {line}");
+                if color {
+                    value.green().to_string()
+                } else {
+                    value
+                }
+            }
+            Some(diff::DiffLine::Same(line)) => dim(format!("  {line}")),
+            None => dim("···".to_string()),
+        });
+    }
+    out.join("\n")
+}
+
 fn machine_fix_count(diagnostics: &[Diagnostic]) -> usize {
     diagnostics
         .iter()
@@ -424,6 +468,9 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     if cli.fix && cli.file == "-" {
         return Err("--fix requires a FILE argument (cannot fix stdin)".into());
     }
+    if cli.diff && cli.format == "json" {
+        return Err("--diff requires --format pretty".into());
+    }
     let (text, file_markdown) = read_input(&cli.file)?;
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let (config, config_dir) = find_config(cwd)?;
@@ -460,6 +507,11 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
             if count == 1 { "" } else { "es" },
             cli.file
         );
+    }
+
+    if cli.diff && !cli.quiet {
+        let fixed = apply_fixes(&text, &result.diagnostics);
+        println!("{}", format_diff(&text, &fixed, colors_enabled()));
     }
 
     Ok(exit_code(&result, &cli.max_warnings))

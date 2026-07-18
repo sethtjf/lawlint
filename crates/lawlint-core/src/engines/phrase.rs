@@ -96,6 +96,36 @@ impl PhraseEngine {
         })
     }
 
+    /// Adapt `replacement`'s case to `matched`: all-caps match (>= 2 letters,
+    /// every letter uppercase) → uppercase the whole replacement; else a match
+    /// whose first letter is uppercase → uppercase the replacement's first
+    /// char; else verbatim.
+    fn match_case(matched: &str, replacement: &str) -> String {
+        let mut letters = 0usize;
+        let mut all_upper = true;
+        let mut first_upper = None;
+        for c in matched.chars().filter(|c| c.is_alphabetic()) {
+            letters += 1;
+            let upper = c.is_uppercase();
+            if !upper {
+                all_upper = false;
+            }
+            if first_upper.is_none() {
+                first_upper = Some(upper);
+            }
+        }
+        if letters >= 2 && all_upper {
+            return replacement.chars().flat_map(char::to_uppercase).collect();
+        }
+        if first_upper == Some(true) {
+            let mut chars = replacement.chars();
+            if let Some(first) = chars.next() {
+                return first.to_uppercase().chain(chars).collect();
+            }
+        }
+        replacement.to_string()
+    }
+
     /// Expand `[start, end)` by `window` bytes each side, clamped to
     /// `source` char boundaries (and to `[0, source.len()]`).
     fn expand_window(source: &str, start: usize, end: usize, window: usize) -> (usize, usize) {
@@ -145,7 +175,7 @@ impl Rule for PhraseEngine {
                 let fix = item.fix.as_ref().map(|replacement| Fix {
                     edits: vec![Edit {
                         range: span,
-                        replacement: replacement.clone(),
+                        replacement: Self::match_case(span.slice(source), replacement),
                     }],
                     applicability: Applicability::MachineApplicable,
                 });
@@ -368,6 +398,60 @@ patterns:
         assert_eq!(fix.edits[0].range, reports[0].span);
         assert_eq!(fix.edits[0].range.slice(source), "delve");
         assert_eq!(fix.edits[0].replacement, "examine");
+    }
+
+    #[test]
+    fn fix_matches_leading_capital_of_matched_text() {
+        let source = "Delve into it.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)\\bdelve\\b", fix: "examine" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "Examine"
+        );
+    }
+
+    #[test]
+    fn fix_matches_all_caps_of_matched_text() {
+        let source = "DELVE into it.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)\\bdelve\\b", fix: "examine" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "EXAMINE"
+        );
+    }
+
+    #[test]
+    fn fix_lowercase_match_is_verbatim() {
+        let source = "we delve into it.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)\\bdelve\\b", fix: "examine" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "examine"
+        );
     }
 
     #[test]
