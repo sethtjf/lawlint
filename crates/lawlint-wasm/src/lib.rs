@@ -12,6 +12,9 @@
 //! Exports:
 //! - `lint(text, options)` — built-in rules; `options` may be
 //!   null/undefined for defaults.
+//! - `remediationPrompt(text, options)` — built-in rules (tiers 1–2, same as
+//!   `lint`); returns a revision brief for the diagnostics, or `null` when
+//!   there are none.
 //! - `builtInRulesMeta()` — metadata for every built-in rule (camelCase).
 //! - `lintWithRules(text, options, extraRules)` — `extraRules` is a JS array
 //!   of `{name, yaml}`; rules load into a package named `user` merged over
@@ -38,9 +41,9 @@ use std::sync::OnceLock;
 
 use lawlint_core::loader::parse_rule;
 use lawlint_core::{
-    lint as core_lint, lint_full, lint_with, plan_judge, Judge, JudgeError, JudgeFinding,
-    JudgeRequest, LintOptions, LintResult, LoadError, RubricFragment, RuleExample, RuleId,
-    RuleMeta, RuleSet, Scope, Severity, Tier,
+    lint as core_lint, lint_full, lint_with, plan_judge, remediation_prompt, Judge, JudgeError,
+    JudgeFinding, JudgeRequest, LintOptions, LintResult, LoadError, RubricFragment, RuleExample,
+    RuleId, RuleMeta, RuleSet, Scope, Severity, Tier,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -306,6 +309,20 @@ fn rule_error_to_js(e: RuleError) -> JsValue {
 pub fn lint(text: &str, options: JsValue) -> Result<JsValue, JsValue> {
     let options = options_from_js(options)?;
     to_js(&core_lint(text, &options), "lint result")
+}
+
+/// Build a remediation prompt from the built-in rules, tiers 1–2 (same rule
+/// set as `lint`). `options` may be null/undefined for defaults. Returns the
+/// revision brief for the diagnostics, or `null` when there are none.
+#[wasm_bindgen(js_name = remediationPrompt)]
+pub fn remediation_prompt_js(text: &str, options: JsValue) -> Result<JsValue, JsValue> {
+    let options = options_from_js(options)?;
+    let set = built_in_set();
+    let result = lint_with(text, &options, set);
+    Ok(match remediation_prompt(&result, set) {
+        Some(prompt) => JsValue::from_str(&prompt),
+        None => JsValue::NULL,
+    })
 }
 
 /// Metadata for every built-in rule (camelCase field names).

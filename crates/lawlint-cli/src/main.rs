@@ -33,7 +33,8 @@ struct Cli {
     /// File to lint ("-" for stdin).
     #[arg(value_name = "FILE", default_value = "-")]
     file: String,
-    #[arg(long, value_parser = ["pretty", "json"], default_value = "pretty")]
+    /// Output format: pretty|json|prompt (prompt emits an AI revision brief).
+    #[arg(long, value_parser = ["pretty", "json", "prompt"], default_value = "pretty")]
     format: String,
     /// Enable only these rules (full ids or bare aliases).
     #[arg(long, value_name = "ID,ID", value_delimiter = ',')]
@@ -471,6 +472,9 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     if cli.diff && cli.format == "json" {
         return Err("--diff requires --format pretty".into());
     }
+    if cli.format == "prompt" && (cli.fix || cli.diff) {
+        return Err("--fix and --diff require --format pretty".into());
+    }
     let (text, file_markdown) = read_input(&cli.file)?;
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let (config, config_dir) = find_config(cwd)?;
@@ -484,13 +488,22 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     let options = merge_options(config, cli_options(cli, markdown));
     let result = lint_text(&text, &options, &rules, judge);
 
-    if cli.format == "json" {
-        println!(
+    match cli.format.as_str() {
+        "json" => println!(
             "{}",
             serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
-        );
-    } else {
-        pretty(&result, cli.quiet);
+        ),
+        // The brief is fed to an AI model, so it replaces diagnostics output.
+        // --quiet suppresses stdout; the None note stays on stderr regardless.
+        "prompt" => match lawlint_core::remediation_prompt(&result, &rules) {
+            Some(prompt) => {
+                if !cli.quiet {
+                    print!("{prompt}");
+                }
+            }
+            None => eprintln!("no issues found; no prompt generated"),
+        },
+        _ => pretty(&result, cli.quiet),
     }
 
     if cli.fix {

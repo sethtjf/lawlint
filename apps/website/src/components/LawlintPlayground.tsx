@@ -1,4 +1,4 @@
-import init, { lint } from "@/generated/wasm/lawlint_wasm.js";
+import init, { lint, remediationPrompt } from "@/generated/wasm/lawlint_wasm.js";
 import { type DragEvent, type UIEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -97,6 +97,29 @@ function downloadReport(content: string, filename: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+async function writeClipboard(content: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content);
+      return true;
+    } catch {
+      // Fall through to the execCommand path below.
+    }
+  }
+
+  const fallback = document.createElement("textarea");
+  fallback.value = content;
+  fallback.style.position = "fixed";
+  fallback.style.opacity = "0";
+  document.body.appendChild(fallback);
+  fallback.select();
+  try {
+    return document.execCommand("copy");
+  } finally {
+    fallback.remove();
+  }
+}
+
 function severityVariant(severity: string) {
   if (severity === "error") return "default" as const;
   if (severity === "warning") return "warning" as const;
@@ -110,6 +133,7 @@ export default function LawlintPlayground() {
   const [dragging, setDragging] = useState(false);
   const [view, setView] = useState<"editor" | "preview">("editor");
   const [copied, setCopied] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [stats, setStats] = useState<Stats>({
     score: 100,
     wordCount: 0,
@@ -124,6 +148,7 @@ export default function LawlintPlayground() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const promptCopyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,35 +271,19 @@ export default function LawlintPlayground() {
   async function copyJson() {
     const report = jsonReport();
     if (!report) return;
-    let didCopy = false;
-
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(report);
-        didCopy = true;
-      } catch {
-        didCopy = false;
-      }
-    }
-
-    if (!didCopy) {
-      const fallback = document.createElement("textarea");
-      fallback.value = report;
-      fallback.style.position = "fixed";
-      fallback.style.opacity = "0";
-      document.body.appendChild(fallback);
-      fallback.select();
-      try {
-        didCopy = document.execCommand("copy");
-      } finally {
-        fallback.remove();
-      }
-    }
-
-    if (!didCopy) return;
+    if (!(await writeClipboard(report))) return;
     clearTimeout(copyTimerRef.current);
     setCopied(true);
     copyTimerRef.current = setTimeout(() => setCopied(false), 1400);
+  }
+
+  async function copyPrompt() {
+    const prompt = remediationPrompt(text, markdown ? { markdown: true } : {}) as string | null;
+    if (!prompt) return;
+    if (!(await writeClipboard(prompt))) return;
+    clearTimeout(promptCopyTimerRef.current);
+    setPromptCopied(true);
+    promptCopyTimerRef.current = setTimeout(() => setPromptCopied(false), 1400);
   }
 
   function handleScroll(event: UIEvent<HTMLTextAreaElement>) {
@@ -363,6 +372,14 @@ export default function LawlintPlayground() {
             variant="outline"
           >
             {copied ? "Copied" : "Copy JSON"}
+          </Button>
+          <Button
+            disabled={!latestResult || latestResult.diagnostics.length === 0}
+            onClick={() => void copyPrompt()}
+            size="sm"
+            variant="outline"
+          >
+            {promptCopied ? "Copied" : "Copy AI prompt"}
           </Button>
           <Button onClick={clear} size="sm" variant="ghost">
             Clear

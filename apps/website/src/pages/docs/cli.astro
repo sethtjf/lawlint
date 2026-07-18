@@ -10,7 +10,7 @@ import Layout from "../../layouts/Layout.astro";
     <pre>lawlint [options] &lt;file.txt|file.md|-&gt;
 lawlint rules --json</pre>
     <div class="table">
-      <div><code>--format pretty|json</code><span>Choose human-readable or machine-readable output.</span></div>
+      <div><code>--format pretty|json|prompt</code><span>Choose human-readable, machine-readable, or an AI revision brief (<code>prompt</code>) for the flagged text.</span></div>
       <div><code>--rules id,id</code><span>Run only the listed rules.</span></div>
       <div><code>--disable id,id</code><span>Disable selected rules.</span></div>
       <div><code>--markdown</code><span>Strip fenced code blocks from the input. Markdown files enable this automatically.</span></div>

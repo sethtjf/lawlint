@@ -8,8 +8,9 @@
 //!   `Alt+Enter` (or `Ctrl+J`) inserts a newline; pasted newlines are kept.
 //! - Slash commands: `/open <path>` lints a file (bare `/open` or `Ctrl+O`
 //!   opens the built-in file browser), `/fix` applies fixes to the last
-//!   linted text, `/clear` clears the transcript, `/help` lists commands,
-//!   `/quit` exits.
+//!   linted text, `/prompt` generates an AI revision prompt from the last
+//!   lint, `/clear` clears the transcript, `/help` lists commands, `/quit`
+//!   exits.
 //! - The file browser is an in-TUI overlay: arrow keys move, typing filters,
 //!   `Enter` descends into a directory or picks a file, `Left`/`Backspace`
 //!   go up, `Esc` cancels.
@@ -281,6 +282,11 @@ impl TuiApp {
                         self.push_error(e);
                     }
                 }
+                "prompt" => {
+                    if let Err(e) = self.cmd_prompt() {
+                        self.push_error(e);
+                    }
+                }
                 "clear" => self.transcript.clear(),
                 "help" => self.push_help(),
                 "quit" | "exit" | "q" => return Some(self.exit_code()),
@@ -403,6 +409,36 @@ impl TuiApp {
         Ok(())
     }
 
+    fn cmd_prompt(&mut self) -> Result<(), String> {
+        let Some(text) = self.last_text.clone() else {
+            return Err("Nothing to prompt yet — lint some text first.".into());
+        };
+        // Re-lint so the brief reflects the current text and its offsets.
+        let result = lint_text(&text, &self.options, &self.rules, self.judge.clone());
+        let Some(prompt) = lawlint_core::remediation_prompt(&result, &self.rules) else {
+            self.push_note("No issues found — nothing to fix.");
+            return Ok(());
+        };
+
+        self.push_blank();
+        self.push(bullet_line(
+            Span::styled(
+                "Copy this into your AI model",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            String::new(),
+        ));
+        for line in prompt.lines() {
+            let color = if line.starts_with("## ") { BRAND } else { DIM };
+            self.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(line.to_string(), Style::default().fg(color)),
+            ]));
+        }
+        self.push_blank();
+        Ok(())
+    }
+
     fn lint_and_push(&mut self, text: &str) {
         let result = lint_text(text, &self.options, &self.rules, self.judge.clone());
         self.push_result(&result);
@@ -476,6 +512,10 @@ impl TuiApp {
         let rows: &[(&str, &str)] = &[
             ("/open <path>", "lint a file (bare /open browses)"),
             ("/fix", "apply fixes to the last linted text"),
+            (
+                "/prompt",
+                "generate an AI revision prompt from the last lint",
+            ),
             ("/clear", "clear the transcript"),
             ("/help", "show this help"),
             ("/quit", "exit (also Ctrl+C)"),

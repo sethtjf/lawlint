@@ -14,6 +14,7 @@ pub mod error;
 pub mod judge;
 pub mod loader;
 pub mod markdown;
+pub mod prompt;
 pub mod registry;
 pub mod rule;
 pub mod scoring;
@@ -33,6 +34,7 @@ pub use judge::{
     JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment, PROMPT_VERSION,
 };
 pub use loader::{AllowContextDef, PackageManifest, PatternDef, RuleDef};
+pub use prompt::remediation_prompt;
 pub use registry::{InferentialRule, RuleSet};
 pub use rule::{Ctx, Interests, Report, Rule, RuleExample, RuleMeta};
 pub use scoring::finalize;
@@ -185,6 +187,23 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.rule_id.0 == id)
+    }
+
+    #[test]
+    fn parenthetical_asides_exempt_statutory_subdivisions() {
+        // Subdivision refs attach to the preceding token; asides follow a space.
+        assert!(!has(
+            "Under Section 4(b), the agreement is binding.",
+            "core/no-parenthetical-asides"
+        ));
+        assert!(!has(
+            "Section 12(a)(1) controls the filing deadline.",
+            "core/no-parenthetical-asides"
+        ));
+        assert!(has(
+            "The court (again) delayed the ruling (twice).",
+            "core/no-parenthetical-asides"
+        ));
     }
 
     // ---- ported: registry ----------------------------------------------

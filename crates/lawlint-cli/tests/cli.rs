@@ -413,6 +413,61 @@ fn fix_and_diff_rewrites_file_and_prints_markers() {
     );
 }
 
+// ---- --format prompt ---------------------------------------------------
+
+#[test]
+fn prompt_format_emits_revision_brief_with_section_and_excerpt() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt"])
+        .write_stdin("Great question! The answer is no.")
+        .assert()
+        .code(1) // error-severity finding drives the exit code, not the format
+        .stdout(predicate::str::contains("## core/no-sycophantic-openers"))
+        .stdout(predicate::str::contains("The answer is no."));
+}
+
+#[test]
+fn prompt_format_clean_text_prints_nothing_but_notes_on_stderr() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt"])
+        .write_stdin("The court granted the motion.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "no issues found; no prompt generated",
+        ));
+}
+
+#[test]
+fn prompt_format_with_fix_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    let file = write(&dir, "brief.txt", "Great question! The answer is no.");
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .args(["--format", "prompt", "--fix"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "--fix and --diff require --format pretty",
+        ));
+}
+
+#[test]
+fn prompt_format_with_diff_is_a_config_error() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "prompt", "--diff"])
+        .write_stdin("Great question! The answer is no.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "--fix and --diff require --format pretty",
+        ));
+}
+
 // ---- rules subcommand --------------------------------------------------
 
 #[test]
