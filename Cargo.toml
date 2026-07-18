@@ -4,6 +4,7 @@ members = [
     "crates/lawlint-core",
     "crates/lawlint-cli",
     "crates/lawlint-judge",
+    "crates/lawlint-eval",
     "crates/lawlint-wasm",
 ]
 resolver = "2"

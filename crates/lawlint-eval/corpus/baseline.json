@@ -1,0 +1,32 @@
+{
+  "overall_auc": 1.0,
+  "slice_auc": {
+    "naive": 1.0,
+    "rule-evading": 1.0,
+    "self-edit": 1.0
+  },
+  "per_rule_recall": {
+    "core/empty-hedge": 0.0,
+    "core/no-ai-cliches": 0.3333333333333333,
+    "core/no-doublets": 0.0,
+    "core/no-em-dash": 0.0,
+    "core/no-em-dash-overuse": 0.0,
+    "core/no-empty-emphasis": 0.0,
+    "core/no-en-dash": 0.0,
+    "core/no-hedging": 0.0,
+    "core/no-legalese": 0.0,
+    "core/no-marketing-language": 0.3333333333333333,
+    "core/no-not-only": 0.0,
+    "core/no-parenthetical-asides": 0.0,
+    "core/no-passive-overuse": 0.0,
+    "core/no-repetitive-openers": 0.0,
+    "core/no-robotic-transitions": 0.0,
+    "core/no-rule-of-three": 0.6666666666666666,
+    "core/no-semicolons": 0.3333333333333333,
+    "core/no-sycophantic-openers": 0.0,
+    "core/no-throat-clearing": 0.0,
+    "core/oxford-comma": 0.3333333333333333,
+    "core/padded-elaboration": 0.0,
+    "core/sentence-length": 0.0
+  }
+}
