@@ -59,7 +59,10 @@ mod app {
                         .or_else(|| document.pointer("/casebody/data/opinions/0/text"))
                         .and_then(Value::as_str)
                         .unwrap_or_default();
-                    for text in segment(opinion, 100, 500) {
+                    for text in segment(opinion, 100, 500)
+                        .into_iter()
+                        .filter(|text| text.split_whitespace().count() <= 500)
+                    {
                         if !text.chars().next().is_some_and(char::is_uppercase)
                             || starts_with_citation_fragment(&text)
                             || has_ocr_fragment(&text)

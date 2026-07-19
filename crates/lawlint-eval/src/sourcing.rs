@@ -95,32 +95,45 @@ pub fn strip_html(html: &str) -> String {
     let mut tag = String::new();
     let mut entity = String::new();
     for character in html.chars() {
-        if character == '<' {
-            in_tag = true;
-            tag.clear();
-        } else if character == '>' {
-            in_tag = false;
-            if is_block_tag(&tag) {
-                text.push(' ');
-            }
-        } else if in_tag {
-            tag.push(character);
-        } else if character == '&' && !in_tag {
-            entity.clear();
-            entity.push(character);
-        } else if !entity.is_empty() && !in_tag {
-            entity.push(character);
-            if character == ';' {
-                if let Some(decoded) = decode_entity(&entity) {
-                    text.push(decoded);
-                } else {
+        if in_tag {
+            if character == '>' {
+                in_tag = false;
+                if is_block_tag(&tag) {
                     text.push(' ');
                 }
-                entity.clear();
+            } else {
+                tag.push(character);
             }
-        } else if !in_tag {
-            text.push(character);
+            continue;
         }
+        if !entity.is_empty() {
+            if character == ';' {
+                entity.push(';');
+                match decode_entity(&entity) {
+                    Some(decoded) => text.push(decoded),
+                    None => text.push_str(&entity),
+                }
+                entity.clear();
+                continue;
+            }
+            if (character.is_ascii_alphanumeric() || character == '#') && entity.len() < 12 {
+                entity.push(character);
+                continue;
+            }
+            text.push_str(&entity);
+            entity.clear();
+        }
+        match character {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '&' => entity.push('&'),
+            _ => text.push(character),
+        }
+    }
+    if !entity.is_empty() {
+        text.push_str(&entity);
     }
     normalize_whitespace(&text)
 }
@@ -311,5 +324,14 @@ mod tests {
             strip_html("<p>U.S. <i>Supreme</i> Court cited 62 <span>Stat.</span> 30.</p>"),
             "U.S. Supreme Court cited 62 Stat. 30."
         );
+    }
+
+    #[test]
+    fn literal_ampersands_are_not_swallowed() {
+        assert_eq!(
+            strip_html("<p>Barnes &amp; Noble and R&D expenses &amp; costs</p>"),
+            "Barnes & Noble and R&D expenses & costs"
+        );
+        assert_eq!(strip_html("<p>fees & charges</p>"), "fees & charges");
     }
 }
