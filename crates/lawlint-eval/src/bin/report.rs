@@ -71,10 +71,34 @@ fn run(args: Args) -> Result<(), String> {
     for style in ["naive", "rule-evading", "self-edit"] {
         slice_auc.insert(style.to_string(), auc_for_ai_slice(&test, style));
     }
-    println!("\nAUC (test split)");
+    println!("\nAUC (test split; score = 100 - lint score; P(AI is more AI-like than human))");
+    println!(
+        "Interpretation: 0.500 = chance; >0.500 = discriminative; <0.500 = anti-discriminative"
+    );
     println!("overall: {:.3}", overall_auc);
     for (style, value) in &slice_auc {
         println!("{style}: {value:.3}");
+    }
+    println!("\nMean lint scores (test split; higher means more rule findings)");
+    println!(
+        "overall: human={:.3} ai={:.3}",
+        mean_lint_score(&test, Label::Human),
+        mean_lint_score(&test, Label::Ai)
+    );
+    for style in ["naive", "rule-evading", "self-edit"] {
+        let ai_scores = test
+            .iter()
+            .filter(|sample| {
+                sample.sample.label == Label::Ai
+                    && sample.sample.prompt_style.as_deref() == Some(style)
+            })
+            .map(|sample| sample.score)
+            .collect::<Vec<_>>();
+        println!(
+            "{style}: human={:.3} ai={:.3}",
+            mean_lint_score(&test, Label::Human),
+            mean(&ai_scores)
+        );
     }
     println!("\nScore histograms (test split)");
     for (label, name) in [(Label::Human, "human"), (Label::Ai, "ai")] {
@@ -98,6 +122,24 @@ fn run(args: Args) -> Result<(), String> {
         println!("\nWrote baseline to {}", path.display());
     }
     Ok(())
+}
+
+fn mean_lint_score(samples: &[lawlint_eval::EvaluatedSample], label: Label) -> f64 {
+    mean(
+        &samples
+            .iter()
+            .filter(|sample| sample.sample.label == label)
+            .map(|sample| sample.score)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn mean(values: &[i32]) -> f64 {
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<i32>() as f64 / values.len() as f64
+    }
 }
 
 fn print_counts(name: &str, counts: &BTreeMap<String, usize>) {
