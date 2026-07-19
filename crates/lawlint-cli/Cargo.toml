@@ -12,6 +12,7 @@ path = "src/main.rs"
 clap.workspace = true
 colored.workspace = true
 lawlint-core = { path = "../lawlint-core" }
+lawlint-docx = { path = "../lawlint-docx" }
 lawlint-judge = { path = "../lawlint-judge" }
 serde.workspace = true
 serde_json.workspace = true

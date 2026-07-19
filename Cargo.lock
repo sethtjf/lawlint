@@ -2923,7 +2923,7 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
 name = "lawlint-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2932,6 +2932,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "lawlint-core",
+ "lawlint-docx",
  "lawlint-judge",
  "predicates",
  "ratatui",
@@ -2949,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "include_dir",
  "pulldown-cmark",
@@ -2964,9 +2965,10 @@ dependencies = [
 
 [[package]]
 name = "lawlint-desktop"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "lawlint-core",
+ "lawlint-docx",
  "serde",
  "serde_json",
  "tauri",
@@ -2976,8 +2978,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lawlint-docx"
+version = "0.5.0"
+dependencies = [
+ "lawlint-core",
+ "quick-xml 0.36.2",
+ "thiserror 2.0.18",
+ "zip 0.6.6",
+]
+
+[[package]]
 name = "lawlint-judge"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axllm",
@@ -2994,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-wasm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "lawlint-core",
  "serde",
@@ -4108,7 +4120,7 @@ checksum = "7da1d65da6dd5d1e44199ac0f58712d241c0f439f80adea8924d832384087f85"
 dependencies = [
  "base64 0.22.1",
  "indexmap 2.14.0",
- "quick-xml",
+ "quick-xml 0.41.0",
  "serde",
  "time",
 ]
@@ -4314,6 +4326,15 @@ name = "pulp-wasm-simd-flag"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d8f70e07b9c3962945a74e59ca1c511bba65b6419468acc217c457d93f3c740"
+
+[[package]]
+name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"

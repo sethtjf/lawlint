@@ -37,6 +37,16 @@ cargo build --release -p lawlint-cli
 ./target/release/lawlint document.txt
 ```
 
+### File formats
+
+The CLI and desktop app lint plain text, Markdown (`.md`), and Word documents
+(`.docx`). For `.docx`, text is projected out of the document for linting; with
+`--fix`, machine-applicable fixes are written back as native Word **tracked
+changes** with a review **comment** per fix, so every change can be accepted or
+rejected in Word. All other parts of the document are preserved byte-for-byte.
+Fixes whose span crosses multiple runs are reported and skipped rather than
+applied (not yet supported).
+
 ## Rust SDK
 
 ```rust
@@ -56,6 +66,7 @@ compiled to WebAssembly.
 
 - `crates/lawlint-core` — pure-Rust linting SDK.
 - `crates/lawlint-cli` — native CLI.
+- `crates/lawlint-docx` — read `.docx` into the text model and write fixes back as tracked changes + comments.
 - `crates/lawlint-wasm` — browser binding used by the playground.
 - `apps/website` — Astro documentation website with generated rule reference pages.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
