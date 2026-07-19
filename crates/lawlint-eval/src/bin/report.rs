@@ -1,7 +1,7 @@
 use clap::Parser;
 use lawlint_eval::{
-    auc, auc_for_ai_slice, evaluate, load_jsonl, per_rule_metrics, rule_ids, score_histogram,
-    Baseline, Label, Split,
+    auc, auc_for_ai_slice, evaluate, inferential_rule_ids, load_jsonl, per_rule_metrics, rule_ids,
+    score_histogram, Baseline, Label, Split,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,13 +46,52 @@ fn run(args: Args) -> Result<(), String> {
     print_counts("registers", &registers);
     print_counts("splits", &splits);
 
+    let train: Vec<_> = evaluated
+        .iter()
+        .filter(|sample| sample.sample.resolved_split() == Split::Train)
+        .cloned()
+        .collect();
     let test: Vec<_> = evaluated
         .iter()
         .filter(|sample| sample.sample.resolved_split() == Split::Test)
         .cloned()
         .collect();
-    let rules = per_rule_metrics(&test, rule_ids());
-    println!("\nPer-rule metrics (test split)");
+    let train_metrics = print_metrics("train", &train);
+    print_metrics("test (held-out)", &test);
+    println!(
+        "\nInferential rules not evaluated (requires judge): {}",
+        inferential_rule_ids().join(", ")
+    );
+
+    if let Some(path) = args.emit_baseline {
+        let baseline = Baseline {
+            overall_auc: train_metrics.0,
+            slice_auc: train_metrics.1,
+            per_rule_precision: train_metrics
+                .2
+                .into_iter()
+                .map(|(name, metrics)| (name, metrics.precision))
+                .collect(),
+        };
+        let json = serde_json::to_string_pretty(&baseline)
+            .map_err(|error| format!("failed to serialize baseline: {error}"))?;
+        fs::write(&path, format!("{json}\n"))
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        println!("\nWrote baseline to {}", path.display());
+    }
+    Ok(())
+}
+
+fn print_metrics(
+    name: &str,
+    samples: &[lawlint_eval::EvaluatedSample],
+) -> (
+    f64,
+    BTreeMap<String, f64>,
+    BTreeMap<String, lawlint_eval::RuleMetrics>,
+) {
+    let rules = per_rule_metrics(samples, rule_ids());
+    println!("\nPer-rule metrics ({name} split)");
     println!("rule\tprecision\trecall\tf1\tTP\tFP\tFN");
     for (rule, metric) in &rules {
         println!(
@@ -65,28 +104,27 @@ fn run(args: Args) -> Result<(), String> {
             metric.false_negative
         );
     }
-
-    let overall_auc = auc(&test);
-    let mut slice_auc = BTreeMap::new();
-    for style in ["naive", "rule-evading", "self-edit"] {
-        slice_auc.insert(style.to_string(), auc_for_ai_slice(&test, style));
-    }
-    println!("\nAUC (test split; score = 100 - lint score; P(AI is more AI-like than human))");
+    let overall_auc = auc(samples);
+    let slice_auc = ["naive", "rule-evading", "self-edit"]
+        .into_iter()
+        .map(|style| (style.to_string(), auc_for_ai_slice(samples, style)))
+        .collect::<BTreeMap<_, _>>();
+    println!("\nAUC ({name} split; score = 100 - lint score; P(AI is more AI-like than human))");
     println!(
         "Interpretation: 0.500 = chance; >0.500 = discriminative; <0.500 = anti-discriminative"
     );
-    println!("overall: {:.3}", overall_auc);
+    println!("overall: {overall_auc:.3}");
     for (style, value) in &slice_auc {
         println!("{style}: {value:.3}");
     }
-    println!("\nMean lint scores (test split; higher means more rule findings)");
+    println!("\nMean human-likeness scores ({name} split; higher means fewer rule findings)");
     println!(
         "overall: human={:.3} ai={:.3}",
-        mean_lint_score(&test, Label::Human),
-        mean_lint_score(&test, Label::Ai)
+        mean_lint_score(samples, Label::Human),
+        mean_lint_score(samples, Label::Ai)
     );
     for style in ["naive", "rule-evading", "self-edit"] {
-        let ai_scores = test
+        let ai_scores = samples
             .iter()
             .filter(|sample| {
                 sample.sample.label == Label::Ai
@@ -96,32 +134,16 @@ fn run(args: Args) -> Result<(), String> {
             .collect::<Vec<_>>();
         println!(
             "{style}: human={:.3} ai={:.3}",
-            mean_lint_score(&test, Label::Human),
+            mean_lint_score(samples, Label::Human),
             mean(&ai_scores)
         );
     }
-    println!("\nScore histograms (test split)");
-    for (label, name) in [(Label::Human, "human"), (Label::Ai, "ai")] {
-        let histogram = score_histogram(&test, label);
-        println!("{name}: {}", format_histogram(&histogram));
+    println!("\nScore histograms ({name} split)");
+    for (label, label_name) in [(Label::Human, "human"), (Label::Ai, "ai")] {
+        let histogram = score_histogram(samples, label);
+        println!("{label_name}: {}", format_histogram(&histogram));
     }
-
-    if let Some(path) = args.emit_baseline {
-        let baseline = Baseline {
-            overall_auc,
-            slice_auc,
-            per_rule_recall: rules
-                .into_iter()
-                .map(|(name, metrics)| (name, metrics.recall))
-                .collect(),
-        };
-        let json = serde_json::to_string_pretty(&baseline)
-            .map_err(|error| format!("failed to serialize baseline: {error}"))?;
-        fs::write(&path, format!("{json}\n"))
-            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-        println!("\nWrote baseline to {}", path.display());
-    }
-    Ok(())
+    (overall_auc, slice_auc, rules)
 }
 
 fn mean_lint_score(samples: &[lawlint_eval::EvaluatedSample], label: Label) -> f64 {

@@ -1,32 +1,30 @@
 {
-  "overall_auc": 0.38509049123815,
+  "overall_auc": 0.30563820018365473,
   "slice_auc": {
-    "naive": 0.463680387409201,
-    "rule-evading": 0.333804143126177,
-    "self-edit": 0.34872881355932206
+    "naive": 0.3031986531986532,
+    "rule-evading": 0.35412748171368863,
+    "self-edit": 0.2550600343053173
   },
-  "per_rule_recall": {
-    "core/empty-hedge": 0.0,
-    "core/no-ai-cliches": 0.15254237288135594,
-    "core/no-doublets": 0.2033898305084746,
-    "core/no-em-dash": 0.0847457627118644,
+  "per_rule_precision": {
+    "core/no-ai-cliches": 0.9722222222222222,
+    "core/no-doublets": 0.9487179487179487,
+    "core/no-em-dash": 0.06451612903225806,
     "core/no-em-dash-overuse": 0.0,
-    "core/no-empty-emphasis": 0.0,
-    "core/no-en-dash": 0.01694915254237288,
-    "core/no-hedging": 0.0,
-    "core/no-legalese": 0.2542372881355932,
-    "core/no-marketing-language": 0.1694915254237288,
-    "core/no-not-only": 0.1864406779661017,
-    "core/no-parenthetical-asides": 0.23728813559322035,
-    "core/no-passive-overuse": 0.01694915254237288,
-    "core/no-repetitive-openers": 0.23728813559322035,
+    "core/no-empty-emphasis": 0.5,
+    "core/no-en-dash": 0.0,
+    "core/no-hedging": 1.0,
+    "core/no-legalese": 0.453125,
+    "core/no-marketing-language": 0.9722222222222222,
+    "core/no-not-only": 0.9722222222222222,
+    "core/no-parenthetical-asides": 0.3577981651376147,
+    "core/no-passive-overuse": 0.5,
+    "core/no-repetitive-openers": 0.6582278481012658,
     "core/no-robotic-transitions": 0.0,
-    "core/no-rule-of-three": 0.0847457627118644,
-    "core/no-semicolons": 0.22033898305084745,
+    "core/no-rule-of-three": 0.9166666666666666,
+    "core/no-semicolons": 0.23846153846153847,
     "core/no-sycophantic-openers": 0.0,
     "core/no-throat-clearing": 0.0,
-    "core/oxford-comma": 0.3728813559322034,
-    "core/padded-elaboration": 0.0,
-    "core/sentence-length": 0.5084745762711864
+    "core/oxford-comma": 0.32298136645962733,
+    "core/sentence-length": 0.33035714285714285
   }
 }

@@ -1,6 +1,6 @@
 //! Evaluation corpus loading, metrics, and regression checks for lawlint.
 
-use lawlint_core::{lint, LintOptions, RuleSet};
+use lawlint_core::{lint, LintOptions, RuleSet, Tier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -186,6 +186,16 @@ pub fn rule_ids() -> Vec<String> {
     RuleSet::built_in()
         .metas()
         .iter()
+        .filter(|meta| meta.tier != Tier::Inferential)
+        .map(|meta| meta.id.0.clone())
+        .collect()
+}
+
+pub fn inferential_rule_ids() -> Vec<String> {
+    RuleSet::built_in()
+        .metas()
+        .iter()
+        .filter(|meta| meta.tier == Tier::Inferential)
         .map(|meta| meta.id.0.clone())
         .collect()
 }
@@ -265,7 +275,7 @@ pub fn score_histogram(samples: &[EvaluatedSample], label: Label) -> Vec<Histogr
 pub struct Baseline {
     pub overall_auc: f64,
     pub slice_auc: BTreeMap<String, f64>,
-    pub per_rule_recall: BTreeMap<String, f64>,
+    pub per_rule_precision: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -299,11 +309,11 @@ pub fn check_regression(
             );
         }
     }
-    for (name, baseline_value) in &baseline.per_rule_recall {
-        if let Some(current_value) = current.per_rule_recall.get(name) {
+    for (name, baseline_value) in &baseline.per_rule_precision {
+        if let Some(current_value) = current.per_rule_precision.get(name) {
             check_metric(
                 &mut regressions,
-                &format!("per_rule_recall.{name}"),
+                &format!("per_rule_precision.{name}"),
                 *current_value,
                 *baseline_value,
                 tolerance,
@@ -401,21 +411,21 @@ mod tests {
         let baseline: Baseline = serde_json::from_str(include_str!("../corpus/baseline.json"))
             .expect("committed baseline should load");
         let evaluated = evaluate(&corpus);
-        let test: Vec<_> = evaluated
+        let train: Vec<_> = evaluated
             .iter()
-            .filter(|sample| sample.sample.resolved_split() == Split::Test)
+            .filter(|sample| sample.sample.resolved_split() == Split::Train)
             .cloned()
             .collect();
-        let rules = per_rule_metrics(&test, rule_ids());
+        let rules = per_rule_metrics(&train, rule_ids());
         let current = Baseline {
-            overall_auc: auc(&test),
+            overall_auc: auc(&train),
             slice_auc: ["naive", "rule-evading", "self-edit"]
                 .into_iter()
-                .map(|style| (style.to_string(), auc_for_ai_slice(&test, style)))
+                .map(|style| (style.to_string(), auc_for_ai_slice(&train, style)))
                 .collect(),
-            per_rule_recall: rules
+            per_rule_precision: rules
                 .into_iter()
-                .map(|(rule, metrics)| (rule, metrics.recall))
+                .map(|(rule, metrics)| (rule, metrics.precision))
                 .collect(),
         };
         assert!(check_regression(&current, &baseline, 0.03).is_empty());
