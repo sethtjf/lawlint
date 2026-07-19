@@ -53,44 +53,61 @@ mod app {
             let target_words = human
                 .word_count
                 .unwrap_or_else(|| human.text.split_whitespace().count());
-            let topic = topic_descriptor(human);
+            let topic = topic_descriptor(&client, human)?;
             let avoidance = avoidance_instructions();
             let base_prompt = prompt(style, &human.register, &topic, target_words, &avoidance);
-            let mut text =
-                match generate_with_validation(&client, model, style, &base_prompt, target_words) {
-                    Ok(text) => text,
-                    Err(error) => {
-                        let fallback = if model == "claude-opus-4-8" {
-                            "gpt-5.5"
-                        } else {
-                            "claude-opus-4-8"
-                        };
-                        eprintln!(
-                            "{}: {model} failed ({error}); falling back to {fallback}",
-                            human.id
-                        );
-                        model = fallback;
-                        match generate_with_validation(
-                            &client,
-                            model,
-                            style,
-                            &base_prompt,
-                            target_words,
-                        ) {
-                            Ok(text) => text,
-                            Err(error) => {
-                                eprintln!("skip {}: {error}", human.id);
-                                continue;
-                            }
+            let mut text = match generate_with_validation(
+                &client,
+                model,
+                style,
+                &base_prompt,
+                target_words,
+                &human.text,
+            ) {
+                Ok(text) => text,
+                Err(error) => {
+                    let fallback = if model == "claude-opus-4-8" {
+                        "gpt-5.5"
+                    } else {
+                        "claude-opus-4-8"
+                    };
+                    eprintln!(
+                        "{}: {model} failed ({error}); falling back to {fallback}",
+                        human.id
+                    );
+                    model = fallback;
+                    match generate_with_validation(
+                        &client,
+                        model,
+                        style,
+                        &base_prompt,
+                        target_words,
+                        &human.text,
+                    ) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            eprintln!("skip {}: {error}", human.id);
+                            continue;
                         }
                     }
-                };
+                }
+            };
             if style == "self-edit" {
                 let original = text.clone();
                 text = match self_edit(&client, model, text, target_words) {
                     Ok(text) if (100..=500).contains(&text.split_whitespace().count()) => text,
                     Ok(_) | Err(_) => original,
                 };
+            }
+            if echoes_seed(&text, &human.text) {
+                text = strip_echoed_opening(&text, &human.text);
+            }
+            if echoes_seed(&text, &human.text) {
+                eprintln!(
+                    "skip {}: output retained source wording after retries",
+                    human.id
+                );
+                continue;
             }
             let id_style = style.replace('-', "_");
             let count = counts.entry(id_style.clone()).or_default();
@@ -118,16 +135,26 @@ mod app {
         Ok(())
     }
 
-    fn topic_descriptor(sample: &Sample) -> String {
-        let opening = sample
-            .text
-            .split_once('.')
-            .map_or(sample.text.as_str(), |(opening, _)| opening);
-        opening
-            .split_whitespace()
-            .take(24)
-            .collect::<Vec<_>>()
-            .join(" ")
+    fn topic_descriptor(client: &FoundryClient, sample: &Sample) -> Result<String, String> {
+        let system = "You summarize legal documents for a separate generation prompt. Return only a neutral topic label.";
+        let prompt = format!(
+            "Read the source passage below and describe its subject matter in 8 to 15 words. \
+             Use abstract legal concepts, parties, claims, or transaction type. Do not copy any \
+             verbatim phrase, clause, citation, name, or sequence of three words from the source. \
+             Do not mention that you are summarizing.\n\nSOURCE PASSAGE:\n{}",
+            sample.text
+        );
+        for _ in 0..3 {
+            let topic = clean_model_text(&client.complete("FW-GLM-5.1", system, &prompt, 256)?);
+            let words = topic.split_whitespace().count();
+            if (8..=15).contains(&words) && !contains_verbatim_run(&topic, &sample.text, 3) {
+                return Ok(topic);
+            }
+        }
+        Ok(format!(
+            "{} legal issues concerning the subject matter",
+            sample.register
+        ))
     }
 
     fn avoidance_instructions() -> String {
@@ -174,6 +201,7 @@ mod app {
         style: &str,
         prompt: &str,
         target_words: usize,
+        seed_text: &str,
     ) -> Result<String, String> {
         let system = "You are a legal-text generation model. Follow the requested register and return only clean prose.";
         let mut last = String::new();
@@ -191,12 +219,20 @@ mod app {
                 target_words,
             );
             let words = output.split_whitespace().count();
-            if (100..=500).contains(&words) && words.abs_diff(target_words) <= target_words / 2 + 20
+            if (100..=500).contains(&words)
+                && words.abs_diff(target_words) <= target_words / 2 + 20
+                && !echoes_seed(&output, seed_text)
             {
                 return Ok(output);
             }
             last = output;
             thread::sleep(Duration::from_millis(250));
+        }
+        let cleaned = strip_echoed_opening(&last, seed_text);
+        if (100..=500).contains(&cleaned.split_whitespace().count())
+            && !echoes_seed(&cleaned, seed_text)
+        {
+            return Ok(cleaned);
         }
         Err(format!(
             "{style} output stayed outside target range after retries ({} words)",
@@ -273,6 +309,49 @@ mod app {
             .unwrap_or(text)
             .trim();
         normalize_whitespace(text)
+    }
+
+    fn normalized_tokens(text: &str) -> Vec<String> {
+        text.split_whitespace()
+            .map(|word| {
+                word.trim_matches(|character: char| {
+                    !character.is_alphanumeric() && character != '\''
+                })
+                .to_lowercase()
+            })
+            .filter(|word| !word.is_empty())
+            .collect()
+    }
+
+    fn contains_verbatim_run(candidate: &str, source: &str, run: usize) -> bool {
+        let candidate = normalized_tokens(candidate);
+        let source = normalized_tokens(source);
+        if source.len() < run || candidate.len() < run {
+            return false;
+        }
+        source
+            .windows(run)
+            .any(|needle| candidate.windows(run).any(|window| window == needle))
+    }
+
+    fn echoes_seed(candidate: &str, source: &str) -> bool {
+        let opener = source
+            .split_once(['.', '!', '?'])
+            .map_or(source, |(opening, _)| opening);
+        contains_verbatim_run(candidate, opener, 8)
+            || contains_verbatim_run(candidate, source, 8)
+            || contains_verbatim_run(candidate, source, 5)
+                && normalized_tokens(candidate).len() < normalized_tokens(source).len() / 2
+    }
+
+    fn strip_echoed_opening(candidate: &str, source: &str) -> String {
+        if !echoes_seed(candidate, source) {
+            return candidate.to_string();
+        }
+        candidate
+            .split_once(['.', '!', '?'])
+            .map(|(_, remainder)| remainder.trim().to_string())
+            .unwrap_or_default()
     }
 }
 
