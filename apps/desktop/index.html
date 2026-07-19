@@ -20,11 +20,13 @@
       <section class="toolbar" aria-label="Document actions">
         <button id="load-sample" class="button button-solid" type="button">Load sample</button>
         <button id="open-file" class="button" type="button">Open file</button>
+        <button id="apply-docx" class="button" type="button" hidden>Apply fixes (tracked changes)</button>
         <button id="clear" class="button button-quiet" type="button">Clear</button>
         <label class="toggle">
           <input id="markdown-toggle" type="checkbox" />
           <span>Treat as Markdown</span>
         </label>
+        <span id="docx-status" class="docx-status" aria-live="polite"></span>
       </section>
 
       <section class="workbench">

@@ -1,0 +1,15 @@
+[package]
+name = "lawlint-docx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Read .docx into lawlint's text model and write fixes back as tracked changes + comments"
+
+[dependencies]
+lawlint-core = { path = "../lawlint-core" }
+quick-xml = "0.36"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+lawlint-core = { path = "../lawlint-core" }

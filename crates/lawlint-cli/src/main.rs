@@ -321,6 +321,42 @@ fn read_input(file: &str) -> Result<(String, bool), String> {
     ))
 }
 
+fn is_docx_path(file: &str) -> bool {
+    file != "-"
+        && Path::new(file)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("docx"))
+}
+
+/// Rewrite a `.docx` in place, turning MachineApplicable fixes into Word
+/// tracked changes with a review comment per fix.
+fn apply_docx_fixes(file: &str, diagnostics: &[Diagnostic]) -> Result<(), String> {
+    let bytes = fs::read(file).map_err(|error| format!("failed to read {file}: {error}"))?;
+    let result = lawlint_docx::apply_tracked_changes(
+        &bytes,
+        diagnostics,
+        &lawlint_docx::ReviseOptions::default(),
+    )
+    .map_err(|error| format!("failed to apply fixes to {file}: {error}"))?;
+    if result.applied > 0 {
+        fs::write(file, &result.bytes)
+            .map_err(|error| format!("failed to write {file}: {error}"))?;
+    }
+    eprintln!(
+        "Applied {} tracked change{} to {file}",
+        result.applied,
+        if result.applied == 1 { "" } else { "s" },
+    );
+    if result.skipped > 0 {
+        eprintln!(
+            "lawlint: {} fix{} skipped (span multiple runs; not yet supported for .docx)",
+            result.skipped,
+            if result.skipped == 1 { "" } else { "es" },
+        );
+    }
+    Ok(())
+}
+
 fn colors_enabled() -> bool {
     io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
@@ -475,7 +511,16 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     if cli.format == "prompt" && (cli.fix || cli.diff) {
         return Err("--fix and --diff require --format pretty".into());
     }
-    let (text, file_markdown) = read_input(&cli.file)?;
+    let is_docx = is_docx_path(&cli.file);
+    let (text, file_markdown) = if is_docx {
+        let bytes =
+            fs::read(&cli.file).map_err(|error| format!("failed to read {}: {error}", cli.file))?;
+        let text = lawlint_docx::extract(&bytes)
+            .map_err(|error| format!("failed to read {}: {error}", cli.file))?;
+        (text, false)
+    } else {
+        read_input(&cli.file)?
+    };
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let (config, config_dir) = find_config(cwd)?;
     let markdown = if cli.file == "-" {
@@ -498,7 +543,7 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
         // A file input is referenced by path — the receiving agent reads it
         // itself; embedding a large document would blow up its context.
         "prompt" => match lawlint_core::remediation_prompt(
-            if cli.file == "-" {
+            if cli.file == "-" || is_docx {
                 lawlint_core::PromptSource::Text(&text)
             } else {
                 lawlint_core::PromptSource::File(&cli.file)
@@ -517,19 +562,23 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     }
 
     if cli.fix {
-        let fixed = apply_fixes(&text, &result.diagnostics);
-        let count = machine_fix_count(&result.diagnostics);
-        if fixed != text {
-            fs::write(&cli.file, &fixed)
-                .map_err(|error| format!("failed to write {}: {error}", cli.file))?;
+        if is_docx {
+            apply_docx_fixes(&cli.file, &result.diagnostics)?;
+        } else {
+            let fixed = apply_fixes(&text, &result.diagnostics);
+            let count = machine_fix_count(&result.diagnostics);
+            if fixed != text {
+                fs::write(&cli.file, &fixed)
+                    .map_err(|error| format!("failed to write {}: {error}", cli.file))?;
+            }
+            // Status line, not lint output: stderr, so `--format json` stdout
+            // stays machine-parseable.
+            eprintln!(
+                "Applied {count} fix{} to {}",
+                if count == 1 { "" } else { "es" },
+                cli.file
+            );
         }
-        // Status line, not lint output: stderr, so `--format json` stdout
-        // stays machine-parseable.
-        eprintln!(
-            "Applied {count} fix{} to {}",
-            if count == 1 { "" } else { "es" },
-            cli.file
-        );
     }
 
     if cli.diff && !cli.quiet {

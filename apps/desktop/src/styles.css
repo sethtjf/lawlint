@@ -69,6 +69,8 @@ kbd { padding: 3px 5px; color: var(--ink); border: 1px solid var(--line); border
 .empty-state.good .empty-mark { color: #557b59; }
 .empty-state.error .empty-mark { color: #a31f2a; }
 
+.docx-status { flex-basis: 100%; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
 @media (max-width: 1050px) {
   body { min-width: 0; }
   .app-shell { padding: 36px 28px 48px; }
