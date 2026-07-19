@@ -377,7 +377,10 @@ fn docx_fix_writes_tracked_changes_not_plain_text() {
     // Still a valid zip (docx), and modified from the original.
     let after = fs::read(&file).unwrap();
     assert_eq!(&after[..2], b"PK", "output is still a .docx (zip)");
-    assert_ne!(after, DOCX_FIXTURE, "the fix should have rewritten the file");
+    assert_ne!(
+        after, DOCX_FIXTURE,
+        "the fix should have rewritten the file"
+    );
 }
 
 // ---- --diff ------------------------------------------------------------
