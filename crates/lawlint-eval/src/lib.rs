@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+pub mod judged;
 #[cfg(feature = "sourcing")]
 pub mod sourcing;
 

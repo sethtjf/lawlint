@@ -7,6 +7,9 @@ publish = false
 
 [features]
 sourcing = ["dep:ureq", "dep:lawlint-judge"]
+# Opt-in judged evaluation (`judged_report`): runs the tier-3 judge over the
+# corpus. Slow and backend-dependent, so never part of the default CI gate.
+judged = ["dep:lawlint-judge"]
 
 [dependencies]
 clap.workspace = true

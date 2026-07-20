@@ -88,8 +88,12 @@ impl AxJudge {
     }
 }
 
-impl Judge for AxJudge {
-    fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError> {
+impl AxJudge {
+    /// `Judge::evaluate`, but returning the findings dropped by the
+    /// verdict-polarity guard alongside the kept ones. The #39 judged-eval
+    /// harness measures the verdict-discipline rate from the dropped set;
+    /// `evaluate` discards it, so trait behavior is unchanged.
+    pub fn evaluate_with_stats(&self, req: &JudgeRequest) -> Result<ParsedFindings, JudgeError> {
         let request = Self::chat_request(req);
         let response = self
             .client
@@ -103,7 +107,13 @@ impl Judge for AxJudge {
                 truncate(&response.to_string(), 300)
             ))
         })?;
-        parse_findings(&content)
+        parse_findings_with_stats(&content)
+    }
+}
+
+impl Judge for AxJudge {
+    fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError> {
+        self.evaluate_with_stats(req).map(|parsed| parsed.kept)
     }
 
     fn model_id(&self) -> &str {
@@ -188,11 +198,23 @@ impl From<LenientFinding> for JudgeFinding {
     }
 }
 
+/// One parsed model response, partitioned by the verdict-polarity guard:
+/// `kept` goes on to grounding; `dropped_negative` is the guard's discard
+/// pile, exposed so the #39 judged-eval harness can compute the
+/// verdict-discipline rate (dropped-negative / all model-emitted findings).
+#[derive(Debug, Clone)]
+pub struct ParsedFindings {
+    pub kept: Vec<JudgeFinding>,
+    pub dropped_negative: Vec<JudgeFinding>,
+}
+
 /// Parse model output into findings. Tolerates markdown code fences and
 /// leading/trailing prose around the JSON array; anything else is
 /// `MalformedResponse` (core retries once, then fails the chunk closed).
-/// Negative-verdict findings are dropped here (see [`is_negative_verdict`]).
-fn parse_findings(content: &str) -> Result<Vec<JudgeFinding>, JudgeError> {
+/// Negative-verdict findings are dropped into `dropped_negative` (see
+/// [`is_negative_verdict`]) and stay observable there — the #39 judged-eval
+/// harness counts them; `Judge::evaluate` discards them.
+pub fn parse_findings_with_stats(content: &str) -> Result<ParsedFindings, JudgeError> {
     let stripped = strip_code_fences(content.trim());
 
     let mut candidates: Vec<&str> = vec![stripped];
@@ -206,11 +228,14 @@ fn parse_findings(content: &str) -> Result<Vec<JudgeFinding>, JudgeError> {
 
     for candidate in candidates {
         if let Ok(found) = serde_json::from_str::<Vec<LenientFinding>>(candidate) {
-            return Ok(found
+            let (dropped_negative, kept) = found
                 .into_iter()
                 .map(JudgeFinding::from)
-                .filter(|f| !is_negative_verdict(f))
-                .collect());
+                .partition(is_negative_verdict);
+            return Ok(ParsedFindings {
+                kept,
+                dropped_negative,
+            });
         }
     }
     Err(JudgeError::MalformedResponse(truncate(content, 300)))
@@ -450,6 +475,11 @@ mod tests {
 
     const VALID: &str = r#"[{"rule": "core/empty-hedge", "quote": "could perhaps", "explanation": "hedge", "confidence": 0.8, "suggested_rewrite": null}]"#;
 
+    /// The parse as `Judge::evaluate` sees it: guard drops discarded.
+    fn parse_findings(content: &str) -> Result<Vec<JudgeFinding>, JudgeError> {
+        parse_findings_with_stats(content).map(|parsed| parsed.kept)
+    }
+
     // ---- chat request shape (axllm contract round-trip) -----------------
 
     #[test]
@@ -616,6 +646,61 @@ mod tests {
         let findings = parse_findings(mixed).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule, "core/empty-hedge");
+    }
+
+    // ---- stats-exposing parse (#39 part 2) -------------------------------
+
+    #[test]
+    fn parse_with_stats_partitions_negative_verdicts() {
+        let mixed = r#"[
+            {"rule": "core/empty-hedge", "quote": "could perhaps", "explanation": "Hedge that adds no information.", "confidence": 0.8},
+            {"rule": "core/padded-elaboration", "quote": "as noted above", "explanation": "The text does not violate this rule.", "confidence": 0.9},
+            {"rule": "core/empty-hedge", "quote": "the parties shall meet", "explanation": "No empty hedge found in this passage.", "confidence": 0.9}
+        ]"#;
+        let parsed = parse_findings_with_stats(mixed).unwrap();
+        assert_eq!(parsed.kept.len(), 1);
+        assert_eq!(parsed.kept[0].rule, "core/empty-hedge");
+        assert_eq!(parsed.kept[0].quote, "could perhaps");
+        assert_eq!(parsed.dropped_negative.len(), 2);
+        // Dropped findings keep their full content — the harness caches and
+        // recounts them across runs.
+        assert_eq!(parsed.dropped_negative[0].rule, "core/padded-elaboration");
+        assert_eq!(
+            parsed.dropped_negative[1].explanation,
+            "No empty hedge found in this passage."
+        );
+        // The silent public parse sees exactly the kept set.
+        let silent = parse_findings(mixed).unwrap();
+        assert_eq!(silent.len(), 1);
+        assert_eq!(silent[0].quote, parsed.kept[0].quote);
+    }
+
+    #[test]
+    fn parse_with_stats_clean_response_has_no_drops() {
+        let parsed = parse_findings_with_stats("[]").unwrap();
+        assert!(parsed.kept.is_empty());
+        assert!(parsed.dropped_negative.is_empty());
+    }
+
+    #[test]
+    fn parse_with_stats_malformed_still_errors() {
+        assert!(matches!(
+            parse_findings_with_stats("I found no problems."),
+            Err(JudgeError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn evaluate_with_stats_surfaces_dropped_negatives() {
+        let canned = r#"[
+            {"rule": "core/empty-hedge", "quote": "could perhaps", "explanation": "hedge", "confidence": 0.8},
+            {"rule": "core/empty-hedge", "quote": "q", "explanation": "The text does not flag any empty hedge.", "confidence": 0.9}
+        ]"#;
+        let (client, _) = FakeClient::new(vec![choices_response(canned)]);
+        let judge = AxJudge::new(Box::new(client), "m");
+        let parsed = judge.evaluate_with_stats(&req("p")).unwrap();
+        assert_eq!(parsed.kept.len(), 1);
+        assert_eq!(parsed.dropped_negative.len(), 1);
     }
 
     #[test]
