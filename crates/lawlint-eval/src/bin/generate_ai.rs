@@ -1,8 +1,9 @@
 #[cfg(feature = "sourcing")]
 mod app {
     use lawlint_core::{lint, LintOptions, RuleSet};
-    use lawlint_eval::{foundry::FoundryClient, sourcing::normalize_whitespace};
+    use lawlint_eval::sourcing::normalize_whitespace;
     use lawlint_eval::{load_jsonl, Label, Sample};
+    use lawlint_judge::FoundryClient;
     use serde_json::to_string;
     use std::collections::BTreeMap;
     use std::fs::OpenOptions;
@@ -145,7 +146,7 @@ mod app {
             sample.text
         );
         for _ in 0..3 {
-            let topic = clean_model_text(&client.complete("FW-GLM-5.1", system, &prompt, 256)?);
+            let topic = clean_model_text(&client.completion("FW-GLM-5.1", system, &prompt, 256)?);
             let words = topic.split_whitespace().count();
             if (8..=15).contains(&words) && !contains_verbatim_run(&topic, &sample.text, 3) {
                 return Ok(topic);
@@ -215,7 +216,7 @@ mod app {
             )
             };
             let output = fit_output(
-                &clean_model_text(&client.complete(model, system, &request, 2000)?),
+                &clean_model_text(&client.completion(model, system, &request, 2000)?),
                 target_words,
             );
             let words = output.split_whitespace().count();
@@ -284,7 +285,7 @@ mod app {
              legal content, register, and approximately {target_words} words. Return only the revised passage.\n\
              Findings:\n{findings}\n\nPassage:\n{text}"
         );
-            let revised = clean_model_text(&client.complete(
+            let revised = clean_model_text(&client.completion(
                 model,
                 "You are revising legal prose carefully. Preserve substance and return only prose.",
                 &prompt,

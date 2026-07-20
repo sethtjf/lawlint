@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 // ---- Public re-exports -------------------------------------------------
 
-pub use config::{JudgeOptions, LintOptions};
+pub use config::{AiOptions, JudgeOptions, LintOptions};
 pub use document::{parse, Block, BlockKind, Document, Sentence, Token, TokenKind};
 pub use error::{JudgeError, LoadError};
 // Host-driven tier-3 (wasm): plan/run/ground are public.
@@ -231,10 +231,11 @@ mod tests {
 
     #[test]
     fn registry() {
-        // 21 rules on main (#38 folded no-em-dash into no-em-dash-overuse)
-        // plus five Orwell/AI-voice writing rules = 26.
+        // 20 bespoke rules; +2 inferential, -1 with no-em-dash folded into
+        // no-em-dash-overuse (#38), +2 document-level statistical rules
+        // (#37), +5 Orwell/AI-voice writing rules (#47) = 28.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 26);
+        assert_eq!(rs.metas().len(), 28);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -416,6 +417,16 @@ mod tests {
             .join(" ")
     }
 
+    /// Golden-parity options: the synthetic 10-words-per-sentence filler is
+    /// deliberately uniform, which the (post-old-engine) #37 rhythm rule
+    /// flags; parity is against the old engine, which had no such rule.
+    fn parity_options() -> LintOptions {
+        LintOptions {
+            disable: Some(vec!["uniform-sentence-rhythm".into()]),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn scoring_uses_penalty_density_decay() {
         let clean = lint("", &LintOptions::default());
@@ -425,7 +436,7 @@ mod tests {
             "{} We map the landscape of this matter briefly here today.",
             scoring_sentences(9)
         );
-        let result = lint(&text, &LintOptions::default());
+        let result = lint(&text, &parity_options());
         assert_eq!(result.stats.word_count, 100);
         assert_eq!(
             result
@@ -467,8 +478,8 @@ mod tests {
                 })
                 .collect::<String>()
         };
-        let mild = lint(&text(3), &LintOptions::default());
-        let heavy = lint(&text(12), &LintOptions::default());
+        let mild = lint(&text(3), &parity_options());
+        let heavy = lint(&text(12), &parity_options());
 
         // GOLDEN PARITY (non-negotiable): weights 2/11, scores 55/4.
         assert_eq!(mild.diagnostics[0].rule_id.0, "core/no-hedging");
@@ -523,6 +534,62 @@ mod tests {
             .find(|d| d.rule_id.0 == "core/no-repetitive-openers")
             .expect("repetitive openers flagged");
         assert_eq!(d.message, "Three consecutive sentences begin with “the”.");
+    }
+
+    #[test]
+    fn statistical_document_rules_fire_end_to_end() {
+        // Ten uniform 10-word sentences (variance 0, distinct openers):
+        // uniform-sentence-rhythm fires once, on the first sentence.
+        let text = scoring_sentences(10);
+        let result = lint(&text, &LintOptions::default());
+        let d = result
+            .diagnostics
+            .iter()
+            .find(|d| d.rule_id.0 == "core/uniform-sentence-rhythm")
+            .expect("uniform rhythm flagged");
+        assert!(
+            d.message.starts_with("Sentence-length variance is 0.00"),
+            "{}",
+            d.message
+        );
+        assert_eq!(d.intent, Intent::Detection);
+        assert_eq!((d.line, d.column), (1, 1));
+        // Bursty text (lengths 3/24 alternating → variance 110.25) stays
+        // silent even with many sentences.
+        let bursty: String = (0..8)
+            .map(|i| {
+                let opener = [
+                    "Alpha", "Bravo", "Cedar", "Delta", "Ember", "Fjord", "Grove", "Harbor",
+                ][i];
+                let n = if i % 2 == 0 { 3 } else { 24 };
+                format!("{opener} {}.", vec!["mid"; n - 1].join(" "))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!has(&bursty, "core/uniform-sentence-rhythm"));
+        // Short documents are unmeasurable, not zero-variance.
+        assert!(!has("One short line.", "core/uniform-sentence-rhythm"));
+
+        // Triad-dense text (rate well above 2 per 1000 words) fires
+        // core/triad-overuse once, document-level.
+        let triads = "The policy is clear, consistent, and fair. It protects employees, \
+             customers, and shareholders alike. Compliance requires training, monitoring, \
+             and enforcement. Each department must document, review, and certify its \
+             procedures. The board will assess progress quarterly, annually, and at \
+             each milestone review it schedules. That cadence repeats in every part of \
+             the document it touches without a single break.";
+        let result = lint(triads, &LintOptions::default());
+        let fired: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule_id.0 == "core/triad-overuse")
+            .collect();
+        assert_eq!(fired.len(), 1);
+        assert!(
+            fired[0].message.starts_with("Triad density"),
+            "{}",
+            fired[0].message
+        );
     }
 
     #[test]

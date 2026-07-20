@@ -2,7 +2,7 @@
 //!
 //! Tiers 1–2 run in-process. **Tier-3 inference is a host concern**: judge
 //! backends live in `crates/lawlint-judge` and are native-only (in-process
-//! candle inference / cloud clients don't run under wasm32-unknown-unknown),
+//! mistral.rs inference / cloud clients don't run under wasm32-unknown-unknown),
 //! so this crate exposes core's host-driven pair instead. The JS host runs
 //! inference however it likes (transformers.js/WebLLM on WebGPU, or cloud);
 //! grounding, hallucination counters, the confidence floor, and the Warning
@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn built_in_meta_serializes_camel_case() {
         let metas = built_in_set().metas();
-        assert_eq!(metas.len(), 26);
+        assert_eq!(metas.len(), 28);
         let json =
             serde_json::to_value(metas.iter().map(|m| meta_js(m)).collect::<Vec<_>>()).unwrap();
         let first = &json[0];

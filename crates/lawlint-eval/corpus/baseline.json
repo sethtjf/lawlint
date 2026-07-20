@@ -1,9 +1,9 @@
 {
-  "overall_auc": 0.6974104683195592,
+  "overall_auc": 0.9130762167125803,
   "slice_auc": {
-    "naive": 0.5783389450056117,
-    "rule-evading": 0.8519331243469175,
-    "self-edit": 0.6496283590623213
+    "naive": 0.8525252525252526,
+    "rule-evading": 0.9470219435736678,
+    "self-edit": 0.9376214979988565
   },
   "per_rule_precision": {
     "core/no-ai-cliches": 0.9722222222222222,
@@ -21,6 +21,8 @@
     "core/no-rule-of-three": 0.9166666666666666,
     "core/no-semicolons": 0.23846153846153847,
     "core/oxford-comma": 0.32298136645962733,
-    "core/sentence-length": 0.33035714285714285
+    "core/sentence-length": 0.33035714285714285,
+    "core/triad-overuse": 0.7701863354037267,
+    "core/uniform-sentence-rhythm": 0.9405940594059405
   }
 }

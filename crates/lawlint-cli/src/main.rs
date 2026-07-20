@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod diff;
 mod init;
+mod learn;
 mod tui;
 mod update;
 
@@ -68,8 +69,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Set up lawlint here: walks through judge/markdown/custom-rule choices
-    /// and writes .lawlint/config.json.
+    /// Set up lawlint here: walks through AI-model/judge/markdown/custom-rule
+    /// choices and writes .lawlint/config.json (API keys go to a user-level
+    /// credential file, never into the project).
     Init {
         /// Accept the default answer for every prompt (non-interactive).
         #[arg(long)]
@@ -77,6 +79,27 @@ enum Command {
         /// Overwrite an existing .lawlint/config.json.
         #[arg(long)]
         force: bool,
+        /// AI model preference, skipping the catalog prompt: qwen, gemma, or
+        /// a full spec (local:<hf-repo>[#<gguf>], anthropic:<model>,
+        /// openai:<base-url>#<model>, foundry:<deployment>).
+        #[arg(long, value_name = "MODEL")]
+        ai: Option<String>,
+    },
+    /// Mine a personal rule package from your own prior writing: a local
+    /// statistical pass over the full corpus, then an AI mining pass over a
+    /// small sample, self-checked so no generated rule flags your own text.
+    Learn {
+        /// A file or directory of your writing (.docx, .md, .txt).
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Where to write the generated rule package.
+        #[arg(long, value_name = "DIR", default_value = ".lawlint/rules/personal")]
+        out: PathBuf,
+        /// Mining model, overriding the `lawlint init` AI preferences
+        /// (local:<hf-repo>[#<gguf>], anthropic:<model>,
+        /// openai:<base-url>#<model>, foundry:<deployment>).
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
     },
     /// List rules, or test rule packages.
     Rules {
@@ -217,18 +240,24 @@ pub(crate) fn build_rule_set(
 // ---- judge -------------------------------------------------------------
 
 /// The judge model to use, if the judge is active at all: the CLI flag wins
-/// (bare `--judge` = `Some(None)` = default model), else config
-/// `judge.enabled: true`.
+/// (bare `--judge` = default model), else config `judge.enabled: true`.
+/// Without an explicit model, the spec resolves from the config: legacy
+/// `judge.model`, then the `ai` preferences (`ai.features.judge`, then
+/// `ai.model` — written by `lawlint init`), then `None` = default local.
 pub(crate) fn judge_spec(
     cli_judge: &Option<String>,
     config: &LintOptions,
 ) -> Option<Option<String>> {
     let config_judge = config.judge.as_ref();
-    let config_model = config_judge.and_then(|judge| judge.model.clone());
+    let preferred = || {
+        config_judge
+            .and_then(|judge| judge.model.clone())
+            .or_else(|| config.ai_model("judge"))
+    };
     match cli_judge {
         Some(model) if !model.is_empty() => Some(Some(model.clone())),
-        Some(_) => Some(config_model),
-        None if config_judge.and_then(|judge| judge.enabled) == Some(true) => Some(config_model),
+        Some(_) => Some(preferred()),
+        None if config_judge.and_then(|judge| judge.enabled) == Some(true) => Some(preferred()),
         None => None,
     }
 }
@@ -1001,7 +1030,10 @@ fn run(cli: Cli) -> Result<i32, String> {
     }
 
     match &cli.command {
-        Some(Command::Init { yes, force }) => init::init_command(*yes, *force),
+        Some(Command::Init { yes, force, ai }) => init::init_command(*yes, *force, ai.as_deref()),
+        Some(Command::Learn { path, out, model }) => {
+            learn::learn_command(path, out, model.as_deref())
+        }
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
                 path,
@@ -1120,6 +1152,66 @@ mod tests {
             });
         });
         assert_eq!(judge_spec(&None, &disabled), None);
+    }
+
+    #[test]
+    fn judge_spec_resolves_from_ai_preferences() {
+        use lawlint_core::AiOptions;
+        // No judge.model: the ai section supplies the spec.
+        let prefs = options_with(|o| {
+            o.judge = Some(JudgeOptions {
+                enabled: Some(true),
+                model: None,
+                floor: None,
+            });
+            o.ai = Some(AiOptions {
+                model: Some("foundry:gpt-5.5".into()),
+                features: None,
+            });
+        });
+        assert_eq!(
+            judge_spec(&None, &prefs),
+            Some(Some("foundry:gpt-5.5".into()))
+        );
+        // Bare --judge inherits the preference too.
+        assert_eq!(
+            judge_spec(&Some(String::new()), &prefs),
+            Some(Some("foundry:gpt-5.5".into()))
+        );
+        // Per-feature override outranks the default model…
+        let with_override = options_with(|o| {
+            o.judge = prefs.judge.clone();
+            o.ai = Some(AiOptions {
+                model: Some("local".into()),
+                features: Some(
+                    [("judge".to_string(), "anthropic:m".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+            });
+        });
+        assert_eq!(
+            judge_spec(&None, &with_override),
+            Some(Some("anthropic:m".into()))
+        );
+        // …but a legacy judge.model outranks the ai section, and an explicit
+        // --judge=MODEL outranks everything.
+        let legacy = options_with(|o| {
+            o.judge = Some(JudgeOptions {
+                enabled: Some(true),
+                model: Some("local:legacy".into()),
+                floor: None,
+            });
+            o.ai = prefs.ai.clone();
+        });
+        assert_eq!(
+            judge_spec(&None, &legacy),
+            Some(Some("local:legacy".into()))
+        );
+        assert_eq!(
+            judge_spec(&Some("local:cli".into()), &legacy),
+            Some(Some("local:cli".into()))
+        );
     }
 
     fn diagnostic(severity: Severity, fix: Option<Fix>) -> Diagnostic {

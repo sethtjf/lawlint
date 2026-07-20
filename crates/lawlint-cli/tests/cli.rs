@@ -216,13 +216,30 @@ fn init_yes_writes_config_and_refuses_to_overwrite() {
 }
 
 #[test]
+fn init_ai_flag_writes_preference_without_prompting_or_downloading() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["init", "--yes", "--ai", "gemma"])
+        .assert()
+        .code(0);
+    let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
+    assert!(config.contains("\"model\": \"local:google/gemma-4-E4B-it\""));
+    // Invalid values are a config error (exit 2) with guidance.
+    cmd(&dir)
+        .args(["init", "--yes", "--force", "--ai", "gpt4"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("qwen, gemma"));
+}
+
+#[test]
 fn init_scaffolds_a_working_rules_package() {
     let dir = TempDir::new().unwrap();
-    // Prompts: judge choice (default: disabled), markdown (default: no),
-    // starter rules package (yes).
+    // Prompts: AI model (default: local Qwen) + its repo, judge (default:
+    // disabled), markdown (default: no), starter rules package (yes).
     cmd(&dir)
         .arg("init")
-        .write_stdin("\n\ny\n")
+        .write_stdin("\n\n\n\ny\n")
         .assert()
         .code(0)
         .stdout(predicate::str::contains(".lawlint/rules/style.yaml"));
@@ -591,7 +608,11 @@ fn rules_json_lists_all_built_ins_in_website_contract_shape() {
     assert_eq!(output.status.code(), Some(0));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let rules = json.as_array().unwrap();
+<<<<<<< HEAD
     assert_eq!(rules.len(), 26);
+=======
+    assert_eq!(rules.len(), 23);
+>>>>>>> origin/main
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
         assert!(!id.contains('/'), "ids must be flat, got {id}");
@@ -808,4 +829,55 @@ fn rules_test_missing_path_is_exit_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no-such-dir"));
+}
+
+// ---- learn --------------------------------------------------------------
+// The full mining flow is covered by unit tests with a mock ax client
+// (src/learn.rs); these exercise the CLI surface without loading a model —
+// ingestion runs and fails before any backend is built.
+
+#[test]
+fn learn_missing_path_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["learn", "no-such-corpus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no-such-corpus"));
+}
+
+#[test]
+fn learn_unsupported_single_file_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "notes.log", "not a corpus");
+    cmd(&dir)
+        .args(["learn", "notes.log"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unsupported corpus file type"));
+}
+
+#[test]
+fn learn_empty_directory_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("corpus")).unwrap();
+    cmd(&dir)
+        .args(["learn", "corpus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no corpus files found"));
+}
+
+#[test]
+fn learn_bad_model_spec_is_exit_2() {
+    // A valid corpus but an unknown model scheme: the error names the spec
+    // grammar and nothing is written.
+    let dir = TempDir::new().unwrap();
+    write(&dir, "corpus/memo.txt", "A short memo body for the corpus.");
+    cmd(&dir)
+        .args(["learn", "corpus", "--model", "bogus:whatever"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("bogus:whatever"));
+    assert!(!dir.path().join(".lawlint/rules/personal").exists());
 }

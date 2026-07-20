@@ -161,6 +161,7 @@ mod tests {
             threshold: None,
             metric: None,
             params: None,
+            direction: None,
             granularity: None,
             rubric: None,
             flag_examples: vec![],
