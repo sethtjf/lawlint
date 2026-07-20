@@ -214,6 +214,9 @@ id: no-em-dash               # full id becomes <package>/<id>
 engine: phrase               # phrase | leading | density | statistical | inferential
 scope: text                  # prose | text | all   (default: text)
 severity: error              # error | warning | suggestion (accepts legacy "info")
+intent: detection            # style | detection (default: detection); style rules
+                             # lint but never move the human-likeness score
+
 description: "Em dashes are a hallmark of AI-generated prose."
 rationale: "..."             # optional
 docs: "..."                  # optional; defaults to https://lawlint.com/rules/<id>
@@ -383,6 +386,12 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-throat-clearing | leading | error | |
 | empty-hedge | inferential | warning | granularity sentence — NEW |
 | padded-elaboration | inferential | warning | granularity paragraph — NEW |
+
+Retune (#38): `no-em-dash` was folded into the rate-based `no-em-dash-overuse`
+and removed; `no-semicolons`, `sentence-length`, `oxford-comma`,
+`no-parenthetical-asides`, `no-legalese`, and `no-en-dash` carry
+`intent: style` (drafting lint that does not aggregate into the score). See
+docs/eval-corpus.md.
 
 `empty-hedge`: flag hedges carrying no information about actual uncertainty
 ("It could perhaps be argued that…" bad; "Damages are uncertain because treatment is ongoing" fine).
