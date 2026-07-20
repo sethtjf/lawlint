@@ -1,6 +1,6 @@
 //! Evaluation corpus loading, metrics, and regression checks for lawlint.
 
-use lawlint_core::{lint, LintOptions, RuleSet, Tier};
+use lawlint_core::{lint, Intent, LintOptions, RuleSet, Tier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,6 +188,30 @@ pub fn rule_ids() -> Vec<String> {
         .collect()
 }
 
+/// Intent per non-inferential built-in rule, for labeling per-rule tables.
+/// The AUC itself needs no filter: `stats.score` already aggregates
+/// detection-intent diagnostics only.
+pub fn rule_intents() -> BTreeMap<String, Intent> {
+    RuleSet::built_in()
+        .metas()
+        .iter()
+        .filter(|meta| meta.tier != Tier::Inferential)
+        .map(|meta| (meta.id.0.clone(), meta.intent))
+        .collect()
+}
+
+/// Per-rule precision map for baselines: rules with zero support on the run
+/// (never fired on either label) are omitted — 0/0 precision is not a
+/// measurement, and `check_regression` skips rules absent from the current
+/// map, so a rule narrowed to silence on train cannot false-fail the gate.
+pub fn precision_map(rules: &BTreeMap<String, RuleMetrics>) -> BTreeMap<String, f64> {
+    rules
+        .iter()
+        .filter(|(_, metrics)| metrics.true_positive + metrics.false_positive > 0)
+        .map(|(rule, metrics)| (rule.clone(), metrics.precision))
+        .collect()
+}
+
 pub fn inferential_rule_ids() -> Vec<String> {
     RuleSet::built_in()
         .metas()
@@ -306,6 +330,8 @@ pub fn check_regression(
             );
         }
     }
+    // Rules absent from the current map are skipped: `precision_map` omits
+    // zero-support rules, so "tuned to never fire" is not a regression.
     for (name, baseline_value) in &baseline.per_rule_precision {
         if let Some(current_value) = current.per_rule_precision.get(name) {
             check_metric(
@@ -420,11 +446,75 @@ mod tests {
                 .into_iter()
                 .map(|style| (style.to_string(), auc_for_ai_slice(&train, style)))
                 .collect(),
-            per_rule_precision: rules
-                .into_iter()
-                .map(|(rule, metrics)| (rule, metrics.precision))
-                .collect(),
+            per_rule_precision: precision_map(&rules),
+        };
+        let regressions = check_regression(&current, &baseline, 0.03);
+        assert!(regressions.is_empty(), "{regressions:?}");
+    }
+
+    #[test]
+    fn precision_map_omits_zero_support_rules() {
+        let fired = RuleMetrics {
+            precision: 0.8,
+            recall: 0.5,
+            f1: 0.6,
+            true_positive: 4,
+            false_positive: 1,
+            false_negative: 4,
+            ai_support: 8,
+            human_support: 8,
+        };
+        let silent = RuleMetrics {
+            precision: 0.0,
+            recall: 0.0,
+            f1: 0.0,
+            true_positive: 0,
+            false_positive: 0,
+            false_negative: 8,
+            ai_support: 8,
+            human_support: 8,
+        };
+        let rules: BTreeMap<String, RuleMetrics> = [
+            ("core/fired".to_string(), fired),
+            ("core/silent".to_string(), silent),
+        ]
+        .into_iter()
+        .collect();
+        let map = precision_map(&rules);
+        assert_eq!(map.get("core/fired"), Some(&0.8));
+        assert!(!map.contains_key("core/silent"));
+    }
+
+    #[test]
+    fn zero_support_rule_does_not_regress_against_a_nonzero_baseline() {
+        // The gate edge case from #38: a rule in the baseline at 0.9 that is
+        // narrowed to never fire must be skipped, not flagged at 0.0.
+        let baseline = Baseline {
+            overall_auc: 0.5,
+            slice_auc: BTreeMap::new(),
+            per_rule_precision: [("core/narrowed".to_string(), 0.9)].into_iter().collect(),
+        };
+        let current = Baseline {
+            overall_auc: 0.5,
+            slice_auc: BTreeMap::new(),
+            per_rule_precision: BTreeMap::new(), // zero support → omitted
         };
         assert!(check_regression(&current, &baseline, 0.03).is_empty());
+    }
+
+    #[test]
+    fn rule_intents_labels_style_and_detection() {
+        let intents = rule_intents();
+        assert_eq!(intents.get("core/no-semicolons"), Some(&Intent::Style));
+        assert_eq!(intents.get("core/sentence-length"), Some(&Intent::Style));
+        assert_eq!(intents.get("core/no-hedging"), Some(&Intent::Detection));
+        // no-em-dash is folded into no-em-dash-overuse (#38).
+        assert!(!intents.contains_key("core/no-em-dash"));
+        assert_eq!(
+            intents.get("core/no-em-dash-overuse"),
+            Some(&Intent::Detection)
+        );
+        // Inferential rules are excluded like rule_ids().
+        assert!(!intents.contains_key("core/empty-hedge"));
     }
 }

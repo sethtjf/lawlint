@@ -122,7 +122,7 @@ impl Rule for LeadingEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{RuleId, Scope, Severity, Tier};
+    use crate::types::{Intent, RuleId, Scope, Severity, Tier};
 
     fn meta() -> RuleMeta {
         RuleMeta {
@@ -130,6 +130,7 @@ mod tests {
             tier: Tier::Static,
             scope: Scope::Text,
             severity: Severity::Error,
+            intent: Intent::Detection,
             description: "default description".into(),
             docs_url: "https://lawlint.com/rules/test-leading".into(),
             rationale: None,

@@ -18,7 +18,7 @@ use crate::error::JudgeError;
 use crate::types::{RuleId, Severity, TextRange};
 
 /// Bump when the prompt template changes; part of every cache key.
-pub const PROMPT_VERSION: &str = "1";
+pub const PROMPT_VERSION: &str = "2";
 
 /// Target chunk size (chars) when merging consecutive prose blocks.
 const TARGET_CHUNK_CHARS: usize = 1200;
@@ -165,13 +165,22 @@ fn build_prompt(chunk_text: &str, rubrics: &[&RubricFragment]) -> String {
     p.push_str("Text to evaluate:\n<<<\n");
     p.push_str(chunk_text);
     p.push_str("\n>>>\n\n");
+    // The explicit clean-chunk example and the "never describe a pass" line
+    // target a small-model failure mode: emitting the pass verdict as a
+    // finding object ("The text does not flag any empty hedge") instead of
+    // returning [] — see the parse-time polarity guard in lawlint-judge.
     p.push_str(
         "Respond with ONLY a JSON array (no prose, no code fences). Each element \
          must be an object of the form {\"rule\": \"<one of the rule ids above>\", \
          \"quote\": \"<excerpt copied VERBATIM from the text>\", \"explanation\": \
-         \"<one short sentence>\", \"confidence\": <number between 0.0 and 1.0>, \
-         \"suggested_rewrite\": \"<replacement text>\" or null}. The quote must \
-         appear verbatim in the text. If nothing violates a rule, respond with [].",
+         \"<one short sentence stating the violation>\", \"confidence\": <number \
+         between 0.0 and 1.0>, \"suggested_rewrite\": \"<replacement text>\" or \
+         null}. The quote must appear verbatim in the text. Report ONLY \
+         violations: never emit an object stating that a rule is satisfied, not \
+         violated, or not present. If nothing violates any rule, respond with \
+         exactly []. Example — for the clean text \"The parties shall meet on \
+         the first business day of each month.\" the entire correct response \
+         is:\n[]",
     );
     p
 }
@@ -696,7 +705,8 @@ mod tests {
 
     #[test]
     fn prompt_version_is_stable() {
-        assert_eq!(PROMPT_VERSION, "1");
+        // "2": clean-chunk [] example + verdict-discipline instruction (#39).
+        assert_eq!(PROMPT_VERSION, "2");
     }
 
     #[test]
@@ -1032,6 +1042,12 @@ mod tests {
         assert!(p.contains("\"quote\""));
         assert!(p.contains("\"confidence\""));
         assert!(p.contains("suggested_rewrite"));
+        // Verdict discipline (#39): clean chunks must get [] with a one-shot
+        // empty example, and pass verdicts must never be emitted as findings.
+        assert!(p.contains("respond with exactly []"));
+        assert!(p.contains("never emit an object stating that a rule is satisfied"));
+        assert!(p.contains("The parties shall meet on the first business day of each month."));
+        assert!(p.contains("the entire correct response is:\n[]"));
     }
 
     // ---- Execution -----------------------------------------------------
