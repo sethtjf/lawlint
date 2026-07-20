@@ -7,35 +7,90 @@ and offers practical suggestions for more human, direct writing.
 
 ## Quickstart
 
+**1. Install** (Windows PowerShell: `irm https://lawlint.com/install.ps1 | iex`):
+
 ```sh
 curl -fsSL https://lawlint.com/install.sh | sh
-lawlint document.txt
 ```
 
-For Windows PowerShell:
+**2. Lint a document** — this needs no configuration and runs entirely offline:
 
 ```sh
-irm https://lawlint.com/install.ps1 | iex
+lawlint contract.docx      # or .txt / .md / "-" for stdin
 ```
+
+You get a list of findings and a human-likeness score. `--fix` applies the
+machine-applicable fixes (for `.docx`, as native Word tracked changes).
+
+**3. Set up AI features** (optional — the tier-3 judge and `lawlint learn`):
+
+```sh
+lawlint init
+```
+
+The walkthrough asks which AI model lawlint should use. Hosted providers
+(Anthropic — recommended, OpenAI, Azure Foundry) need an API key, which is
+stored in a user-level credential file — never in your project. AI features
+are off until a model is configured; they error with guidance rather than
+downloading anything silently.
 
 The [download page](https://lawlint.com/download) also has the unsigned desktop
 app for macOS and Windows, plus direct CLI archives for every supported
 platform. The installers place the CLI in a user-local bin directory and do
-not send documents anywhere.
+not send documents anywhere. To build from source: `cargo build --release -p
+lawlint-cli`.
 
-To work on the documentation website locally:
+## Setup & configuration
 
-```sh
-bun install
-bun run --cwd apps/website dev
+`lawlint init` walks through AI-model, judge, Markdown, and custom-rule
+choices and writes `.lawlint/config.json` (plus an optional starter rules
+package in `.lawlint/rules/`). The CLI discovers `.lawlint/config.json` — or
+the legacy `lawlint.config.json` — from the current directory upward.
+
+```jsonc
+// .lawlint/config.json (all fields optional, camelCase)
+{
+  "ai": {
+    "model": "anthropic:claude-haiku-4-5-20251001", // default for all AI features
+    "features": { "judge": "...", "learn": "..." }, // optional per-feature overrides
+    "localAcknowledged": false                       // set by init's local-model consent step
+  },
+  "judge": { "enabled": false },  // run the tier-3 judge on every lint
+  "markdown": false,              // treat stdin as Markdown
+  "ruleDirs": [".lawlint/rules"]  // extra rule packages, merged over built-ins
+}
 ```
 
-To build the CLI from source instead:
+**Hosted vs local models.** Hosted providers are the recommended path: better
+quality, no downloads. API keys go to a user-level credential file
+(`~/.config/lawlint/credentials`, `0600`), or set `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` / `AZURE_FOUNDRY_API_KEY` in the environment (env wins).
+Local models (Qwen 2.5, Gemma — via the embedded mistral.rs runtime) remain
+available as an explicit advanced choice: they involve multi-GB downloads,
+slower inference, and measurably lower quality (see `docs/eval-corpus.md`),
+and init asks you to acknowledge that before enabling one. Non-interactive
+setup: `lawlint init --yes` (hosted default), or `--ai qwen
+--acknowledge-local` for a local model.
+
+## Everyday commands
 
 ```sh
-cargo build --release -p lawlint-cli
-./target/release/lawlint document.txt
+lawlint brief.docx                 # lint; prints findings + human-likeness score
+lawlint --fix brief.docx           # apply fixes (tracked changes + comments in Word)
+lawlint --diff draft.md            # preview what --fix would change
+lawlint --judge draft.md           # add tier-3 AI-judged findings (needs init)
+lawlint --format prompt draft.md   # emit an AI revision brief for your assistant
+lawlint learn ~/my-writing/        # mine a personal rule package from your prose
+lawlint rules --json               # built-in rule metadata
 ```
+
+The human-likeness score (0–100) aggregates only `detection`-intent rules —
+the ones corpus-validated to distinguish AI from human legal prose. `style`
+rules (Oxford comma, semicolons, sentence length, Orwell rules, …) still
+report findings and participate in `--fix`, but never move the score.
+`lawlint learn` generates rules from *your* writing: a statistical pass over
+the full corpus, an AI mining pass over a small sample, and a self-consistency
+gate so no generated rule flags your own prose.
 
 ### File formats
 
@@ -72,20 +127,8 @@ compiled to WebAssembly.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
 - `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
 
-Run `lawlint init` to set up a project: it walks through AI-model, judge,
-Markdown, and custom-rule choices and writes `.lawlint/config.json` (plus an
-optional starter rules package in `.lawlint/rules/`). Hosted AI providers
-(Anthropic, OpenAI, Azure Foundry) are the recommended path and require an API
-key, stored in a user-level credential file outside the project; AI features
-error with guidance to run `lawlint init` when no model is configured — nothing
-ever falls back to downloading a local model. Local models remain available as
-an explicit advanced choice behind an acknowledgment of their constraints:
-multi-GB downloads, slower inference, and measurably lower quality (tier-3
-judge F1 0.111 for `empty-hedge`, 0.000 for `padded-elaboration`, 38 of 330
-chunks failing closed — see `docs/eval-corpus.md`). Use `--yes` for defaults
-without prompts, and `--ai MODEL` with `--acknowledge-local` to configure a
-local model non-interactively. The CLI discovers `.lawlint/config.json` — or
-the legacy `lawlint.config.json` — from the current directory upward.
+To work on the documentation website locally: `bun install && bun run --cwd
+apps/website dev`.
 
 ## Maintainer releases
 
