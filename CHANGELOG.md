@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0](https://github.com/sethtjf/lawlint/compare/v0.5.0...v0.6.0) (2026-07-20)
+
+
+### Features
+
+* **ai:** cloud-first defaults — hosted providers lead, local is acknowledged opt-in ([#50](https://github.com/sethtjf/lawlint/issues/50)) ([#51](https://github.com/sethtjf/lawlint/issues/51)) ([6009a7c](https://github.com/sethtjf/lawlint/commit/6009a7c59b2c5bd3a5f3e5095558a63c64ffb062))
+* **cli:** lawlint learn — mine a personal rule package from the user's corpus ([#40](https://github.com/sethtjf/lawlint/issues/40)) ([#46](https://github.com/sethtjf/lawlint/issues/46)) ([34c844e](https://github.com/sethtjf/lawlint/commit/34c844e6554a3d95f43339a4cf0809bf06dec28e))
+* **core:** layer-2 statistical rules — burstiness and triad density ([#37](https://github.com/sethtjf/lawlint/issues/37)) ([#48](https://github.com/sethtjf/lawlint/issues/48)) ([db3e0ee](https://github.com/sethtjf/lawlint/commit/db3e0ee26335710727fd402fea5a0bb2ae850ba9))
+* **core:** split rule intent (style|detection); score aggregates detection rules only ([#38](https://github.com/sethtjf/lawlint/issues/38)) ([#43](https://github.com/sethtjf/lawlint/issues/43)) ([9831e26](https://github.com/sethtjf/lawlint/commit/9831e261a2684f7d6f479afe16752c6d4ed0e873))
+* **docx:** lint and fix .docx via tracked changes + comments ([#34](https://github.com/sethtjf/lawlint/issues/34)) ([f3c2255](https://github.com/sethtjf/lawlint/commit/f3c2255e863b31a5d0c2d34cf1e88bbe890377d2))
+* **eval:** judged evaluation — tier-3 metrics and verdict-discipline rate ([#39](https://github.com/sethtjf/lawlint/issues/39) Part 2) ([#49](https://github.com/sethtjf/lawlint/issues/49)) ([d91573b](https://github.com/sethtjf/lawlint/commit/d91573b20b1f28c3764ad9faffab7f9a0138d868))
+* **init:** AI model preferences — local/hosted catalog, keys outside the project ([#41](https://github.com/sethtjf/lawlint/issues/41)) ([#44](https://github.com/sethtjf/lawlint/issues/44)) ([3e7c3d3](https://github.com/sethtjf/lawlint/commit/3e7c3d356ab9e77247c608e79aaf91f52b95ed83))
+* **rules:** add Orwell writing rules and AI-voice checks ([#47](https://github.com/sethtjf/lawlint/issues/47)) ([29577be](https://github.com/sethtjf/lawlint/commit/29577bec2f988705754af5ce37f646d5cded9abb))
+
+
+### Bug Fixes
+
+* **judge:** drop negative-verdict findings and demand [] for clean chunks ([#42](https://github.com/sethtjf/lawlint/issues/42)) ([0a2994f](https://github.com/sethtjf/lawlint/commit/0a2994ffaa92ee8e14b7da3e5ca7a93078f730c4))
+
 ## [0.5.0](https://github.com/sethtjf/lawlint/compare/v0.4.0...v0.5.0) (2026-07-18)
 
 
