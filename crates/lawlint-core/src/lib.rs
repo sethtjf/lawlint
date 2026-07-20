@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 // ---- Public re-exports -------------------------------------------------
 
-pub use config::{JudgeOptions, LintOptions};
+pub use config::{AiOptions, JudgeOptions, LintOptions};
 pub use document::{parse, Block, BlockKind, Document, Sentence, Token, TokenKind};
 pub use error::{JudgeError, LoadError};
 // Host-driven tier-3 (wasm): plan/run/ground are public.

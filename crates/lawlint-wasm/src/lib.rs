@@ -2,7 +2,7 @@
 //!
 //! Tiers 1–2 run in-process. **Tier-3 inference is a host concern**: judge
 //! backends live in `crates/lawlint-judge` and are native-only (in-process
-//! candle inference / cloud clients don't run under wasm32-unknown-unknown),
+//! mistral.rs inference / cloud clients don't run under wasm32-unknown-unknown),
 //! so this crate exposes core's host-driven pair instead. The JS host runs
 //! inference however it likes (transformers.js/WebLLM on WebGPU, or cloud);
 //! grounding, hallucination counters, the confidence floor, and the Warning

@@ -13,7 +13,9 @@ clap.workspace = true
 colored.workspace = true
 lawlint-core = { path = "../lawlint-core" }
 lawlint-docx = { path = "../lawlint-docx" }
-lawlint-judge = { path = "../lawlint-judge" }
+# `cloud` makes the hosted catalog entries from `lawlint init` (anthropic:,
+# openai:, foundry:) work in the shipped binary.
+lawlint-judge = { path = "../lawlint-judge", features = ["cloud"] }
 serde.workspace = true
 serde_json.workspace = true
 # Self-update / update-check (docs/engine-design.md §11).

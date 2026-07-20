@@ -408,18 +408,21 @@ retry) is backend-independent; backends are `AxAIClient` implementations:
 1. **`AxJudge`**: implements `lawlint_core::Judge` over `Box<dyn axllm::AxAIClient>`.
    Uses an ax signature to produce the `JudgeFinding[]` JSON contract (§7). One judge,
    any backend. Trait is sync; wrap ax's async internals in a private tokio runtime.
-2. **`CandleClient` (day one, default)**: custom `AxAIClient` impl — required method is
+2. **`MistralRsClient` (default)**: custom `AxAIClient` impl — required method is
    just `chat(&mut self, request: Value) -> AxResult<Value>` (verified, axllm v23,
-   dyn-compatible). Runs **candle** inference in-process (`candle-core`,
-   `candle-transformers`, `hf-hub`, `tokenizers`): quantized small instruct model
-   (default Qwen2.5-1.5B-Instruct GGUF), CPU/Metal, lazy model download with progress,
-   greedy/temp-0 sampling. Parses the incoming chat-completions-shaped request
-   (messages → chat template) and returns a chat-completions-shaped response
-   (`choices[0].message.content`).
+   dyn-compatible). Runs **mistral.rs** inference in-process (`mistralrs`): a
+   quantized small instruct GGUF (default Qwen2.5-1.5B-Instruct) via the GGUF
+   loader, or a safetensors repo (the Gemma 4 series) auto-detected and quantized
+   in situ to Q4K. CPU/Metal, lazy model download into the standard HF cache,
+   deterministic (temp-0) sampling; chat templates/tokenization owned by
+   mistral.rs. Parses the incoming chat-completions-shaped request and returns a
+   chat-completions-shaped response (`choices[0].message.content`). The client
+   owns a small tokio runtime bridging ax's blocking `chat` to mistral.rs' async
+   SDK. (Day one shipped a hand-rolled candle client; swapped for mistral.rs to
+   run the Gemma 4 series, whose GGUF architecture candle cannot load.)
 3. **Cloud backends (feature `cloud`)**: stock ax clients — `OpenAICompatibleClient`
-   (custom base URL; also covers any local OpenAI-compatible server such as a
-   candle-based mistral.rs/candle-vllm sidecar, the documented fallback if
-   `CandleClient` hits friction), Anthropic, Gemini, etc. Zero judge-logic changes.
+   (custom base URL; also covers any local OpenAI-compatible server such as an
+   Ollama/vLLM/llama.cpp sidecar), Anthropic, Gemini, etc. Zero judge-logic changes.
 4. Backend selection: `create_judge(&JudgeOptions) -> Result<Box<dyn Judge>>` keyed on
    `model` (`local:<hf-repo>` default; `anthropic:<model>`, `openai:<base-url>#<model>`, …).
 Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or in CLI.

@@ -17,6 +17,35 @@ pub struct LintOptions {
     /// Consumed by CLI/desktop, ignored by core `lint()`.
     pub rule_dirs: Option<Vec<String>>,
     pub judge: Option<JudgeOptions>,
+    /// AI model preferences (written by `lawlint init`); consumed by
+    /// CLI/desktop, ignored by core `lint()`.
+    pub ai: Option<AiOptions>,
+}
+
+impl LintOptions {
+    /// The preferred model spec for the AI `feature` ("judge", "learn", …):
+    /// the per-feature override, else the default `ai.model`. The legacy
+    /// `judge.model` outranks both for the judge — callers resolve that.
+    pub fn ai_model(&self, feature: &str) -> Option<String> {
+        let ai = self.ai.as_ref()?;
+        ai.features
+            .as_ref()
+            .and_then(|features| features.get(feature).cloned())
+            .or_else(|| ai.model.clone())
+    }
+}
+
+/// The `ai` config section: which model powers AI features. Specs share the
+/// judge's grammar (`local[:<hf-repo>[#<gguf>]]`, `anthropic:<model>`,
+/// `openai:<base-url>#<model>`, `foundry:<deployment>`). API keys never live
+/// here — they stay in the user-level credential store or the environment.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiOptions {
+    /// Default model spec for every AI feature.
+    pub model: Option<String>,
+    /// Per-feature overrides keyed by feature name ("judge", "learn", …).
+    pub features: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -71,5 +100,44 @@ mod tests {
     fn empty_object_deserializes() {
         let o: LintOptions = serde_json::from_str("{}").unwrap();
         assert!(o.enable.is_none());
+        assert!(o.ai.is_none());
+    }
+
+    #[test]
+    fn ai_section_deserializes_camel_case() {
+        let o: LintOptions = serde_json::from_str(
+            r#"{"ai": {"model": "local", "features": {"judge": "anthropic:m"}}}"#,
+        )
+        .unwrap();
+        let ai = o.ai.as_ref().unwrap();
+        assert_eq!(ai.model.as_deref(), Some("local"));
+        assert_eq!(
+            ai.features.as_ref().unwrap().get("judge").unwrap(),
+            "anthropic:m"
+        );
+    }
+
+    #[test]
+    fn ai_model_prefers_feature_override_then_default() {
+        let mut o = LintOptions::default();
+        assert_eq!(o.ai_model("judge"), None);
+
+        o.ai = Some(AiOptions {
+            model: Some("local".into()),
+            features: None,
+        });
+        assert_eq!(o.ai_model("judge"), Some("local".into()));
+
+        o.ai = Some(AiOptions {
+            model: Some("local".into()),
+            features: Some(
+                [("judge".to_string(), "anthropic:m".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        });
+        assert_eq!(o.ai_model("judge"), Some("anthropic:m".into()));
+        // Unknown feature falls back to the default model.
+        assert_eq!(o.ai_model("learn"), Some("local".into()));
     }
 }

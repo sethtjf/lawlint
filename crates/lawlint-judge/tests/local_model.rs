@@ -8,7 +8,7 @@ use lawlint_core::{
 
 #[test]
 #[ignore = "downloads and runs a real local model"]
-fn local_candle_judge_evaluates_a_real_chunk() {
+fn local_mistralrs_judge_evaluates_a_real_chunk() {
     let judge = lawlint_judge::create_judge(&JudgeOptions::default()).expect("create local judge");
     assert!(judge.model_id().starts_with("local:"));
 
