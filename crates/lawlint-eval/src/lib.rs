@@ -10,9 +10,6 @@ use std::path::Path;
 #[cfg(feature = "sourcing")]
 pub mod sourcing;
 
-#[cfg(feature = "sourcing")]
-pub mod foundry;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Label {
