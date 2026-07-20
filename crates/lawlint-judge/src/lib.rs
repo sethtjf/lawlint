@@ -4,9 +4,11 @@
 //! [`AxJudge`] whose prompt/JSON-contract layer is backend-independent;
 //! backends are [`axllm::AxAIClient`] implementations:
 //!
-//! - [`CandleClient`] (default): in-process candle inference over a small
-//!   quantized instruct GGUF (Qwen2.5-1.5B-Instruct by default), lazily
-//!   downloaded via hf-hub. CPU, with Metal when available.
+//! - [`MistralRsClient`] (default): in-process mistral.rs inference — a
+//!   small quantized instruct GGUF (Qwen2.5-1.5B-Instruct by default) or a
+//!   safetensors repo quantized in situ (the Gemma 4 series runs this way),
+//!   lazily downloaded into the standard HF hub cache. CPU, with Metal on
+//!   macOS.
 //! - Cloud backends (feature `cloud`): stock ax clients (Anthropic,
 //!   OpenAI-compatible with a custom base URL).
 //!
@@ -14,19 +16,19 @@
 //! `AxAIClient::chat` and hand-rolls the `JudgeFinding[]` JSON parse from
 //! `JudgeRequest.prompt` (core owns the canonical prompt and cache keys; ax's
 //! signature layer would substitute its own prompt, so it is not used here —
-//! see the crate README note in the repo docs). ax v23's `chat` is blocking,
-//! so no async runtime is needed.
+//! see the crate README note in the repo docs). ax v23's `chat` is blocking;
+//! the local client bridges to mistral.rs' async SDK with a runtime it owns.
 
 mod cache;
-mod candle_client;
 pub mod credentials;
 #[cfg(feature = "cloud")]
 mod foundry;
+mod mistralrs_client;
 
 pub use cache::DiskCache;
-pub use candle_client::CandleClient;
 #[cfg(feature = "cloud")]
 pub use foundry::FoundryClient;
+pub use mistralrs_client::MistralRsClient;
 
 // Re-export the ax boundary so consumers can supply custom backends.
 pub use axllm::{AxAIClient, AxError, AxResult};
@@ -43,13 +45,13 @@ use serde_json::{json, Value};
 /// Default local model repo (small quantized instruct GGUF).
 pub const DEFAULT_LOCAL_REPO: &str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF";
 
-/// Gemma catalog repo (Google's official QAT q4_0 GGUF of the Gemma 3 4B
-/// instruct model — architecture `gemma3`, which the bundled candle runtime
-/// runs today; the repo is gated, hf-hub picks up a cached HF token).
-/// Gemma 4 GGUFs (architecture `gemma4`) have no candle loader yet and fail
-/// with an actionable error in `CandleClient`; the repo id is
-/// config-editable (`local:<repo>`), so newer runtimes need no code change.
-pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-3-4b-it-qat-q4_0-gguf";
+/// Gemma catalog repo (Google's Gemma 4 E4B instruct model, safetensors —
+/// mistral.rs auto-detects it as multimodal and quantizes it in situ to
+/// Q4K at load; the repo is not gated). Gemma GGUFs are a different story:
+/// mistral.rs' GGUF loader has no gemma architecture, so
+/// [`MistralRsClient`] rejects them up front with a pointer here. The repo
+/// id stays config-editable (`local:<repo>`).
+pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-4-E4B-it";
 
 // ---- AxJudge -----------------------------------------------------------
 
@@ -77,7 +79,7 @@ impl AxJudge {
 
     /// The OpenAI chat-completions-shaped request sent to the backend.
     /// `model` is intentionally omitted: ax clients default to their
-    /// configured model, and `CandleClient` has exactly one model.
+    /// configured model, and `MistralRsClient` has exactly one model.
     fn chat_request(req: &JudgeRequest) -> Value {
         json!({
             "messages": [{"role": "user", "content": req.prompt}],
@@ -110,7 +112,7 @@ impl Judge for AxJudge {
 }
 
 /// Extract assistant text from a chat response. Accepts both the OpenAI
-/// chat-completions shape (`choices[0].message.content` — `CandleClient`,
+/// chat-completions shape (`choices[0].message.content` — `MistralRsClient`,
 /// any OpenAI-compatible passthrough) and ax's normalized internal shape
 /// (`results[0].content` — stock ax clients).
 fn extract_content(response: &Value) -> Option<String> {
@@ -235,7 +237,7 @@ fn truncate(s: &str, max_chars: usize) -> String {
 /// Create a judge from `JudgeOptions.model`:
 ///
 /// - `None` / `"local"` / `"local:<hf-repo>"` (optionally `#<gguf-file>`):
-///   in-process [`CandleClient`] (lazy model download on first evaluate).
+///   in-process [`MistralRsClient`] (lazy model download on first evaluate).
 /// - `"anthropic:<model>"` (feature `cloud`): stock ax Anthropic client;
 ///   requires `ANTHROPIC_API_KEY` (environment or credential store).
 /// - `"openai:<base-url>#<model>"` (feature `cloud`): stock ax
@@ -264,7 +266,7 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
             Some(f) => format!("local:{repo}#{f}"),
             None => format!("local:{repo}"),
         };
-        let client = CandleClient::new(repo, file);
+        let client = MistralRsClient::new(repo, file);
         return Ok(Box::new(AxJudge::new(Box::new(client), model_id)));
     }
 
@@ -538,7 +540,7 @@ mod tests {
     // ---- create_judge routing -------------------------------------------
 
     #[test]
-    fn create_judge_default_is_local_candle() {
+    fn create_judge_default_is_local_mistralrs() {
         let judge = create_judge(&JudgeOptions::default()).unwrap();
         assert_eq!(judge.model_id(), format!("local:{DEFAULT_LOCAL_REPO}"));
     }
