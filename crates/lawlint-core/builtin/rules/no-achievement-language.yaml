@@ -1,6 +1,7 @@
 id: no-achievement-language
 engine: phrase
 scope: text
+intent: style
 severity: warning
 description: "Flags achievement language and hype in reports, PRs, and docs."
 rationale: "Prose should state what changed and why. Words like “successfully”, “comprehensive”, and “flawless” praise the work instead of describing it, and are the tell of AI-written status updates. Say what happened; let the reader judge it."
