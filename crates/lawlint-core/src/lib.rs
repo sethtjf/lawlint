@@ -225,9 +225,10 @@ mod tests {
 
     #[test]
     fn registry() {
-        // Old suite: 20 bespoke rules. Now 22 (two new inferential rules).
+        // Old suite: 20 bespoke rules. Now 27 (two inferential rules plus five
+        // Orwell/AI-voice writing rules).
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 22);
+        assert_eq!(rs.metas().len(), 27);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -333,6 +334,7 @@ mod tests {
                 "core/oxford-comma",          // "terms, the parties … and …"
                 "core/no-doublets",           // "cease and desist"
                 "core/no-doublets",           // "any and all"
+                "core/prefer-short-words",    // "demonstrate"
                 "core/no-passive-overuse",    // "be flagged" (density span)
             ]
         );

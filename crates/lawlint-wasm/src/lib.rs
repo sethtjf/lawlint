@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn built_in_meta_serializes_camel_case() {
         let metas = built_in_set().metas();
-        assert_eq!(metas.len(), 22);
+        assert_eq!(metas.len(), 27);
         let json =
             serde_json::to_value(metas.iter().map(|m| meta_js(m)).collect::<Vec<_>>()).unwrap();
         let first = &json[0];

@@ -1,0 +1,40 @@
+id: no-foreign-phrases
+engine: phrase
+scope: text
+severity: suggestion
+description: "Flags decorative foreign phrases with an everyday English equivalent."
+rationale: "Orwell's fifth rule: never use a foreign phrase if you can think of an everyday English equivalent. This targets ornamental Latin, not legal terms of art (res judicata, prima facie, habeas corpus, mens rea, stare decisis, de novo), which have no plain substitute."
+message: "Use an everyday English equivalent for this foreign phrase."
+examples:
+  - bad: "The clause covers, inter alia, indemnity and, vis-à-vis the guarantor, notice."
+    good: "The clause covers indemnity and, for the guarantor, notice, among other things."
+patterns:
+  - pattern: '(?i)\binter alia\b'
+    message: "Prefer “among other things” over “inter alia”."
+    suggestion: "Use “among other things”."
+    fix: "among other things"
+  - pattern: '(?i)\bvis[- ]?à[- ]?vis\b|\bvis[- ]a[- ]vis\b'
+    message: "Prefer “regarding” or “compared with” over “vis-à-vis”."
+    suggestion: "Use “regarding” or “compared with”."
+  - pattern: '(?i)\bper se\b'
+    message: "Prefer “by itself” over “per se”."
+    suggestion: "Use “by itself” or “as such”."
+  - pattern: '(?i)\bipso facto\b'
+    message: "Prefer “by that fact” over “ipso facto”."
+    suggestion: "Use “by that fact”."
+    fix: "by that fact"
+  - pattern: '(?i)\bmutatis mutandis\b'
+    message: "Prefer plain English over “mutatis mutandis”."
+    suggestion: "Use “with the necessary changes”."
+    fix: "with the necessary changes"
+  - pattern: '(?i)\bceteris paribus\b'
+    message: "Prefer plain English over “ceteris paribus”."
+    suggestion: "Use “all else being equal”."
+    fix: "all else being equal"
+  - pattern: '(?i)\bergo\b'
+    message: "Prefer “therefore” over “ergo”."
+    suggestion: "Use “therefore”."
+    fix: "therefore"
+  - pattern: '(?i)\bad hoc\b'
+    message: "Prefer “improvised” or “one-off” over “ad hoc”."
+    suggestion: "Use “improvised” or “one-off”."

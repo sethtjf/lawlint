@@ -283,7 +283,15 @@ fn fix_applies_machine_applicable_fixes_in_place() {
     let file = write(&dir, "brief.txt", "We utilize tools.");
     cmd(&dir)
         .arg(file.to_str().unwrap())
-        .args(["--rule-dir", pkg.to_str().unwrap(), "--fix"])
+        // Isolate the custom rule so it does not collide with the built-in
+        // prefer-short-words rule, which also fixes "utilize".
+        .args([
+            "--rule-dir",
+            pkg.to_str().unwrap(),
+            "--rules",
+            "use-plain",
+            "--fix",
+        ])
         .assert()
         .code(1) // the error-severity finding still counts
         .stderr(predicate::str::contains("Applied 1 fix")); // status → stderr
@@ -302,6 +310,8 @@ fn fix_with_json_format_keeps_stdout_machine_parseable() {
         .args([
             "--rule-dir",
             pkg.to_str().unwrap(),
+            "--rules",
+            "use-plain",
             "--format",
             "json",
             "--fix",
@@ -581,7 +591,7 @@ fn rules_json_lists_all_built_ins_in_website_contract_shape() {
     assert_eq!(output.status.code(), Some(0));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let rules = json.as_array().unwrap();
-    assert_eq!(rules.len(), 22);
+    assert_eq!(rules.len(), 27);
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
         assert!(!id.contains('/'), "ids must be flat, got {id}");
