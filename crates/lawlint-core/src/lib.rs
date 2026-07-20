@@ -231,11 +231,11 @@ mod tests {
 
     #[test]
     fn registry() {
-        // Old suite: 20 bespoke rules; +2 inferential, -1 with no-em-dash
-        // folded into no-em-dash-overuse (#38), +2 document-level
-        // statistical rules (#37) = 23.
+        // 20 bespoke rules; +2 inferential, -1 with no-em-dash folded into
+        // no-em-dash-overuse (#38), +2 document-level statistical rules
+        // (#37), +5 Orwell/AI-voice writing rules (#47) = 28.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 23);
+        assert_eq!(rs.metas().len(), 28);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -343,6 +343,7 @@ mod tests {
                 "core/oxford-comma",          // "terms, the parties … and …"
                 "core/no-doublets",           // "cease and desist"
                 "core/no-doublets",           // "any and all"
+                "core/prefer-short-words",    // "demonstrate"
                 "core/no-passive-overuse",    // "be flagged" (density span)
             ]
         );
