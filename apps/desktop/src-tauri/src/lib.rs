@@ -27,12 +27,72 @@ fn lint(text: String, options: Option<LintOptions>) -> Result<LintResult, String
     run_lint(&text, options)
 }
 
+/// Read a `.docx` and return its projected plain text so the UI can lint and
+/// display it. Byte offsets in later diagnostics index this same string.
+#[tauri::command]
+fn extract_docx(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    lawlint_docx::extract(&bytes).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocxFixSummary {
+    applied: usize,
+    skipped: usize,
+    output_path: String,
+}
+
+/// Lint a `.docx` and write MachineApplicable fixes into a *new* sibling file as
+/// Word tracked changes + review comments, leaving the original untouched.
+#[tauri::command]
+fn apply_docx_fixes(
+    path: String,
+    options: Option<LintOptions>,
+    author: Option<String>,
+) -> Result<DocxFixSummary, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    let text = lawlint_docx::extract(&bytes).map_err(|e| e.to_string())?;
+    let result = run_lint(&text, options)?;
+    let opts = lawlint_docx::ReviseOptions {
+        author: author.unwrap_or_else(|| "lawlint".to_string()),
+        ..Default::default()
+    };
+    let out = lawlint_docx::apply_tracked_changes(&bytes, &result.diagnostics, &opts)
+        .map_err(|e| e.to_string())?;
+    let output_path = tracked_output_path(&path);
+    std::fs::write(&output_path, &out.bytes)
+        .map_err(|e| format!("failed to write {output_path}: {e}"))?;
+    Ok(DocxFixSummary {
+        applied: out.applied,
+        skipped: out.skipped,
+        output_path,
+    })
+}
+
+/// `brief.docx` -> `brief.tracked.docx` (never overwrite the source).
+fn tracked_output_path(path: &str) -> String {
+    let p = Path::new(path);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+    let sibling = format!("{stem}.tracked.docx");
+    match p.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => {
+            dir.join(sibling).to_string_lossy().into_owned()
+        }
+        _ => sibling,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![lint])
+        .invoke_handler(tauri::generate_handler![
+            lint,
+            extract_docx,
+            apply_docx_fixes
+        ])
         .run(tauri::generate_context!())
         .expect("error while running lawlint desktop application");
 }

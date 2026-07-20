@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 lawlint-core = { path = "../../../crates/lawlint-core" }
+lawlint-docx = { path = "../../../crates/lawlint-docx" }
 serde.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

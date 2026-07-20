@@ -347,6 +347,42 @@ fn fix_without_applicable_fixes_leaves_file_alone() {
     );
 }
 
+// ---- .docx -------------------------------------------------------------
+
+const DOCX_FIXTURE: &[u8] = include_bytes!("../../lawlint-docx/tests/fixtures/sample.docx");
+
+#[test]
+fn docx_is_linted_like_text() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("brief.docx");
+    fs::write(&file, DOCX_FIXTURE).unwrap();
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .assert()
+        .code(0) // findings are warnings; no error severity
+        .stdout(predicate::str::contains("no-legalese"));
+}
+
+#[test]
+fn docx_fix_writes_tracked_changes_not_plain_text() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("brief.docx");
+    fs::write(&file, DOCX_FIXTURE).unwrap();
+    cmd(&dir)
+        .arg(file.to_str().unwrap())
+        .arg("--fix")
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("tracked change"));
+    // Still a valid zip (docx), and modified from the original.
+    let after = fs::read(&file).unwrap();
+    assert_eq!(&after[..2], b"PK", "output is still a .docx (zip)");
+    assert_ne!(
+        after, DOCX_FIXTURE,
+        "the fix should have rewritten the file"
+    );
+}
+
 // ---- --diff ------------------------------------------------------------
 
 #[test]
