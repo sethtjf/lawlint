@@ -128,7 +128,7 @@ mod tests {
     use super::*;
     use crate::document::BlockKind;
     use crate::loader::PatternDef;
-    use crate::types::{RuleId, Scope, Severity, Tier};
+    use crate::types::{Intent, RuleId, Scope, Severity, Tier};
 
     fn meta_for(id: &str) -> RuleMeta {
         RuleMeta {
@@ -136,6 +136,7 @@ mod tests {
             tier: Tier::Statistical,
             scope: Scope::Text,
             severity: Severity::Warning,
+            intent: Intent::Detection,
             description: "desc".into(),
             docs_url: format!("https://lawlint.com/rules/{id}"),
             rationale: None,
@@ -149,6 +150,7 @@ mod tests {
             engine: "density".into(),
             scope: None,
             severity: None,
+            intent: None,
             description: None,
             rationale: None,
             docs: None,

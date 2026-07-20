@@ -48,6 +48,17 @@ pub enum Scope {
     All,
 }
 
+/// What a rule's findings mean. Detection rules are evidence of AI authorship
+/// and aggregate into the human-likeness score; style rules are drafting lint
+/// only — they report diagnostics but never move the score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Intent {
+    Style,
+    #[default]
+    Detection,
+}
+
 /// Namespaced "package/name", e.g. "core/no-em-dash". Stable forever.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -59,6 +70,10 @@ pub struct Diagnostic {
     pub rule_id: RuleId,
     pub severity: Severity,
     pub tier: Tier,
+    /// Detection findings count toward the score; style findings do not.
+    /// Defaults to detection when absent (pre-intent serialized results).
+    #[serde(default)]
+    pub intent: Intent,
     pub span: TextRange,
     pub message: String,
     /// 1-based; filled by finalize
@@ -189,9 +204,10 @@ mod tests {
     #[test]
     fn diagnostic_json_field_name_contract() {
         let d = Diagnostic {
-            rule_id: RuleId("core/no-em-dash".into()),
+            rule_id: RuleId("core/no-em-dash-overuse".into()),
             severity: Severity::Error,
             tier: Tier::Static,
+            intent: Intent::Detection,
             span: TextRange { start: 0, end: 1 },
             message: "m".into(),
             line: 1,
@@ -209,9 +225,25 @@ mod tests {
         assert!(v.get("endLine").is_some());
         assert!(v.get("endColumn").is_some());
         assert_eq!(v["severity"], "error");
+        assert_eq!(v["intent"], "detection");
         // None options are omitted entirely.
         assert!(v.get("suggestion").is_none());
         assert!(v.get("confidence").is_none());
+    }
+
+    #[test]
+    fn intent_serde_lowercase_and_defaults_to_detection() {
+        assert_eq!(serde_json::to_string(&Intent::Style).unwrap(), "\"style\"");
+        assert_eq!(
+            serde_json::to_string(&Intent::Detection).unwrap(),
+            "\"detection\""
+        );
+        // Pre-intent serialized diagnostics deserialize as detection.
+        let json = r#"{"ruleId":"core/x","severity":"error","tier":"static",
+            "span":{"start":0,"end":1},"message":"m","line":1,"column":1,
+            "excerpt":"x"}"#;
+        let d: Diagnostic = serde_json::from_str(json).unwrap();
+        assert_eq!(d.intent, Intent::Detection);
     }
 
     #[test]

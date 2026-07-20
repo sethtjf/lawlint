@@ -2,6 +2,7 @@ id: no-parenthetical-asides
 engine: density
 scope: text
 severity: warning
+intent: style
 description: "Flags frequent parenthetical asides"
 rationale: "Use this signal as a prompt to revise rhythm and density, not as a hard prohibition."
 message: "Parenthetical asides appear frequently; integrate important clauses into the sentence."

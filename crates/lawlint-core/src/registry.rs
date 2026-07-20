@@ -15,7 +15,7 @@ use crate::error::LoadError;
 use crate::judge::{Granularity, RubricFragment};
 use crate::loader::{self, parse_manifest, parse_rule, PackageManifest, RuleDef};
 use crate::rule::{Interests, Rule, RuleMeta};
-use crate::types::{RuleId, Scope, Severity};
+use crate::types::{Intent, RuleId, Scope, Severity};
 
 /// The embedded built-in package (`crates/lawlint-core/builtin/`):
 /// `style.yaml` + `rules/*.yaml`, loaded through the same loader as user
@@ -88,6 +88,11 @@ fn build_meta(package: &str, def: &RuleDef) -> RuleMeta {
             .as_deref()
             .and_then(loader::parse_severity)
             .unwrap_or(Severity::Warning),
+        intent: def
+            .intent
+            .as_deref()
+            .and_then(loader::parse_intent)
+            .unwrap_or(Intent::Detection),
         description: def.description.clone().unwrap_or_default(),
         docs_url: def
             .docs
@@ -441,7 +446,7 @@ mod tests {
         let mut merged = RuleSet::built_in();
         merged.merge(rs).unwrap();
         assert!(merged.resolve("user/no-x").is_some());
-        assert!(merged.resolve("core/no-em-dash").is_some());
+        assert!(merged.resolve("core/no-em-dash-overuse").is_some());
     }
 
     #[test]
@@ -534,6 +539,24 @@ mod tests {
         assert_eq!(d.tier, Tier::Statistical);
         assert_eq!(by_id("core/stat").tier, Tier::Statistical);
         assert_eq!(by_id("core/inf").tier, Tier::Inferential);
+    }
+
+    #[test]
+    fn meta_intent_defaults_detection_and_respects_style() {
+        let rs = set_of(
+            "core",
+            vec![
+                rule("a.yaml", "id: no-x\nengine: phrase\npatterns: [\"—\"]\n"),
+                rule(
+                    "b.yaml",
+                    "id: no-y\nengine: phrase\nintent: style\npatterns: [\";\"]\n",
+                ),
+            ],
+        );
+        let metas = rs.metas();
+        let by_id = |id: &str| *metas.iter().find(|m| m.id.0 == id).unwrap();
+        assert_eq!(by_id("core/no-x").intent, Intent::Detection);
+        assert_eq!(by_id("core/no-y").intent, Intent::Style);
     }
 
     // ---- resolve / aliases ----------------------------------------------

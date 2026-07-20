@@ -250,12 +250,13 @@ impl Slot {
     /// Drain `ctx`'s reports, stamping this rule's id/severity/tier.
     fn collect(&mut self, ctx: &mut Ctx) {
         let meta = self.rule.meta();
-        let (id, severity, tier) = (meta.id.clone(), meta.severity, meta.tier);
+        let (id, severity, tier, intent) = (meta.id.clone(), meta.severity, meta.tier, meta.intent);
         for r in ctx.take_reports() {
             self.diagnostics.push(Diagnostic {
                 rule_id: id.clone(),
                 severity,
                 tier,
+                intent,
                 span: r.span,
                 message: r.message,
                 line: 0,

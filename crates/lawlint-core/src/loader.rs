@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::error::LoadError;
 use crate::judge::Granularity;
 use crate::rule::RuleExample;
-use crate::types::{Scope, Severity, Tier};
+use crate::types::{Intent, Scope, Severity, Tier};
 
 /// `style.yaml` package manifest.
 #[derive(Debug, Clone, Deserialize)]
@@ -41,6 +41,10 @@ pub struct RuleDef {
     /// error | warning | suggestion (accepts legacy "info")
     #[serde(default)]
     pub severity: Option<String>,
+    /// style | detection (default: detection). Style rules lint but never
+    /// move the human-likeness score.
+    #[serde(default)]
+    pub intent: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -144,6 +148,14 @@ pub(crate) fn parse_severity(s: &str) -> Option<Severity> {
         "error" => Some(Severity::Error),
         "warning" => Some(Severity::Warning),
         "suggestion" | "info" => Some(Severity::Suggestion),
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_intent(s: &str) -> Option<Intent> {
+    match s {
+        "style" => Some(Intent::Style),
+        "detection" => Some(Intent::Detection),
         _ => None,
     }
 }
@@ -263,6 +275,15 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
                 file,
                 "severity",
                 format!("{severity:?} is not a severity — use error, warning, or suggestion"),
+            ));
+        }
+    }
+    if let Some(intent) = &def.intent {
+        if parse_intent(intent).is_none() {
+            return Err(LoadError::invalid_field(
+                file,
+                "intent",
+                format!("{intent:?} is not an intent — use style or detection"),
             ));
         }
     }
@@ -607,6 +628,26 @@ examples: { bad: "b", good: "g" }
 "#);
         assert_eq!(def.examples.len(), 1);
         assert_eq!(def.examples[0].good, "g");
+    }
+
+    #[test]
+    fn intent_parses_and_defaults_to_none() {
+        let def = ok("id: x\nengine: phrase\nintent: style\npatterns: [\"—\"]\n");
+        assert_eq!(def.intent.as_deref(), Some("style"));
+        assert_eq!(parse_intent("style"), Some(Intent::Style));
+        assert_eq!(parse_intent("detection"), Some(Intent::Detection));
+        assert_eq!(parse_intent("lint"), None);
+        let def = ok("id: x\nengine: phrase\npatterns: [\"—\"]\n");
+        assert!(def.intent.is_none());
+    }
+
+    #[test]
+    fn bad_intent_lists_alternatives() {
+        let e = err("id: x\nengine: phrase\nintent: scoring\npatterns: [\"—\"]\n");
+        assert_eq!(
+            e,
+            "rules/test.yaml: intent: \"scoring\" is not an intent — use style or detection"
+        );
     }
 
     #[test]

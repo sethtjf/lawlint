@@ -2,6 +2,7 @@ id: no-legalese
 engine: phrase
 scope: text
 severity: warning
+intent: style
 description: "Flags archaic or unnecessarily formal legalese."
 rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
 message: "Avoid archaic legalese."
