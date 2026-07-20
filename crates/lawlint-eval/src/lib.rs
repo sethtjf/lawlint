@@ -1,6 +1,6 @@
 //! Evaluation corpus loading, metrics, and regression checks for lawlint.
 
-use lawlint_core::{lint, LintOptions, RuleSet, Tier};
+use lawlint_core::{lint_with, LintOptions, RuleSet, Tier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,12 +84,23 @@ pub struct EvaluatedSample {
 }
 
 pub fn evaluate(samples: &[Sample]) -> Vec<EvaluatedSample> {
-    let options = LintOptions::default();
+    evaluate_with(samples, &LintOptions::default(), &RuleSet::built_in())
+}
+
+/// `evaluate` against an arbitrary rule set — e.g. `lawlint learn`'s
+/// self-consistency gate, which runs a candidate personal package back over
+/// the user's corpus (all-human samples) and reads per-rule false positives
+/// as self-fire counts.
+pub fn evaluate_with(
+    samples: &[Sample],
+    options: &LintOptions,
+    rules: &RuleSet,
+) -> Vec<EvaluatedSample> {
     samples
         .iter()
         .cloned()
         .map(|sample| {
-            let result = lint(&sample.text, &options);
+            let result = lint_with(&sample.text, options, rules);
             let fired_rules = result
                 .diagnostics
                 .iter()
@@ -399,6 +410,32 @@ mod tests {
         ai.fired_rules.clear();
         let metrics = per_rule_metrics(&[ai, human], ["r".to_string()]);
         assert_eq!(metrics["r"].false_negative, 1);
+    }
+
+    #[test]
+    fn evaluate_with_runs_a_custom_rule_set() {
+        // The learn self-consistency gate depends on this: a candidate
+        // package (not the built-ins) over all-human samples, with per-rule
+        // false positives read as self-fire counts.
+        let set = RuleSet::from_sources(
+            "personal",
+            &[(
+                "rules/no-zebra.yaml".to_string(),
+                "id: no-zebra\nengine: phrase\npatterns: [\"\\\\bzebra\\\\b\"]\n".to_string(),
+            )],
+        )
+        .unwrap();
+        let fires = Sample {
+            text: "A zebra appears in the record.".to_string(),
+            ..sample("fires", Label::Human, None)
+        };
+        let clean = sample("clean", Label::Human, None);
+        let evaluated = evaluate_with(&[fires, clean], &lawlint_core::LintOptions::default(), &set);
+        assert!(evaluated[0].fired_rules.contains("personal/no-zebra"));
+        assert!(evaluated[1].fired_rules.is_empty());
+        let metrics = per_rule_metrics(&evaluated, ["personal/no-zebra".to_string()]);
+        assert_eq!(metrics["personal/no-zebra"].false_positive, 1);
+        assert_eq!(metrics["personal/no-zebra"].human_support, 2);
     }
 
     #[test]

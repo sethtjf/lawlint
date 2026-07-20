@@ -95,7 +95,7 @@ impl Judge for AxJudge {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .chat(request)
             .map_err(|e| JudgeError::Backend(e.to_string()))?;
-        let content = extract_content(&response).ok_or_else(|| {
+        let content = chat_content(&response).ok_or_else(|| {
             JudgeError::MalformedResponse(format!(
                 "no textual content in chat response: {}",
                 truncate(&response.to_string(), 300)
@@ -112,8 +112,10 @@ impl Judge for AxJudge {
 /// Extract assistant text from a chat response. Accepts both the OpenAI
 /// chat-completions shape (`choices[0].message.content` — `CandleClient`,
 /// any OpenAI-compatible passthrough) and ax's normalized internal shape
-/// (`results[0].content` — stock ax clients).
-fn extract_content(response: &Value) -> Option<String> {
+/// (`results[0].content` — stock ax clients). Public so other AI features
+/// speaking through the ax boundary (e.g. `lawlint learn`) parse responses
+/// the same way the judge does.
+pub fn chat_content(response: &Value) -> Option<String> {
     let node = response
         .get("choices")
         .and_then(|c| c.get(0))
@@ -232,10 +234,12 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 // ---- Backend selection -------------------------------------------------
 
-/// Create a judge from `JudgeOptions.model`:
+/// Build the raw ax client (plus its canonical model id) for a model spec —
+/// the shared backend factory behind [`create_judge`] and any other AI
+/// feature that speaks through the ax boundary (e.g. `lawlint learn`):
 ///
-/// - `None` / `"local"` / `"local:<hf-repo>"` (optionally `#<gguf-file>`):
-///   in-process [`CandleClient`] (lazy model download on first evaluate).
+/// - `"local"` / `"local:<hf-repo>"` (optionally `#<gguf-file>`):
+///   in-process [`CandleClient`] (lazy model download on first chat).
 /// - `"anthropic:<model>"` (feature `cloud`): stock ax Anthropic client;
 ///   requires `ANTHROPIC_API_KEY` (environment or credential store).
 /// - `"openai:<base-url>#<model>"` (feature `cloud`): stock ax
@@ -246,9 +250,7 @@ fn truncate(s: &str, max_chars: usize) -> String {
 ///
 /// Hosted-provider keys resolve environment-first, then the user-level
 /// credential store written by `lawlint init` ([`credentials`]).
-pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
-    let model = options.model.as_deref().unwrap_or("local");
-
+pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>, String)> {
     if model == "local" || model.starts_with("local:") {
         let spec = model.strip_prefix("local:").unwrap_or("");
         let (repo, file) = match spec.split_once('#') {
@@ -265,43 +267,43 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
             None => format!("local:{repo}"),
         };
         let client = CandleClient::new(repo, file);
-        return Ok(Box::new(AxJudge::new(Box::new(client), model_id)));
+        return Ok((Box::new(client), model_id));
     }
 
     #[cfg(feature = "cloud")]
     if let Some(anthropic_model) = model.strip_prefix("anthropic:") {
         let key = credentials::lookup("ANTHROPIC_API_KEY").context(
             "ANTHROPIC_API_KEY must be set (or stored via `lawlint init`) for \
-             anthropic:<model> judge backends",
+             anthropic:<model> backends",
         )?;
         let client = axllm::ai(
             "anthropic",
             json!({ "model": anthropic_model, "api_key": key }),
         )
         .map_err(|e| anyhow::anyhow!("failed to build anthropic ax client: {e}"))?;
-        return Ok(Box::new(AxJudge::new(Box::new(client), model.to_string())));
+        return Ok((Box::new(client), model.to_string()));
     }
 
     #[cfg(feature = "cloud")]
     if let Some(spec) = model.strip_prefix("openai:") {
         let (base_url, openai_model) = spec.rsplit_once('#').with_context(|| {
-            format!("openai judge model {model:?} must be \"openai:<base-url>#<model>\"")
+            format!("openai model {model:?} must be \"openai:<base-url>#<model>\"")
         })?;
         let key = credentials::lookup("OPENAI_API_KEY").unwrap_or_else(|| "unused".to_string());
         let mut client = axllm::OpenAICompatibleClient::new(key, openai_model)
             .with_api_url(base_url.to_string());
         client.base_url_override = Some(base_url.to_string());
-        return Ok(Box::new(AxJudge::new(Box::new(client), model.to_string())));
+        return Ok((Box::new(client), model.to_string()));
     }
 
     #[cfg(feature = "cloud")]
     if let Some(deployment) = model.strip_prefix("foundry:") {
         if deployment.is_empty() {
-            bail!("foundry judge model must be \"foundry:<deployment>\"");
+            bail!("foundry model must be \"foundry:<deployment>\"");
         }
         let client = FoundryClient::from_credentials(Some(deployment.to_string()))
             .map_err(|e| anyhow::anyhow!("failed to build foundry client: {e}"))?;
-        return Ok(Box::new(AxJudge::new(Box::new(client), model.to_string())));
+        return Ok((Box::new(client), model.to_string()));
     }
 
     #[cfg(not(feature = "cloud"))]
@@ -310,15 +312,22 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
         || model.starts_with("foundry:")
     {
         bail!(
-            "judge model {model:?} needs the `cloud` feature — \
+            "model {model:?} needs the `cloud` feature — \
              rebuild lawlint-judge with `--features cloud`"
         );
     }
 
     bail!(
-        "unknown judge model {model:?} — use \"local[:<hf-repo>[#<gguf-file>]]\", \
+        "unknown model {model:?} — use \"local[:<hf-repo>[#<gguf-file>]]\", \
          \"anthropic:<model>\", \"openai:<base-url>#<model>\", or \"foundry:<deployment>\""
     )
+}
+
+/// Create a judge from `JudgeOptions.model` (`None` = default local). See
+/// [`create_client`] for the spec grammar.
+pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
+    let (client, model_id) = create_client(options.model.as_deref().unwrap_or("local"))?;
+    Ok(Box::new(AxJudge::new(client, model_id)))
 }
 
 // ------------------------------------------------------------------------
