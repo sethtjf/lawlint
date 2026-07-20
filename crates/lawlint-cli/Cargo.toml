@@ -13,11 +13,16 @@ clap.workspace = true
 colored.workspace = true
 lawlint-core = { path = "../lawlint-core" }
 lawlint-docx = { path = "../lawlint-docx" }
+# `learn`'s self-consistency gate reuses the eval crate's evaluate/per-rule
+# machinery (the corpus as the all-human class).
+lawlint-eval = { path = "../lawlint-eval" }
 # `cloud` makes the hosted catalog entries from `lawlint init` (anthropic:,
 # openai:, foundry:) work in the shipped binary.
 lawlint-judge = { path = "../lawlint-judge", features = ["cloud"] }
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 # Self-update / update-check (docs/engine-design.md §11).
 ureq = "2"           # blocking HTTP, rustls TLS — no async runtime pulled in
 semver = "1"         # version comparison
