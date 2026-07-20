@@ -2,6 +2,7 @@ id: prefer-concise-phrases
 engine: phrase
 scope: text
 severity: suggestion
+intent: style
 description: "Flags padded phrases that a shorter word or nothing replaces."
 rationale: "Orwell's third rule: if it is possible to cut a word out, cut it out. These stock phrases carry no more meaning than the single word that replaces them."
 message: "Cut this padded phrase down to a shorter word."
@@ -32,7 +33,6 @@ patterns:
   - pattern: '(?i)\bfor the purpose of\b'
     message: "Replace “for the purpose of”."
     suggestion: "Use “to” or “for”."
-    fix: "to"
   - pattern: '(?i)\bin spite of the fact that\b'
     message: "Replace “in spite of the fact that”."
     suggestion: "Use “although”."
@@ -63,8 +63,7 @@ patterns:
     fix: "soon"
   - pattern: '(?i)\bthe majority of\b'
     message: "Replace “the majority of”."
-    suggestion: "Use “most”."
-    fix: "most"
+    suggestion: "Use “most” or “most of”."
   - pattern: '(?i)\ba (?:large )?number of\b'
     message: "Replace “a number of”."
     suggestion: "Use “many” or “some”, or give the count."

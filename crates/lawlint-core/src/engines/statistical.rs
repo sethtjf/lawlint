@@ -203,7 +203,7 @@ impl Rule for StatisticalEngine {
 mod tests {
     use super::*;
     use crate::document::{BlockKind, Token};
-    use crate::types::{RuleId, Scope, Severity, TextRange, Tier};
+    use crate::types::{Intent, RuleId, Scope, Severity, TextRange, Tier};
     use std::collections::HashMap;
 
     fn meta_for(id: &str) -> RuleMeta {
@@ -212,6 +212,7 @@ mod tests {
             tier: Tier::Statistical,
             scope: Scope::Text,
             severity: Severity::Warning,
+            intent: Intent::Detection,
             description: "desc".into(),
             docs_url: format!("https://lawlint.com/rules/{id}"),
             rationale: None,
@@ -225,6 +226,7 @@ mod tests {
             engine: "statistical".into(),
             scope: None,
             severity: None,
+            intent: None,
             description: None,
             rationale: None,
             docs: None,

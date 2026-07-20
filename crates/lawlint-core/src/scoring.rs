@@ -5,7 +5,8 @@
 //!   ranges blanked.
 //! - `sentence_count`: total Document sentences.
 //! - Points: Error=5, Warning=3, Suggestion=1; × weight (default 1); tier-3
-//!   additionally × confidence.
+//!   additionally × confidence. Only detection-intent diagnostics carry
+//!   points; style-intent findings report but never move the score.
 //! - Tier-3 findings below the confidence floor (default 0.6,
 //!   `options.judge.floor`) are dropped; surviving tier-3 severity =
 //!   min(rule severity, Warning). (Applied by `gate_tier3`, called from
@@ -20,7 +21,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::document::{BlockKind, Document};
-use crate::types::{Diagnostic, LintResult, Severity, Stats, Tier};
+use crate::types::{Diagnostic, Intent, LintResult, Severity, Stats, Tier};
 
 /// Word-count regex, identical to the old engine's (the class contains both
 /// apostrophe forms and the hyphen).
@@ -113,8 +114,11 @@ pub fn finalize(source: &str, mut diagnostics: Vec<Diagnostic>, doc: &Document) 
     let words = word_count(source, doc);
     let sentence_count: usize = doc.blocks.iter().map(|b| b.sentences.len()).sum();
 
+    // The human-likeness score aggregates detection-intent diagnostics only;
+    // style findings are drafting lint and must not move it.
     let penalty: f64 = diagnostics
         .iter()
+        .filter(|d| d.intent == Intent::Detection)
         .map(|d| {
             let confidence = if d.tier == Tier::Inferential {
                 f64::from(d.confidence.unwrap_or(1.0))
@@ -149,6 +153,7 @@ mod tests {
             rule_id: RuleId("core/x".into()),
             severity,
             tier,
+            intent: Intent::Detection,
             span: TextRange { start, end },
             message: "m".into(),
             line: 0,
@@ -228,6 +233,32 @@ mod tests {
         d.weight = Some(11);
         let result = finalize(&src, vec![d], &doc);
         assert_eq!(result.stats.score, 4);
+    }
+
+    #[test]
+    fn style_intent_diagnostics_do_not_move_the_score() {
+        // 100 words, one Warning weight 2: detection scores 55 (golden
+        // parity); the identical diagnostic marked style leaves score 100
+        // while still surfacing in the diagnostics list.
+        let src = (0..100)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let doc = parse(&src, false);
+        let mut d = diag(0, 2, Severity::Warning, Tier::Static);
+        d.weight = Some(2);
+        d.intent = Intent::Style;
+        let result = finalize(&src, vec![d], &doc);
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.stats.score, 100);
+        // Mixed: only the detection diagnostic carries points.
+        let mut style = diag(0, 2, Severity::Error, Tier::Static);
+        style.intent = Intent::Style;
+        style.weight = Some(100);
+        let mut detection = diag(3, 5, Severity::Warning, Tier::Static);
+        detection.weight = Some(2);
+        let result = finalize(&src, vec![style, detection], &doc);
+        assert_eq!(result.stats.score, 55);
     }
 
     #[test]

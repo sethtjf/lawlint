@@ -2,6 +2,7 @@ id: no-dead-metaphors
 engine: phrase
 scope: text
 severity: warning
+intent: style
 description: "Flags worn-out metaphors and figures of speech."
 rationale: "Orwell's first rule: never use a figure of speech you are used to seeing in print. A dead metaphor no longer calls up an image; it just fills space. State the point plainly."
 message: "Replace this worn-out metaphor with a plain statement."

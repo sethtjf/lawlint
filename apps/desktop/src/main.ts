@@ -4,9 +4,10 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import "./styles.css";
 
 type Diagnostic = {
-  ruleId: string; // namespaced "package/name", e.g. "core/no-em-dash"
+  ruleId: string; // namespaced "package/name", e.g. "core/no-semicolons"
   severity: "error" | "warning" | "suggestion";
   tier: "static" | "statistical" | "inferential";
+  intent: "style" | "detection"; // only detection findings move the score
   span: { start: number; end: number };
   message: string;
   suggestion?: string;

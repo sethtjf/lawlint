@@ -2,6 +2,7 @@ id: prefer-short-words
 engine: phrase
 scope: text
 severity: suggestion
+intent: style
 description: "Flags long words that have a short everyday equivalent."
 rationale: "Orwell's second rule: never use a long word where a short one will do. Swap the long word only where the plain word carries the same meaning; keep terms of art."
 message: "Prefer a shorter, plainer word."

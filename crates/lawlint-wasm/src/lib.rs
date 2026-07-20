@@ -41,9 +41,9 @@ use std::sync::OnceLock;
 
 use lawlint_core::loader::parse_rule;
 use lawlint_core::{
-    lint as core_lint, lint_full, lint_with, plan_judge, remediation_prompt, Judge, JudgeError,
-    JudgeFinding, JudgeRequest, LintOptions, LintResult, LoadError, PromptSource, RubricFragment,
-    RuleExample, RuleId, RuleMeta, RuleSet, Scope, Severity, Tier,
+    lint as core_lint, lint_full, lint_with, plan_judge, remediation_prompt, Intent, Judge,
+    JudgeError, JudgeFinding, JudgeRequest, LintOptions, LintResult, LoadError, PromptSource,
+    RubricFragment, RuleExample, RuleId, RuleMeta, RuleSet, Scope, Severity, Tier,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -228,6 +228,7 @@ struct MetaJs<'a> {
     tier: Tier,
     scope: Scope,
     severity: Severity,
+    intent: Intent,
     description: &'a str,
     docs_url: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -241,6 +242,7 @@ fn meta_js(m: &RuleMeta) -> MetaJs<'_> {
         tier: m.tier,
         scope: m.scope,
         severity: m.severity,
+        intent: m.intent,
         description: &m.description,
         docs_url: &m.docs_url,
         rationale: m.rationale.as_deref(),
@@ -578,25 +580,28 @@ mod tests {
         // A user rule named like a built-in makes the bare alias ambiguous:
         // disable by bare name then affects NEITHER; full ids still work.
         let shadow = extra(
-            "no-em-dash.yaml",
-            "id: no-em-dash\nengine: phrase\npatterns: [\"zzz\"]\n",
+            "no-semicolons.yaml",
+            "id: no-semicolons\nengine: phrase\npatterns: [\"zzz\"]\n",
         );
-        let text = "An em—dash and zzz.";
+        let text = "A semi; colon and zzz.";
         let o = LintOptions {
-            disable: Some(vec!["no-em-dash".into()]),
+            disable: Some(vec!["no-semicolons".into()]),
             ..Default::default()
         };
         let result = lint_with_user_rules(text, &o, std::slice::from_ref(&shadow)).unwrap();
-        assert!(ids(&result).contains(&"core/no-em-dash"));
-        assert!(ids(&result).contains(&"user/no-em-dash"));
+        assert!(ids(&result).contains(&"core/no-semicolons"));
+        assert!(ids(&result).contains(&"user/no-semicolons"));
 
         let o = LintOptions {
-            disable: Some(vec!["core/no-em-dash".into(), "user/no-em-dash".into()]),
+            disable: Some(vec![
+                "core/no-semicolons".into(),
+                "user/no-semicolons".into(),
+            ]),
             ..Default::default()
         };
         let result = lint_with_user_rules(text, &o, &[shadow]).unwrap();
-        assert!(!ids(&result).contains(&"core/no-em-dash"));
-        assert!(!ids(&result).contains(&"user/no-em-dash"));
+        assert!(!ids(&result).contains(&"core/no-semicolons"));
+        assert!(!ids(&result).contains(&"user/no-semicolons"));
     }
 
     #[test]
@@ -709,14 +714,21 @@ mod tests {
     #[test]
     fn built_in_meta_serializes_camel_case() {
         let metas = built_in_set().metas();
-        assert_eq!(metas.len(), 27);
+        assert_eq!(metas.len(), 26);
         let json =
             serde_json::to_value(metas.iter().map(|m| meta_js(m)).collect::<Vec<_>>()).unwrap();
         let first = &json[0];
         assert!(first["id"].as_str().unwrap().starts_with("core/"));
         assert!(first.get("docsUrl").is_some(), "camelCase docsUrl expected");
         assert!(first.get("docs_url").is_none());
-        for key in ["tier", "scope", "severity", "description", "examples"] {
+        for key in [
+            "tier",
+            "scope",
+            "severity",
+            "intent",
+            "description",
+            "examples",
+        ] {
             assert!(first.get(key).is_some(), "missing {key}");
         }
         // Enums serialize lowercase.
@@ -733,7 +745,10 @@ mod tests {
         let set = merged_set(&[foo_rule()]).unwrap();
         assert_eq!(set.resolve("user/no-foo").unwrap().0, "user/no-foo");
         assert_eq!(set.resolve("no-foo").unwrap().0, "user/no-foo");
-        assert_eq!(set.resolve("no-em-dash").unwrap().0, "core/no-em-dash");
+        assert_eq!(
+            set.resolve("no-semicolons").unwrap().0,
+            "core/no-semicolons"
+        );
         assert!(set.resolve("nope").is_none());
     }
 
@@ -785,7 +800,7 @@ mod tests {
         assert!(plan_judge_impl(text, &o, &[]).unwrap().is_empty());
         // An enable allowlist of only static rules likewise plans nothing.
         let o = LintOptions {
-            enable: Some(vec!["no-em-dash".into()]),
+            enable: Some(vec!["no-semicolons".into()]),
             ..Default::default()
         };
         assert!(plan_judge_impl(text, &o, &[]).unwrap().is_empty());

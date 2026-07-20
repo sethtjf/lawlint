@@ -175,9 +175,9 @@ mod tests {
     #[test]
     fn sections_ordered_by_first_violation_with_examples_and_excerpt() {
         let rules = built_in();
-        // "delve" (core/no-ai-cliches) appears before the em dash
-        // (core/no-em-dash), so the cliché section must come first.
-        let text = "We should delve into this matter—now.";
+        // "delve" (core/no-ai-cliches) appears before the semicolon
+        // (core/no-semicolons), so the cliché section must come first.
+        let text = "We should delve into this matter; now.";
         let result = lint_with(text, &LintOptions::default(), &rules);
         let prompt =
             remediation_prompt(PromptSource::Text(text), &result, &rules).expect("has diagnostics");
@@ -185,21 +185,21 @@ mod tests {
         let cliches = prompt
             .find("## core/no-ai-cliches")
             .expect("cliché section present");
-        let em_dash = prompt
-            .find("## core/no-em-dash")
-            .expect("em-dash section present");
-        assert!(cliches < em_dash, "sections ordered by first violation");
+        let semicolons = prompt
+            .find("## core/no-semicolons")
+            .expect("semicolon section present");
+        assert!(cliches < semicolons, "sections ordered by first violation");
 
         // Before:/After: lines come straight from each rule's YAML examples.
         assert!(prompt.contains("Before: We should delve into this issue."));
         assert!(prompt.contains("After: We should examine this issue."));
-        assert!(prompt.contains("Before: It was—frankly—wrong."));
+        assert!(prompt.contains("Before: The motion failed; the court adjourned."));
 
         // The offending source line is surfaced as the finding excerpt.
         assert!(prompt.contains("We should delve into this matter"));
 
         // The brief is self-contained: the document itself is embedded.
-        assert!(prompt.contains("Document to revise:\n\nWe should delve into this matter—now.\n"));
+        assert!(prompt.contains("Document to revise:\n\nWe should delve into this matter; now.\n"));
 
         // Framing is present and stable.
         assert!(prompt.starts_with("Revise the document that follows."));
@@ -242,13 +242,13 @@ mod tests {
     #[test]
     fn finding_includes_suggestion_when_present() {
         let rules = built_in();
-        let text = "It was—wrong.";
+        let text = "It was; wrong.";
         let result = lint_with(text, &LintOptions::default(), &rules);
-        // The em-dash rule carries a suggestion on every finding.
+        // The semicolon rule carries a suggestion on every finding.
         assert!(result
             .diagnostics
             .iter()
-            .any(|d| d.rule_id.0 == "core/no-em-dash" && d.suggestion.is_some()));
+            .any(|d| d.rule_id.0 == "core/no-semicolons" && d.suggestion.is_some()));
 
         let prompt =
             remediation_prompt(PromptSource::Text(text), &result, &rules).expect("has diagnostics");

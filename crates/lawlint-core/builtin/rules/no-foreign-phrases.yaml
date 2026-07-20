@@ -2,6 +2,7 @@ id: no-foreign-phrases
 engine: phrase
 scope: text
 severity: suggestion
+intent: style
 description: "Flags decorative foreign phrases with an everyday English equivalent."
 rationale: "Orwell's fifth rule: never use a foreign phrase if you can think of an everyday English equivalent. This targets ornamental Latin, not legal terms of art (res judicata, prima facie, habeas corpus, mens rea, stare decisis, de novo), which have no plain substitute."
 message: "Use an everyday English equivalent for this foreign phrase."
