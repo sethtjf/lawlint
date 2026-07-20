@@ -72,11 +72,20 @@ compiled to WebAssembly.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
 - `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
 
-Run `lawlint init` to set up a project: it walks through judge, Markdown, and
-custom-rule choices and writes `.lawlint/config.json` (plus an optional starter
-rules package in `.lawlint/rules/`). Use `--yes` for defaults without prompts.
-The CLI discovers `.lawlint/config.json` — or the legacy `lawlint.config.json`
-— from the current directory upward.
+Run `lawlint init` to set up a project: it walks through AI-model, judge,
+Markdown, and custom-rule choices and writes `.lawlint/config.json` (plus an
+optional starter rules package in `.lawlint/rules/`). Hosted AI providers
+(Anthropic, OpenAI, Azure Foundry) are the recommended path and require an API
+key, stored in a user-level credential file outside the project; AI features
+error with guidance to run `lawlint init` when no model is configured — nothing
+ever falls back to downloading a local model. Local models remain available as
+an explicit advanced choice behind an acknowledgment of their constraints:
+multi-GB downloads, slower inference, and measurably lower quality (tier-3
+judge F1 0.111 for `empty-hedge`, 0.000 for `padded-elaboration`, 38 of 330
+chunks failing closed — see `docs/eval-corpus.md`). Use `--yes` for defaults
+without prompts, and `--ai MODEL` with `--acknowledge-local` to configure a
+local model non-interactively. The CLI discovers `.lawlint/config.json` — or
+the legacy `lawlint.config.json` — from the current directory upward.
 
 ## Maintainer releases
 

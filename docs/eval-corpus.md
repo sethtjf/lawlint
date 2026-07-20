@@ -222,8 +222,15 @@ rubric-echoing explanation as a false alarm.
 Verdict discipline is now the solved half; detection quality is not. The
 1.5B model's F1 on both inferential rules is far below every shipped lexical
 detection rule, and its false positives on human prose are rubric echoes
-flagged confidently. On these numbers the local default judge does not
-support turning tier 3 on by default.
+flagged confidently. On these numbers the local judge does not support
+turning tier 3 on by default.
+
+These measurements drove the #50 cloud-first decision: hosted providers are
+now the recommended and preselected path everywhere (`lawlint init` leads
+with them, and unconfigured AI features error with init guidance rather
+than silently downloading a local model), while local models remain fully
+supported as an explicit opt-in behind an acknowledgment of exactly these
+numbers (`ai.localAcknowledged`).
 
 ### Hosted backends (pending keys)
 

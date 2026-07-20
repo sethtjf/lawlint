@@ -110,7 +110,7 @@ struct TuiApp {
     text_matches_disk: bool,
     last_result: Option<LintResult>,
     rules: RuleSet,
-    judge: Option<Option<String>>,
+    judge: Option<String>,
     options: LintOptions,
 }
 
@@ -119,7 +119,9 @@ impl TuiApp {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         let (config, config_dir) = find_config(cwd.clone())?;
         let rules = build_rule_set(&config, config_dir.as_deref(), &[])?;
-        let judge = judge_spec(&None, &config);
+        // A config that enables the judge without naming a model is a
+        // config error (#50); it aborts the TUI launch with init guidance.
+        let judge = judge_spec(&None, &config)?;
         let options = LintOptions {
             markdown: Some(false),
             ..Default::default()

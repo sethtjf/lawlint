@@ -51,9 +51,10 @@ struct Cli {
     /// Additional rule package directory (repeatable; merged over built-ins).
     #[arg(long = "rule-dir", value_name = "DIR", action = ArgAction::Append, global = true)]
     rule_dir: Vec<PathBuf>,
-    /// Run the tier-3 judge. Bare `--judge` uses the default local model;
-    /// `--judge=MODEL` selects a backend (local:<repo>[#<gguf>],
-    /// anthropic:<model>, openai:<base-url>#<model>).
+    /// Run the tier-3 judge. Bare `--judge` uses the AI model configured by
+    /// `lawlint init` (errors if none is configured); `--judge=MODEL`
+    /// selects a backend (anthropic:<model>, openai:<base-url>#<model>,
+    /// foundry:<deployment>, local:<repo>[#<gguf>]).
     #[arg(long, value_name = "MODEL", num_args = 0..=1, require_equals = true, default_missing_value = "")]
     judge: Option<String>,
     /// Apply MachineApplicable fixes to FILE in place.
@@ -80,10 +81,16 @@ enum Command {
         #[arg(long)]
         force: bool,
         /// AI model preference, skipping the catalog prompt: qwen, gemma, or
-        /// a full spec (local:<hf-repo>[#<gguf>], anthropic:<model>,
-        /// openai:<base-url>#<model>, foundry:<deployment>).
+        /// a full spec (anthropic:<model>, openai:<base-url>#<model>,
+        /// foundry:<deployment>, local:<hf-repo>[#<gguf>]).
         #[arg(long, value_name = "MODEL")]
         ai: Option<String>,
+        /// Acknowledge the local-model constraints (multi-GB download,
+        /// slower inference, measurably lower quality — docs/eval-corpus.md)
+        /// non-interactively; writes ai.localAcknowledged. Only meaningful
+        /// with a local model selection.
+        #[arg(long)]
+        acknowledge_local: bool,
     },
     /// Mine a personal rule package from your own prior writing: a local
     /// statistical pass over the full corpus, then an AI mining pass over a
@@ -239,39 +246,67 @@ pub(crate) fn build_rule_set(
 
 // ---- judge -------------------------------------------------------------
 
-/// The judge model to use, if the judge is active at all: the CLI flag wins
-/// (bare `--judge` = default model), else config `judge.enabled: true`.
+/// The judge model to use, if the judge is active at all: `Ok(None)` =
+/// judge off, `Ok(Some(spec))` = judge on with that model. The CLI flag
+/// wins (`--judge=MODEL` is explicit), else config `judge.enabled: true`.
 /// Without an explicit model, the spec resolves from the config: legacy
 /// `judge.model`, then the `ai` preferences (`ai.features.judge`, then
-/// `ai.model` — written by `lawlint init`), then `None` = default local.
+/// `ai.model` — written by `lawlint init`). A judge requested with no model
+/// configured anywhere is an error (#50): nothing ever falls back to
+/// silently downloading a local model.
 pub(crate) fn judge_spec(
     cli_judge: &Option<String>,
     config: &LintOptions,
-) -> Option<Option<String>> {
+) -> Result<Option<String>, String> {
     let config_judge = config.judge.as_ref();
     let preferred = || {
         config_judge
             .and_then(|judge| judge.model.clone())
             .or_else(|| config.ai_model("judge"))
+            .ok_or_else(|| {
+                "the judge needs an AI model but none is configured — run `lawlint init` \
+                 to choose one (hosted providers recommended), or pass an explicit \
+                 --judge=<spec> (e.g. --judge=anthropic:<model>)"
+                    .to_string()
+            })
     };
     match cli_judge {
-        Some(model) if !model.is_empty() => Some(Some(model.clone())),
-        Some(_) => Some(preferred()),
-        None if config_judge.and_then(|judge| judge.enabled) == Some(true) => Some(preferred()),
-        None => None,
+        Some(model) if !model.is_empty() => Ok(Some(model.clone())),
+        Some(_) => preferred().map(Some),
+        None if config_judge.and_then(|judge| judge.enabled) == Some(true) => preferred().map(Some),
+        None => Ok(None),
     }
+}
+
+/// One-line constraints notice for local-model use while the config has not
+/// acknowledged the local constraints (#50). Explicit `local:` specs keep
+/// working — this only informs. `None` = nothing to print (hosted spec, or
+/// `ai.localAcknowledged: true`).
+pub(crate) fn local_notice(spec: &str, config: &LintOptions) -> Option<String> {
+    if spec != "local" && !spec.starts_with("local:") {
+        return None;
+    }
+    if config.ai.as_ref().and_then(|ai| ai.local_acknowledged) == Some(true) {
+        return None;
+    }
+    Some(format!(
+        "lawlint: note: {spec} is a local model — multi-GB first-use download, slower \
+         inference, and measurably lower quality than hosted backends (tier-3 F1 0.111 \
+         empty-hedge, 0.000 padded-elaboration; docs/eval-corpus.md); run `lawlint init` \
+         to switch or acknowledge (sets ai.localAcknowledged and silences this notice)"
+    ))
 }
 
 /// Build the judge + disk cache. A cache failure is not fatal (judge runs
 /// uncached); a judge build failure is reported to the caller, who falls
 /// back to tiers 1-2.
 fn build_judge(
-    model: Option<String>,
+    model: String,
     floor: Option<f32>,
 ) -> Result<(Box<dyn Judge>, Option<DiskCache>), String> {
     let options = JudgeOptions {
         enabled: Some(true),
-        model,
+        model: Some(model),
         floor,
     };
     let judge = lawlint_judge::create_judge(&options).map_err(|error| error.to_string())?;
@@ -289,7 +324,7 @@ pub(crate) fn lint_text(
     text: &str,
     options: &LintOptions,
     rules: &RuleSet,
-    judge: Option<Option<String>>,
+    judge: Option<String>,
 ) -> LintResult {
     let Some(model) = judge else {
         return lint_with(text, options, rules);
@@ -558,7 +593,13 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
         Some(cli.markdown || file_markdown)
     };
     let rules = build_rule_set(&config, config_dir.as_deref(), &cli.rule_dir)?;
-    let judge = judge_spec(&cli.judge, &config);
+    let judge = judge_spec(&cli.judge, &config)?;
+    if let Some(notice) = judge
+        .as_deref()
+        .and_then(|spec| local_notice(spec, &config))
+    {
+        eprintln!("{notice}");
+    }
     let options = merge_options(config, cli_options(cli, markdown));
     let result = lint_text(&text, &options, &rules, judge);
 
@@ -883,12 +924,19 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
     // ("otherwise skipped", per the flag's help and design doc §11): a config
     // that enables the judge for lint runs must not trigger model downloads
     // or cloud calls from `rules test`. Bare `--judge` still inherits the
-    // config model. `--offline` forces the skip.
+    // config model (and errors with init guidance when nothing is
+    // configured, #50). `--offline` forces the skip.
     let judge_model = if offline || judge_flag.is_none() {
         None
     } else {
-        judge_spec(judge_flag, &config)
+        judge_spec(judge_flag, &config)?
     };
+    if let Some(notice) = judge_model
+        .as_deref()
+        .and_then(|spec| local_notice(spec, &config))
+    {
+        eprintln!("{notice}");
+    }
     let mut judge_state: Option<JudgeState> = None;
     // The config's judge options ride along in `options` so lint_full's
     // tier-3 confidence gate honors a configured `judge.floor` (a bare
@@ -1030,7 +1078,12 @@ fn run(cli: Cli) -> Result<i32, String> {
     }
 
     match &cli.command {
-        Some(Command::Init { yes, force, ai }) => init::init_command(*yes, *force, ai.as_deref()),
+        Some(Command::Init {
+            yes,
+            force,
+            ai,
+            acknowledge_local,
+        }) => init::init_command(*yes, *force, ai.as_deref(), *acknowledge_local),
         Some(Command::Learn { path, out, model }) => {
             learn::learn_command(path, out, model.as_deref())
         }
@@ -1121,13 +1174,16 @@ mod tests {
     #[test]
     fn judge_spec_resolution() {
         let off = LintOptions::default();
-        assert_eq!(judge_spec(&None, &off), None);
-        // Bare --judge → default model.
-        assert_eq!(judge_spec(&Some(String::new()), &off), Some(None));
+        assert_eq!(judge_spec(&None, &off), Ok(None));
+        // Bare --judge with nothing configured errors with init guidance
+        // (#50): never a silent local default.
+        let err = judge_spec(&Some(String::new()), &off).unwrap_err();
+        assert!(err.contains("lawlint init"), "{err}");
+        assert!(err.contains("none is configured"), "{err}");
         // Explicit model on the flag.
         assert_eq!(
             judge_spec(&Some("local:foo".into()), &off),
-            Some(Some("local:foo".into()))
+            Ok(Some("local:foo".into()))
         );
         // Config-enabled with a model.
         let config = options_with(|o| {
@@ -1137,12 +1193,23 @@ mod tests {
                 floor: None,
             });
         });
-        assert_eq!(judge_spec(&None, &config), Some(Some("anthropic:m".into())));
+        assert_eq!(judge_spec(&None, &config), Ok(Some("anthropic:m".into())));
         // Bare --judge inherits the config model.
         assert_eq!(
             judge_spec(&Some(String::new()), &config),
-            Some(Some("anthropic:m".into()))
+            Ok(Some("anthropic:m".into()))
         );
+        // Config-enabled without any model errors too — a config that says
+        // "judge on" but names no model is a config error, not a download.
+        let enabled_no_model = options_with(|o| {
+            o.judge = Some(JudgeOptions {
+                enabled: Some(true),
+                model: None,
+                floor: None,
+            });
+        });
+        let err = judge_spec(&None, &enabled_no_model).unwrap_err();
+        assert!(err.contains("lawlint init"), "{err}");
         // Config present but not enabled → off.
         let disabled = options_with(|o| {
             o.judge = Some(JudgeOptions {
@@ -1151,7 +1218,42 @@ mod tests {
                 floor: None,
             });
         });
-        assert_eq!(judge_spec(&None, &disabled), None);
+        assert_eq!(judge_spec(&None, &disabled), Ok(None));
+    }
+
+    #[test]
+    fn local_notice_fires_only_for_unacknowledged_local_specs() {
+        use lawlint_core::AiOptions;
+        let off = LintOptions::default();
+        // Local specs draw the notice while unacknowledged…
+        for spec in ["local", "local:me/repo-GGUF", "local:me/repo-GGUF#m.gguf"] {
+            let notice = local_notice(spec, &off).expect(spec);
+            assert!(notice.contains("docs/eval-corpus.md"), "{notice}");
+            assert!(notice.contains("0.111"), "{notice}");
+            assert!(notice.contains("lawlint init"), "{notice}");
+        }
+        // …hosted specs never do.
+        for spec in ["anthropic:m", "openai:http://x/v1#m", "foundry:d"] {
+            assert_eq!(local_notice(spec, &off), None, "{spec}");
+        }
+        // An acknowledged config silences it.
+        let acknowledged = options_with(|o| {
+            o.ai = Some(AiOptions {
+                model: Some("local".into()),
+                local_acknowledged: Some(true),
+                ..Default::default()
+            });
+        });
+        assert_eq!(local_notice("local", &acknowledged), None);
+        // Explicitly false behaves like unset.
+        let unacknowledged = options_with(|o| {
+            o.ai = Some(AiOptions {
+                model: Some("local".into()),
+                local_acknowledged: Some(false),
+                ..Default::default()
+            });
+        });
+        assert!(local_notice("local", &unacknowledged).is_some());
     }
 
     #[test]
@@ -1166,17 +1268,17 @@ mod tests {
             });
             o.ai = Some(AiOptions {
                 model: Some("foundry:gpt-5.5".into()),
-                features: None,
+                ..Default::default()
             });
         });
         assert_eq!(
             judge_spec(&None, &prefs),
-            Some(Some("foundry:gpt-5.5".into()))
+            Ok(Some("foundry:gpt-5.5".into()))
         );
         // Bare --judge inherits the preference too.
         assert_eq!(
             judge_spec(&Some(String::new()), &prefs),
-            Some(Some("foundry:gpt-5.5".into()))
+            Ok(Some("foundry:gpt-5.5".into()))
         );
         // Per-feature override outranks the default model…
         let with_override = options_with(|o| {
@@ -1188,11 +1290,12 @@ mod tests {
                         .into_iter()
                         .collect(),
                 ),
+                ..Default::default()
             });
         });
         assert_eq!(
             judge_spec(&None, &with_override),
-            Some(Some("anthropic:m".into()))
+            Ok(Some("anthropic:m".into()))
         );
         // …but a legacy judge.model outranks the ai section, and an explicit
         // --judge=MODEL outranks everything.
@@ -1204,13 +1307,10 @@ mod tests {
             });
             o.ai = prefs.ai.clone();
         });
-        assert_eq!(
-            judge_spec(&None, &legacy),
-            Some(Some("local:legacy".into()))
-        );
+        assert_eq!(judge_spec(&None, &legacy), Ok(Some("local:legacy".into())));
         assert_eq!(
             judge_spec(&Some("local:cli".into()), &legacy),
-            Some(Some("local:cli".into()))
+            Ok(Some("local:cli".into()))
         );
     }
 

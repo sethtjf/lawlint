@@ -204,6 +204,10 @@ fn init_yes_writes_config_and_refuses_to_overwrite() {
     cmd(&dir).args(["init", "--yes"]).assert().code(0);
     let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
     assert!(config.contains("\"enabled\": false"));
+    // Cloud-first (#50): the fresh non-interactive default is the hosted
+    // Anthropic entry, never a local model.
+    assert!(config.contains("\"model\": \"anthropic:"), "{config}");
+    assert!(!config.contains("\"model\": \"local\""), "{config}");
     cmd(&dir)
         .args(["init", "--yes"])
         .assert()
@@ -233,13 +237,28 @@ fn init_ai_flag_writes_preference_without_prompting_or_downloading() {
 }
 
 #[test]
+fn init_acknowledge_local_persists_the_acknowledgment() {
+    // The non-interactive local opt-in (#50): --ai + --acknowledge-local
+    // writes both the model and ai.localAcknowledged.
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["init", "--yes", "--ai", "qwen", "--acknowledge-local"])
+        .assert()
+        .code(0);
+    let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
+    assert!(config.contains("\"model\": \"local\""), "{config}");
+    assert!(config.contains("\"localAcknowledged\": true"), "{config}");
+}
+
+#[test]
 fn init_scaffolds_a_working_rules_package() {
     let dir = TempDir::new().unwrap();
-    // Prompts: AI model (default: local Qwen) + its repo, judge (default:
-    // disabled), markdown (default: no), starter rules package (yes).
+    // Prompts: AI model (default: hosted Anthropic) + its model + key skip,
+    // judge (default: disabled), markdown (default: no), starter rules
+    // package (yes).
     cmd(&dir)
         .arg("init")
-        .write_stdin("\n\n\n\ny\n")
+        .write_stdin("\n\n\n\n\ny\n")
         .assert()
         .code(0)
         .stdout(predicate::str::contains(".lawlint/rules/style.yaml"));
@@ -783,6 +802,88 @@ fn rules_test_ignores_config_enabled_judge() {
 }
 
 #[test]
+fn judge_without_config_errors_with_init_guidance() {
+    // #50: requesting the judge with no AI model configured anywhere is a
+    // config error (exit 2) with actionable guidance — never a silent
+    // local-model download.
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .arg("--judge")
+        .write_stdin("Some text to lint.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("lawlint init"))
+        .stderr(predicate::str::contains("none is configured"));
+    // A config that turns the judge on but names no model errors the same
+    // way on a plain lint run.
+    write(
+        &dir,
+        "lawlint.config.json",
+        r#"{"judge": {"enabled": true}}"#,
+    );
+    cmd(&dir)
+        .write_stdin("Some text to lint.")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("lawlint init"));
+    // `rules test --judge` resolves through the same path.
+    write(&dir, "lawlint.config.json", "{}");
+    write(
+        &dir,
+        "rule.yaml",
+        "id: r\nengine: phrase\npatterns: [\"z\"]\n",
+    );
+    cmd(&dir)
+        .args(["rules", "test", "rule.yaml", "--judge"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("lawlint init"));
+}
+
+#[test]
+fn local_config_surfaces_constraints_notice_until_acknowledged() {
+    // #50: explicit local specs keep working, with a one-line constraints
+    // notice while unacknowledged. `rules test --judge` resolves the spec
+    // up front but never builds a judge for non-inferential rules, so no
+    // model is downloaded or loaded here.
+    let dir = TempDir::new().unwrap();
+    write(
+        &dir,
+        "lawlint.config.json",
+        r#"{"ai": {"model": "local:me/tiny-GGUF"}}"#,
+    );
+    write(&dir, "pkg/style.yaml", "name: firm\nversion: 1.0.0\n");
+    write(
+        &dir,
+        "pkg/rules/ok.yaml",
+        concat!(
+            "id: ok\n",
+            "engine: phrase\n",
+            "patterns: [\"zebra\"]\n",
+            "examples:\n",
+            "  - { bad: \"One zebra.\", good: \"One horse.\" }\n",
+        ),
+    );
+    cmd(&dir)
+        .args(["rules", "test", "pkg", "--judge"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("docs/eval-corpus.md"))
+        .stderr(predicate::str::contains("lawlint init"));
+    // Once acknowledged (ai.localAcknowledged), the notice goes quiet.
+    write(
+        &dir,
+        "lawlint.config.json",
+        r#"{"ai": {"model": "local:me/tiny-GGUF", "localAcknowledged": true}}"#,
+    );
+    cmd(&dir)
+        .args(["rules", "test", "pkg", "--judge"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("docs/eval-corpus.md").not());
+}
+
+#[test]
 fn rules_test_offline_flag_skips_inferential_examples() {
     // Design doc §11: `rules test <dir> --offline` is a documented skip flag.
     let dir = TempDir::new().unwrap();
@@ -862,6 +963,21 @@ fn learn_empty_directory_is_exit_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no corpus files found"));
+}
+
+#[test]
+fn learn_without_config_errors_with_init_guidance() {
+    // #50: `lawlint learn` with no --model and no configured AI preferences
+    // errors with init guidance instead of downloading a local model.
+    let dir = TempDir::new().unwrap();
+    write(&dir, "corpus/memo.txt", "A short memo body for the corpus.");
+    cmd(&dir)
+        .args(["learn", "corpus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("lawlint init"))
+        .stderr(predicate::str::contains("none is configured"));
+    assert!(!dir.path().join(".lawlint/rules/personal").exists());
 }
 
 #[test]
