@@ -816,3 +816,54 @@ fn rules_test_missing_path_is_exit_2() {
         .code(2)
         .stderr(predicate::str::contains("no-such-dir"));
 }
+
+// ---- learn --------------------------------------------------------------
+// The full mining flow is covered by unit tests with a mock ax client
+// (src/learn.rs); these exercise the CLI surface without loading a model —
+// ingestion runs and fails before any backend is built.
+
+#[test]
+fn learn_missing_path_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["learn", "no-such-corpus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no-such-corpus"));
+}
+
+#[test]
+fn learn_unsupported_single_file_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "notes.log", "not a corpus");
+    cmd(&dir)
+        .args(["learn", "notes.log"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unsupported corpus file type"));
+}
+
+#[test]
+fn learn_empty_directory_is_exit_2() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("corpus")).unwrap();
+    cmd(&dir)
+        .args(["learn", "corpus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no corpus files found"));
+}
+
+#[test]
+fn learn_bad_model_spec_is_exit_2() {
+    // A valid corpus but an unknown model scheme: the error names the spec
+    // grammar and nothing is written.
+    let dir = TempDir::new().unwrap();
+    write(&dir, "corpus/memo.txt", "A short memo body for the corpus.");
+    cmd(&dir)
+        .args(["learn", "corpus", "--model", "bogus:whatever"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("bogus:whatever"));
+    assert!(!dir.path().join(".lawlint/rules/personal").exists());
+}

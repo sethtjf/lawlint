@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod diff;
 mod init;
+mod learn;
 mod tui;
 mod update;
 
@@ -83,6 +84,22 @@ enum Command {
         /// openai:<base-url>#<model>, foundry:<deployment>).
         #[arg(long, value_name = "MODEL")]
         ai: Option<String>,
+    },
+    /// Mine a personal rule package from your own prior writing: a local
+    /// statistical pass over the full corpus, then an AI mining pass over a
+    /// small sample, self-checked so no generated rule flags your own text.
+    Learn {
+        /// A file or directory of your writing (.docx, .md, .txt).
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Where to write the generated rule package.
+        #[arg(long, value_name = "DIR", default_value = ".lawlint/rules/personal")]
+        out: PathBuf,
+        /// Mining model, overriding the `lawlint init` AI preferences
+        /// (local:<hf-repo>[#<gguf>], anthropic:<model>,
+        /// openai:<base-url>#<model>, foundry:<deployment>).
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
     },
     /// List rules, or test rule packages.
     Rules {
@@ -1014,6 +1031,9 @@ fn run(cli: Cli) -> Result<i32, String> {
 
     match &cli.command {
         Some(Command::Init { yes, force, ai }) => init::init_command(*yes, *force, ai.as_deref()),
+        Some(Command::Learn { path, out, model }) => {
+            learn::learn_command(path, out, model.as_deref())
+        }
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
                 path,
