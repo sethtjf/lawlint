@@ -2,6 +2,7 @@ id: no-semicolons
 engine: phrase
 scope: text
 severity: error
+intent: style
 description: "Flags semicolons."
 rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
 message: "Prefer periods over semicolons."

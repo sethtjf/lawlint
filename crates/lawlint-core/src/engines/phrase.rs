@@ -198,7 +198,7 @@ impl Rule for PhraseEngine {
 mod tests {
     use super::*;
     use crate::document::BlockKind;
-    use crate::types::{RuleId, Scope, Severity, Tier};
+    use crate::types::{Intent, RuleId, Scope, Severity, Tier};
 
     fn meta() -> RuleMeta {
         RuleMeta {
@@ -206,6 +206,7 @@ mod tests {
             tier: Tier::Static,
             scope: Scope::Text,
             severity: Severity::Error,
+            intent: Intent::Detection,
             description: "default description".into(),
             docs_url: "https://lawlint.com/rules/test-phrase".into(),
             rationale: None,

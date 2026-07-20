@@ -27,7 +27,7 @@ Compare `score`, `wordCount`, `sentenceCount`, and diagnostic count / rule IDs a
 
 ## Gotchas (may or may not still apply — verify)
 - **Em-dash typing:** the computer-use `type` action cannot emit `—` (U+2014). Pasting/typing text with
-  em-dashes into the playground silently drops them, which removes `no-em-dash`/`no-em-dash-overuse`
+  em-dashes into the playground silently drops them, which removes `no-em-dash-overuse`
   diagnostics and changes the score. When comparing playground vs CLI, run the CLI on the *dash-stripped*
   text (`s.replace('\u2014','')`) to get the matching ground truth, or the counts won't line up.
 - **Astro `define:vars` scripts are NOT type-stripped.** A `<script define:vars={...}>` is emitted inline

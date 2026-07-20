@@ -39,8 +39,8 @@ pub use registry::{InferentialRule, RuleSet};
 pub use rule::{Ctx, Interests, Report, Rule, RuleExample, RuleMeta};
 pub use scoring::finalize;
 pub use types::{
-    Applicability, Diagnostic, Edit, Fix, LintResult, RuleId, Scope, Severity, Stats, TextRange,
-    Tier,
+    Applicability, Diagnostic, Edit, Fix, Intent, LintResult, RuleId, Scope, Severity, Stats,
+    TextRange, Tier,
 };
 
 /// Default tier-3 confidence floor when `options.judge.floor` is unset.
@@ -78,23 +78,28 @@ pub fn lint_full(
 ) -> LintResult {
     let doc = document::parse(text, options.markdown.unwrap_or(false));
     let instances = rules.instantiate(options);
-    // Rubrics (plus each rule's scope, for masking grounded findings) from
-    // the (enable/disable/severity-resolved) instances, captured before the
-    // dispatcher consumes them.
-    let fragments: Vec<(Scope, RubricFragment)> = instances
+    // Rubrics (plus each rule's scope for masking grounded findings, and its
+    // intent for scoring) from the (enable/disable/severity-resolved)
+    // instances, captured before the dispatcher consumes them.
+    let fragments: Vec<(Scope, Intent, RubricFragment)> = instances
         .iter()
-        .filter_map(|r| r.rubric().cloned().map(|f| (r.meta().scope, f)))
+        .filter_map(|r| {
+            r.rubric()
+                .cloned()
+                .map(|f| (r.meta().scope, r.meta().intent, f))
+        })
         .collect();
     let mut diagnostics = dispatch::run(text, &doc, instances, options, rules);
 
-    let refs: Vec<&RubricFragment> = fragments.iter().map(|(_, f)| f).collect();
+    let refs: Vec<&RubricFragment> = fragments.iter().map(|(_, _, f)| f).collect();
     let reqs = plan_judge(&doc, text, &refs);
     let (grounded, stats) = run_judge(judge, cache, &reqs, text);
 
     let suppressions = dispatch::Suppressions::new(text, rules);
     let mut tier3 = Vec::new();
     for (_req, finding, span) in grounded {
-        let Some((scope, fragment)) = fragments.iter().find(|(_, f)| f.rule.0 == finding.rule)
+        let Some((scope, intent, fragment)) =
+            fragments.iter().find(|(_, _, f)| f.rule.0 == finding.rule)
         else {
             continue; // run_judge already discards foreign rules; belt and suspenders
         };
@@ -124,6 +129,7 @@ pub fn lint_full(
             rule_id: fragment.rule.clone(),
             severity: fragment.severity,
             tier: Tier::Inferential,
+            intent: *intent,
             span,
             message,
             line: 0,
@@ -225,9 +231,10 @@ mod tests {
 
     #[test]
     fn registry() {
-        // Old suite: 20 bespoke rules. Now 22 (two new inferential rules).
+        // Old suite: 20 bespoke rules; +2 inferential, -1 with no-em-dash
+        // folded into no-em-dash-overuse (#38) = 21.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 22);
+        assert_eq!(rs.metas().len(), 21);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -310,9 +317,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        // word_count and score match the old engine exactly.
+        // word_count matches the old engine exactly. The score is higher than
+        // the old engine's 2: style-intent findings (no-legalese,
+        // oxford-comma) still report below but no longer carry points.
         assert_eq!(bad_result.stats.word_count, 70);
-        assert_eq!(bad_result.stats.score, 2);
+        assert_eq!(bad_result.stats.score, 7);
         // sentence_count was 3 under the old `.!?` splitter; legal-aware
         // segmentation counts the heading "Agreement" as its own sentence → 4.
         assert_eq!(bad_result.stats.sentence_count, 4);
@@ -565,6 +574,7 @@ mod tests {
             rule_id: RuleId("core/x".into()),
             severity: Severity::Error,
             tier: Tier::Static,
+            intent: Intent::Detection,
             span: TextRange { start, end },
             message: "m".into(),
             line: 0,
@@ -602,6 +612,7 @@ mod tests {
             rule_id: RuleId("core/x".into()),
             severity: Severity::Error,
             tier: Tier::Static,
+            intent: Intent::Detection,
             span: TextRange { start, end },
             message: "m".into(),
             line: 0,

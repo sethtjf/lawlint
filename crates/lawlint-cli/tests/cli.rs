@@ -440,7 +440,7 @@ fn prompt_format_with_quiet_suppresses_stdout_but_keeps_exit_code() {
     let dir = TempDir::new().unwrap();
     cmd(&dir)
         .args(["-", "--format", "prompt", "--quiet"])
-        .write_stdin("It was—wrong.")
+        .write_stdin("It was; wrong.")
         .assert()
         .code(1)
         .stdout(predicate::str::is_empty());
@@ -581,7 +581,7 @@ fn rules_json_lists_all_built_ins_in_website_contract_shape() {
     assert_eq!(output.status.code(), Some(0));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let rules = json.as_array().unwrap();
-    assert_eq!(rules.len(), 22);
+    assert_eq!(rules.len(), 21);
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
         assert!(!id.contains('/'), "ids must be flat, got {id}");
@@ -613,7 +613,7 @@ fn rules_pretty_lists_ids_and_merges_rule_dirs() {
         .args(["rules", "--rule-dir", pkg.to_str().unwrap()])
         .assert()
         .code(0)
-        .stdout(predicate::str::contains("core/no-em-dash"))
+        .stdout(predicate::str::contains("core/no-semicolons"))
         .stdout(predicate::str::contains("firm/use-plain"));
 }
 

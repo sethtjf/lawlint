@@ -2,6 +2,9 @@ id: no-en-dash
 engine: phrase
 scope: text
 severity: error
+# Train-split check (#38): fires on human prose only (0/5) — typography
+# lint, not an authorship signal.
+intent: style
 description: "Flags en dashes outside numeric ranges."
 rationale: "En dashes belong only in numeric ranges such as 2020–2024. Elsewhere they read as stray punctuation."
 message: "Avoid en dashes except in numeric ranges (e.g. 2020–2024)."
