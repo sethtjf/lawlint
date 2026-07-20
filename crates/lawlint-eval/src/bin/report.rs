@@ -1,7 +1,7 @@
 use clap::Parser;
 use lawlint_eval::{
-    auc, auc_for_ai_slice, evaluate, inferential_rule_ids, load_jsonl, per_rule_metrics, rule_ids,
-    score_histogram, Baseline, Label, Split,
+    auc, auc_for_ai_slice, evaluate, inferential_rule_ids, load_jsonl, per_rule_metrics,
+    precision_map, rule_ids, rule_intents, score_histogram, Baseline, Label, Split,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -67,11 +67,7 @@ fn run(args: Args) -> Result<(), String> {
         let baseline = Baseline {
             overall_auc: train_metrics.0,
             slice_auc: train_metrics.1,
-            per_rule_precision: train_metrics
-                .2
-                .into_iter()
-                .map(|(name, metrics)| (name, metrics.precision))
-                .collect(),
+            per_rule_precision: precision_map(&train_metrics.2),
         };
         let json = serde_json::to_string_pretty(&baseline)
             .map_err(|error| format!("failed to serialize baseline: {error}"))?;
@@ -91,11 +87,16 @@ fn print_metrics(
     BTreeMap<String, lawlint_eval::RuleMetrics>,
 ) {
     let rules = per_rule_metrics(samples, rule_ids());
-    println!("\nPer-rule metrics ({name} split)");
-    println!("rule\tprecision\trecall\tf1\tTP\tFP\tFN");
+    let intents = rule_intents();
+    println!("\nPer-rule metrics ({name} split; style rules lint but do not score)");
+    println!("rule\tintent\tprecision\trecall\tf1\tTP\tFP\tFN");
     for (rule, metric) in &rules {
+        let intent = match intents.get(rule) {
+            Some(lawlint_core::Intent::Style) => "style",
+            _ => "detection",
+        };
         println!(
-            "{rule}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}",
+            "{rule}\t{intent}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}",
             metric.precision,
             metric.recall,
             metric.f1,

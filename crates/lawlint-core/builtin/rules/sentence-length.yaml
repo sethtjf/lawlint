@@ -2,6 +2,7 @@ id: sentence-length
 engine: statistical
 scope: text
 severity: warning
+intent: style
 description: "Flags sentences that are difficult to read."
 message: "Sentence is too long; consider shortening it."
 metric: sentence-length

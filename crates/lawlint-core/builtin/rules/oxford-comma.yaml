@@ -2,6 +2,7 @@ id: oxford-comma
 engine: phrase
 scope: text
 severity: warning
+intent: style
 description: "Flags lists that omit the Oxford comma."
 rationale: "Avoid patterns that can make otherwise clear prose sound formulaic or overworked."
 message: "Use the Oxford comma before the final item in a list."

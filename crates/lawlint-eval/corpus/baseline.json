@@ -1,14 +1,13 @@
 {
-  "overall_auc": 0.30563820018365473,
+  "overall_auc": 0.6974104683195592,
   "slice_auc": {
-    "naive": 0.3031986531986532,
-    "rule-evading": 0.35412748171368863,
-    "self-edit": 0.2550600343053173
+    "naive": 0.5783389450056117,
+    "rule-evading": 0.8519331243469175,
+    "self-edit": 0.6496283590623213
   },
   "per_rule_precision": {
     "core/no-ai-cliches": 0.9722222222222222,
     "core/no-doublets": 0.9487179487179487,
-    "core/no-em-dash": 0.06451612903225806,
     "core/no-em-dash-overuse": 0.0,
     "core/no-empty-emphasis": 0.5,
     "core/no-en-dash": 0.0,
@@ -19,11 +18,8 @@
     "core/no-parenthetical-asides": 0.3577981651376147,
     "core/no-passive-overuse": 0.5,
     "core/no-repetitive-openers": 0.6582278481012658,
-    "core/no-robotic-transitions": 0.0,
     "core/no-rule-of-three": 0.9166666666666666,
     "core/no-semicolons": 0.23846153846153847,
-    "core/no-sycophantic-openers": 0.0,
-    "core/no-throat-clearing": 0.0,
     "core/oxford-comma": 0.32298136645962733,
     "core/sentence-length": 0.33035714285714285
   }

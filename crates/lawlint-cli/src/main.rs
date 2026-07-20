@@ -636,6 +636,7 @@ fn rule_meta_json(meta: &RuleMeta) -> serde_json::Value {
         "tier": meta.tier,
         "scope": meta.scope,
         "severity": meta.severity,
+        "intent": meta.intent,
         "description": meta.description,
         "docsUrl": meta.docs_url,
         "examples": meta.examples,
@@ -1218,6 +1219,7 @@ mod tests {
             rule_id: RuleId("core/x".into()),
             severity,
             tier: Tier::Static,
+            intent: lawlint_core::Intent::Detection,
             span: TextRange { start: 0, end: 1 },
             message: "m".into(),
             line: 1,
@@ -1294,6 +1296,7 @@ mod tests {
             tier: Tier::Static,
             scope: Scope::Prose,
             severity: Severity::Warning,
+            intent: lawlint_core::Intent::Style,
             description: "Flags em dashes.".into(),
             docs_url: "https://lawlint.com/rules/no-em-dash".into(),
             rationale: None,
@@ -1304,6 +1307,7 @@ mod tests {
         let wrapped = &value["meta"];
         assert_eq!(wrapped["description"], "Flags em dashes.");
         assert_eq!(wrapped["severity"], "warning");
+        assert_eq!(wrapped["intent"], "style");
         assert_eq!(wrapped["docsUrl"], "https://lawlint.com/rules/no-em-dash");
         assert!(wrapped.get("docs_url").is_none(), "must be camelCase");
         assert!(wrapped.get("rationale").is_none(), "None rationale skipped");

@@ -191,6 +191,7 @@ impl From<LenientFinding> for JudgeFinding {
 /// Parse model output into findings. Tolerates markdown code fences and
 /// leading/trailing prose around the JSON array; anything else is
 /// `MalformedResponse` (core retries once, then fails the chunk closed).
+/// Negative-verdict findings are dropped here (see [`is_negative_verdict`]).
 fn parse_findings(content: &str) -> Result<Vec<JudgeFinding>, JudgeError> {
     let stripped = strip_code_fences(content.trim());
 
@@ -205,10 +206,71 @@ fn parse_findings(content: &str) -> Result<Vec<JudgeFinding>, JudgeError> {
 
     for candidate in candidates {
         if let Ok(found) = serde_json::from_str::<Vec<LenientFinding>>(candidate) {
-            return Ok(found.into_iter().map(JudgeFinding::from).collect());
+            return Ok(found
+                .into_iter()
+                .map(JudgeFinding::from)
+                .filter(|f| !is_negative_verdict(f))
+                .collect());
         }
     }
     Err(JudgeError::MalformedResponse(truncate(content, 300)))
+}
+
+/// Verdict-polarity guard (#39): small local models sometimes emit their
+/// *pass* verdict as a finding object ("The text does not flag any empty
+/// hedge") instead of returning `[]`; such findings quote real text with high
+/// confidence, so core's confidence floor and grounding both pass them.
+///
+/// A finding is a negative verdict only when its explanation negates the
+/// violation itself — either a rule-agnostic verdict phrase ("does not
+/// violate", "no violation") or a negation whose object is the rule's own
+/// name ("no empty hedge", "is not an empty hedge"). The patterns are
+/// deliberately narrow: a real explanation that merely contains a negation
+/// ("this hedge adds no information", "does not commit to a position") must
+/// survive — a missed negative verdict is one bogus diagnostic, a dropped
+/// real finding is silently lost.
+fn is_negative_verdict(finding: &JudgeFinding) -> bool {
+    let explanation = finding.explanation.to_lowercase();
+
+    const VERDICT_NEGATIONS: &[&str] = &[
+        "does not violate",
+        "do not violate",
+        "doesn't violate",
+        "not a violation",
+        "not violated",
+        "no violation",
+        "does not flag",
+        "do not flag",
+        "doesn't flag",
+        "nothing to flag",
+        "no issues found",
+        "no problems found",
+        "complies with the rule",
+    ];
+    if VERDICT_NEGATIONS.iter().any(|p| explanation.contains(p)) {
+        return true;
+    }
+
+    // Negations naming the rule itself as their object. Rule phrase = the id
+    // minus its namespace, hyphens as spaces ("core/empty-hedge" → "empty
+    // hedge").
+    let rule_phrase = finding
+        .rule
+        .rsplit('/')
+        .next()
+        .unwrap_or(&finding.rule)
+        .replace('-', " ")
+        .to_lowercase();
+    if rule_phrase.trim().is_empty() {
+        return false;
+    }
+    [
+        format!("no {rule_phrase}"),
+        format!("not a {rule_phrase}"),
+        format!("not an {rule_phrase}"),
+    ]
+    .iter()
+    .any(|p| explanation.contains(p.as_str()))
 }
 
 /// Strip a single wrapping markdown code fence (``` or ```json).
@@ -468,6 +530,101 @@ mod tests {
         let (client, _) = FakeClient::new(vec![choices_response("  []  ")]);
         let judge = AxJudge::new(Box::new(client), "m");
         assert!(judge.evaluate(&req("p")).unwrap().is_empty());
+    }
+
+    // ---- verdict-polarity guard (#39 part 1) ----------------------------
+
+    #[test]
+    fn canned_negative_verdict_response_is_dropped() {
+        // Regression (#39): on clean chunks the small local model emits its
+        // pass verdict as a finding — quoting real text with confidence ≥ 0.6,
+        // so core's confidence floor and grounding both pass it.
+        let canned = r#"[{"rule": "core/empty-hedge", "quote": "the parties shall meet", "explanation": "The text does not flag any empty hedge.", "confidence": 0.9, "suggested_rewrite": null}]"#;
+        assert!(parse_findings(canned).unwrap().is_empty());
+    }
+
+    #[test]
+    fn negative_verdict_variants_are_dropped() {
+        for (rule, explanation) in [
+            (
+                "core/empty-hedge",
+                "The text does not flag any empty hedge.",
+            ),
+            ("core/empty-hedge", "No empty hedge found in this passage."),
+            ("core/empty-hedge", "This is not an empty hedge."),
+            (
+                "core/empty-hedge",
+                "The sentence does not violate the rule.",
+            ),
+            ("core/empty-hedge", "No violations found."),
+            ("core/empty-hedge", "The paragraph complies with the rule."),
+            (
+                "core/padded-elaboration",
+                "There is no padded elaboration here.",
+            ),
+            (
+                "core/padded-elaboration",
+                "This is not a padded elaboration.",
+            ),
+        ] {
+            let content = format!(
+                r#"[{{"rule": "{rule}", "quote": "q", "explanation": "{explanation}", "confidence": 0.9}}]"#
+            );
+            assert!(
+                parse_findings(&content).unwrap().is_empty(),
+                "not dropped: {explanation}"
+            );
+        }
+    }
+
+    #[test]
+    fn positive_findings_with_incidental_negation_survive() {
+        // The guard must prefer false negatives: real explanations often
+        // contain negations describing the violation, not negating it.
+        for (rule, explanation) in [
+            ("core/empty-hedge", "This hedge adds no information."),
+            (
+                "core/empty-hedge",
+                "The sentence hedges but does not commit to any position.",
+            ),
+            (
+                "core/empty-hedge",
+                "An empty hedge: the qualifier carries no substance.",
+            ),
+            (
+                "core/padded-elaboration",
+                "Padded elaboration that restates the point without new content.",
+            ),
+        ] {
+            let content = format!(
+                r#"[{{"rule": "{rule}", "quote": "q", "explanation": "{explanation}", "confidence": 0.9}}]"#
+            );
+            assert_eq!(
+                parse_findings(&content).unwrap().len(),
+                1,
+                "wrongly dropped: {explanation}"
+            );
+        }
+    }
+
+    #[test]
+    fn negative_verdict_dropped_alongside_kept_real_finding() {
+        let mixed = r#"[
+            {"rule": "core/empty-hedge", "quote": "could perhaps", "explanation": "Hedge that adds no information.", "confidence": 0.8},
+            {"rule": "core/padded-elaboration", "quote": "as noted above", "explanation": "The text does not violate this rule.", "confidence": 0.9}
+        ]"#;
+        let findings = parse_findings(mixed).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "core/empty-hedge");
+    }
+
+    #[test]
+    fn missing_explanation_is_not_a_negative_verdict() {
+        // Lenient parse defaults explanation to "" — the guard only fires on
+        // explicit negation, so such findings pass through (core's confidence
+        // floor handles under-specified findings).
+        let minimal = r#"[{"rule": "core/empty-hedge", "quote": "q", "confidence": 0.9}]"#;
+        assert_eq!(parse_findings(minimal).unwrap().len(), 1);
     }
 
     #[test]

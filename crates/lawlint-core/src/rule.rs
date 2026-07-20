@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::{Block, Document, Sentence, Token};
 use crate::judge::RubricFragment;
-use crate::types::{Fix, RuleId, Scope, Severity, TextRange, Tier};
+use crate::types::{Fix, Intent, RuleId, Scope, Severity, TextRange, Tier};
 
 /// Which callbacks a rule wants. The dispatcher only calls subscribed hooks.
 #[derive(Debug, Clone, Default)]
@@ -31,6 +31,8 @@ pub struct RuleMeta {
     pub tier: Tier,
     pub scope: Scope,
     pub severity: Severity,
+    /// style findings lint but never move the score; detection is the default.
+    pub intent: Intent,
     pub description: String,
     pub docs_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -172,6 +174,7 @@ mod tests {
                 tier: Tier::Static,
                 scope: Scope::Text,
                 severity: Severity::Error,
+                intent: Intent::Detection,
                 description: "d".into(),
                 docs_url: "https://lawlint.com/rules/x".into(),
                 rationale: None,
@@ -193,6 +196,7 @@ mod tests {
             tier: Tier::Static,
             scope: Scope::Text,
             severity: Severity::Warning,
+            intent: Intent::Style,
             description: "d".into(),
             docs_url: "u".into(),
             rationale: None,
@@ -207,5 +211,6 @@ mod tests {
         assert_eq!(v["severity"], "warning");
         assert_eq!(v["tier"], "static");
         assert_eq!(v["scope"], "text");
+        assert_eq!(v["intent"], "style");
     }
 }
