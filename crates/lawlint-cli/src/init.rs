@@ -324,12 +324,13 @@ fn default_catalog_index(model: &str) -> usize {
     }
 }
 
-/// Gemma 4 GGUFs (architecture `gemma4`) have no loader in the bundled
-/// candle runtime yet — warn at selection time, not after a multi-GB
-/// download at first run.
-fn looks_like_gemma4(repo: &str) -> bool {
+/// Gemma GGUFs (any version) have no loader in the bundled mistral.rs
+/// runtime — its GGUF loader carries no gemma architecture. Gemma runs
+/// from safetensors repos instead (quantized in situ), so warn at
+/// selection time, not after a multi-GB download at first run.
+fn looks_like_gemma_gguf(repo: &str) -> bool {
     let lower = repo.to_lowercase();
-    lower.contains("gemma-4") || lower.contains("gemma4")
+    lower.contains("gemma") && lower.contains("gguf")
 }
 
 /// Provider API key prompt. A stored key goes to the user-level credential
@@ -363,8 +364,8 @@ fn ask_ai<R: BufRead, W: Write>(
         &[
             "Qwen2.5-1.5B (local — private, no text leaves this machine; ~1 GB download on \
              first use)",
-            "Gemma 3 4B (local — private, no text leaves this machine; gated HF repo, ~3 GB \
-             download on first use)",
+            "Gemma 4 E4B (local — private, no text leaves this machine; ~16 GB download on \
+             first use, runs 4-bit-quantized in memory)",
             "Claude (Anthropic — hosted, text is sent to the provider, requires API key)",
             "GPT (OpenAI — hosted, text is sent to the provider, requires API key)",
             "Azure Foundry (hosted — text is sent to the provider, requires API key + \
@@ -398,13 +399,14 @@ fn ask_ai<R: BufRead, W: Write>(
                 .strip_prefix("local:")
                 .filter(|repo| repo.to_lowercase().contains("gemma"))
                 .unwrap_or(lawlint_judge::DEFAULT_GEMMA_REPO);
-            let repo = prompter.line("Hugging Face GGUF repo (repo[#file])", default_repo)?;
-            if looks_like_gemma4(&repo) {
-                prompter.say(
-                    "  Note: Gemma 4 GGUFs are experimental — the bundled runtime cannot \
-                     run them yet (Gemma 2/3 GGUFs work today). The repo stays editable \
-                     in .lawlint/config.json.",
-                )?;
+            let repo = prompter.line("Hugging Face repo (repo[#file])", default_repo)?;
+            if looks_like_gemma_gguf(&repo) {
+                prompter.say(&format!(
+                    "  Note: gemma GGUFs are not runnable by the bundled runtime — use \
+                     the safetensors repo (e.g. {}), which runs 4-bit-quantized \
+                     in-process. The repo stays editable in .lawlint/config.json.",
+                    lawlint_judge::DEFAULT_GEMMA_REPO
+                ))?;
             }
             Ok(AiSelection::keyless(format!("local:{repo}")))
         }
@@ -927,8 +929,8 @@ mod tests {
             "local:me/custom-qwen-GGUF"
         );
 
-        // Choice 2 (Gemma): config-editable repo; the default runs on the
-        // bundled runtime, so no experimental warning.
+        // Choice 2 (Gemma 4): config-editable repo; the default (safetensors,
+        // runs via in-situ quantization) draws no warning.
         let mut p = prompter("2\n\n");
         let selection = ask_ai("", &mut p).unwrap();
         assert_eq!(
@@ -936,15 +938,16 @@ mod tests {
             format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO)
         );
         let transcript = String::from_utf8(p.output).unwrap();
-        assert!(!transcript.contains("experimental"));
+        assert!(!transcript.contains("not runnable"));
 
-        // A Gemma 4 repo (architecture the runtime cannot load yet) warns
-        // at selection time, before any download.
+        // A gemma GGUF repo (no gemma architecture in the bundled runtime's
+        // GGUF loader) warns at selection time, before any download.
         let mut p = prompter("2\nunsloth/gemma-4-E4B-it-GGUF\n");
         let selection = ask_ai("", &mut p).unwrap();
         assert_eq!(selection.model, "local:unsloth/gemma-4-E4B-it-GGUF");
         let transcript = String::from_utf8(p.output).unwrap();
-        assert!(transcript.contains("experimental"));
+        assert!(transcript.contains("not runnable"));
+        assert!(transcript.contains(lawlint_judge::DEFAULT_GEMMA_REPO));
     }
 
     #[test]

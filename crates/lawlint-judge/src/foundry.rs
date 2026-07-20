@@ -6,7 +6,7 @@
 //! go through the Anthropic passthrough (`/anthropic/v1/messages`,
 //! `x-api-key`), everything else through the OpenAI-compatible route
 //! (`/models/chat/completions`, `api-key`). Responses are normalized to the
-//! OpenAI chat-completions shape at the `chat` boundary, like `CandleClient`.
+//! OpenAI chat-completions shape at the `chat` boundary, like `MistralRsClient`.
 
 use axllm::{AxAIClient, AxError, AxResult};
 use serde::Deserialize;
