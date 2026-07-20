@@ -2,14 +2,18 @@
 //! in-process. Default backend for the lawlint judge (design doc §10.2).
 //!
 //! Speaks OpenAI chat-completions shapes at the `chat` boundary: parses
-//! `{messages: [{role, content}]}` requests, applies the model's chat
-//! template (ChatML — Qwen instruct family), generates greedily (temp 0),
-//! and returns `{choices: [{message: {role, content}}]}`.
+//! `{messages: [{role, content}]}` requests, applies the architecture's chat
+//! template (ChatML for the Qwen instruct family, `<start_of_turn>` for
+//! Gemma), generates greedily (temp 0), and returns
+//! `{choices: [{message: {role, content}}]}`.
 //!
 //! The model is a small quantized instruct GGUF, lazily downloaded through
 //! hf-hub on first use (with progress on stderr) and cached under the
-//! standard HF cache dir. CPU inference, Metal when available (macOS).
-//! All failure paths return `AxResult` errors — never panics.
+//! standard HF cache dir. The GGUF's `general.architecture` selects the
+//! weight loader: qwen2 (default) or the gemma family (gemma/gemma2/gemma3;
+//! gemma4 — the Gemma 4 series — is not loadable by candle 0.11 yet and
+//! fails with an actionable error). CPU inference, Metal when available
+//! (macOS). All failure paths return `AxResult` errors — never panics.
 
 use std::path::PathBuf;
 
@@ -17,7 +21,7 @@ use axllm::{AxAIClient, AxError, AxResult};
 use candle_core::quantized::gguf_file;
 use candle_core::{Device, Tensor};
 use candle_transformers::generation::{LogitsProcessor, Sampling};
-use candle_transformers::models::quantized_qwen2::ModelWeights;
+use candle_transformers::models::{quantized_gemma3, quantized_qwen2};
 use hf_hub::api::sync::{Api, ApiRepo};
 use serde_json::{json, Value};
 use tokenizers::Tokenizer;
@@ -44,13 +48,62 @@ pub struct CandleClient {
 }
 
 struct Loaded {
-    model: ModelWeights,
+    model: ArchModel,
     tokenizer: Tokenizer,
     device: Device,
     eos: Vec<u32>,
     /// Trained context window (from GGUF metadata) — the hard cap on
     /// prompt + generated positions.
     context_length: usize,
+}
+
+/// Architecture-specific weights. Gemma's candle model has no public
+/// KV-cache reset, so the pristine weights are kept and cloned per
+/// generation (cheap — quantized tensors are Arc-backed).
+enum ArchModel {
+    Qwen2(quantized_qwen2::ModelWeights),
+    Gemma(quantized_gemma3::ModelWeights),
+}
+
+/// One generation's forward-pass handle with a fresh KV state.
+enum Session<'a> {
+    Qwen2(&'a mut quantized_qwen2::ModelWeights),
+    Gemma(Box<quantized_gemma3::ModelWeights>),
+}
+
+impl ArchModel {
+    fn session(&mut self) -> Session<'_> {
+        match self {
+            ArchModel::Qwen2(model) => {
+                model.clear_kv_cache();
+                Session::Qwen2(model)
+            }
+            ArchModel::Gemma(pristine) => Session::Gemma(Box::new(pristine.clone())),
+        }
+    }
+
+    fn prompt(&self, messages: &[(String, String)]) -> String {
+        match self {
+            ArchModel::Qwen2(_) => chatml_prompt(messages),
+            ArchModel::Gemma(_) => gemma_prompt(messages),
+        }
+    }
+
+    fn eos_candidates(&self) -> &'static [&'static str] {
+        match self {
+            ArchModel::Qwen2(_) => &["<|im_end|>", "<|endoftext|>", "</s>"],
+            ArchModel::Gemma(_) => &["<end_of_turn>", "<eos>"],
+        }
+    }
+}
+
+impl Session<'_> {
+    fn forward(&mut self, input: &Tensor, index_pos: usize) -> candle_core::Result<Tensor> {
+        match self {
+            Session::Qwen2(model) => model.forward(input, index_pos),
+            Session::Gemma(model) => model.forward(input, index_pos),
+        }
+    }
 }
 
 impl CandleClient {
@@ -76,8 +129,8 @@ impl CandleClient {
 impl AxAIClient for CandleClient {
     fn chat(&mut self, request: Value) -> AxResult<Value> {
         let messages = parse_messages(&request)?;
-        let prompt = chatml_prompt(&messages);
         let loaded = self.ensure_loaded()?;
+        let prompt = loaded.model.prompt(&messages);
         let (content, finish_reason) = generate(loaded, &prompt)?;
         Ok(json!({
             "object": "chat.completion",
@@ -163,6 +216,40 @@ fn chatml_prompt(messages: &[(String, String)]) -> String {
     p
 }
 
+/// Gemma chat template:
+/// `<start_of_turn>user\ncontent<end_of_turn>\n … <start_of_turn>model\n`.
+/// Gemma has no system role — system content folds into the next user turn;
+/// assistant turns map to role "model".
+fn gemma_prompt(messages: &[(String, String)]) -> String {
+    let mut p = String::new();
+    let mut pending_system: Vec<&str> = Vec::new();
+    for (role, content) in messages {
+        if role == "system" {
+            pending_system.push(content);
+            continue;
+        }
+        let role = if role == "assistant" { "model" } else { "user" };
+        p.push_str("<start_of_turn>");
+        p.push_str(role);
+        p.push('\n');
+        if role == "user" && !pending_system.is_empty() {
+            p.push_str(&pending_system.join("\n\n"));
+            p.push_str("\n\n");
+            pending_system.clear();
+        }
+        p.push_str(content);
+        p.push_str("<end_of_turn>\n");
+    }
+    if !pending_system.is_empty() {
+        // System-only conversations: emit the content as a user turn.
+        p.push_str("<start_of_turn>user\n");
+        p.push_str(&pending_system.join("\n\n"));
+        p.push_str("<end_of_turn>\n");
+    }
+    p.push_str("<start_of_turn>model\n");
+    p
+}
+
 // ---- Model loading -----------------------------------------------------
 
 fn rt(context: &str, e: impl std::fmt::Display) -> AxError {
@@ -184,10 +271,14 @@ fn pick_device() -> Device {
 }
 
 /// Pick a GGUF file from a repo listing by quantization preference.
+/// Multimodal projector files (`mmproj`) are never the language model.
 fn pick_gguf(filenames: &[String]) -> Option<String> {
     let ggufs: Vec<&String> = filenames
         .iter()
-        .filter(|f| f.to_ascii_lowercase().ends_with(".gguf"))
+        .filter(|f| {
+            let lower = f.to_ascii_lowercase();
+            lower.ends_with(".gguf") && !lower.contains("mmproj")
+        })
         .collect();
     for quant in QUANT_PREFERENCE {
         if let Some(hit) = ggufs
@@ -217,12 +308,19 @@ fn resolve_gguf_file(repo: &ApiRepo, repo_id: &str) -> AxResult<String> {
     }
 }
 
-/// Tokenizer lives in the non-GGUF base repo for the Qwen GGUF layout
-/// (`…-Instruct-GGUF` → `…-Instruct`); fall back to the repo itself.
+/// Tokenizer lives in the non-GGUF base repo for the common GGUF layouts:
+/// `…-Instruct-GGUF` → `…-Instruct` (Qwen) and `…-it-qat-q4_0-gguf` →
+/// `…-it` (Google's Gemma QAT repos, which may be gated — hf-hub picks up
+/// a cached HF token for those); fall back to the repo itself.
 fn fetch_tokenizer(api: &Api, repo_id: &str) -> AxResult<PathBuf> {
     let mut candidates = Vec::new();
     for suffix in ["-GGUF", "-gguf"] {
         if let Some(base) = repo_id.strip_suffix(suffix) {
+            for qat in ["-qat-q4_0", "-qat-q8_0"] {
+                if let Some(base) = base.strip_suffix(qat) {
+                    candidates.push(base.to_string());
+                }
+            }
             candidates.push(base.to_string());
         }
     }
@@ -240,6 +338,24 @@ fn fetch_tokenizer(api: &Api, repo_id: &str) -> AxResult<PathBuf> {
         candidates.join(", "),
         last_err.unwrap_or_default()
     )))
+}
+
+/// Architectures the bundled candle runtime can run. `gemma4` (the Gemma 4
+/// series, catalog entry `DEFAULT_GEMMA_REPO`) and other unknown gemma
+/// variants get an actionable error instead of a metadata-key failure deep
+/// in the loader — the entry stays experimental until candle supports it.
+fn check_architecture(arch: Option<&str>) -> AxResult<()> {
+    match arch {
+        Some(a) if a.starts_with("gemma") && !matches!(a, "gemma" | "gemma2" | "gemma3") => {
+            Err(AxError::validation(format!(
+                "GGUF architecture {a:?} is not supported by the bundled candle runtime yet \
+                 (gemma family support stops at gemma3) — the Gemma 4 series is experimental; \
+                 pick another local model or run it behind an \
+                 \"openai:<base-url>#<model>\" server"
+            )))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn load_model(repo_id: &str, gguf_file: Option<&str>) -> AxResult<Loaded> {
@@ -264,20 +380,37 @@ fn load_model(repo_id: &str, gguf_file: Option<&str>) -> AxResult<Loaded> {
     eprintln!("lawlint-judge: loading {gguf_name}…");
     let mut file = std::fs::File::open(&gguf_path)
         .map_err(|e| rt(&format!("failed to open {}", gguf_path.display()), e))?;
-    let content = gguf_file::Content::read(&mut file)
-        .map_err(|e| rt("failed to read GGUF (is this a qwen2-family GGUF?)", e))?;
+    let content =
+        gguf_file::Content::read(&mut file).map_err(|e| rt("failed to read GGUF file", e))?;
     let context_length = context_length_from_metadata(&content.metadata);
-    let model = ModelWeights::from_gguf(content, &mut file, &device)
-        .map_err(|e| rt("failed to load GGUF weights (qwen2-family GGUFs only)", e))?;
+    let arch = content
+        .metadata
+        .get("general.architecture")
+        .and_then(|value| value.to_string().ok())
+        .cloned();
+    check_architecture(arch.as_deref())?;
+    let model = match arch.as_deref() {
+        Some("gemma") | Some("gemma2") | Some("gemma3") => ArchModel::Gemma(
+            quantized_gemma3::ModelWeights::from_gguf(content, &mut file, &device)
+                .map_err(|e| rt("failed to load gemma GGUF weights", e))?,
+        ),
+        // qwen2, or no architecture metadata (pre-dispatch behavior).
+        _ => ArchModel::Qwen2(
+            quantized_qwen2::ModelWeights::from_gguf(content, &mut file, &device)
+                .map_err(|e| rt("failed to load GGUF weights (qwen2-family GGUFs only)", e))?,
+        ),
+    };
 
-    let eos: Vec<u32> = ["<|im_end|>", "<|endoftext|>", "</s>"]
+    let eos: Vec<u32> = model
+        .eos_candidates()
         .iter()
         .filter_map(|t| tokenizer.token_to_id(t))
         .collect();
     if eos.is_empty() {
-        return Err(AxError::validation(
-            "tokenizer has no known end-of-turn token (<|im_end|>, <|endoftext|>, </s>)",
-        ));
+        return Err(AxError::validation(format!(
+            "tokenizer has no known end-of-turn token ({})",
+            model.eos_candidates().join(", ")
+        )));
     }
 
     Ok(Loaded {
@@ -323,9 +456,6 @@ fn ensure_prompt_fits(prompt_tokens: usize, context_length: usize) -> AxResult<(
 
 /// Greedy (temp-0) generation. Returns (text, finish_reason).
 fn generate(loaded: &mut Loaded, prompt: &str) -> AxResult<(String, &'static str)> {
-    // Fresh sequence: drop any KV state from a previous call.
-    loaded.model.clear_kv_cache();
-
     let encoding = loaded
         .tokenizer
         .encode(prompt, true)
@@ -351,12 +481,13 @@ fn generate(loaded: &mut Loaded, prompt: &str) -> AxResult<(String, &'static str
             .map_err(|e| rt("sampling failed", e))
     };
 
-    // Prompt pass (full sequence), then token-by-token with KV cache.
+    // Fresh session (KV state reset), then prompt pass (full sequence)
+    // followed by token-by-token generation with KV cache.
+    let mut session = loaded.model.session();
     let input = Tensor::new(prompt_tokens.as_slice(), &loaded.device)
         .and_then(|t| t.unsqueeze(0))
         .map_err(|e| rt("prompt tensor build failed", e))?;
-    let logits = loaded
-        .model
+    let logits = session
         .forward(&input, 0)
         .map_err(|e| rt("model forward failed", e))?;
     let mut next = sample(&mut sampler, &logits)?;
@@ -374,8 +505,7 @@ fn generate(loaded: &mut Loaded, prompt: &str) -> AxResult<(String, &'static str
         let input = Tensor::new(&[next], &loaded.device)
             .and_then(|t| t.unsqueeze(0))
             .map_err(|e| rt("token tensor build failed", e))?;
-        let logits = loaded
-            .model
+        let logits = session
             .forward(&input, index_pos)
             .map_err(|e| rt("model forward failed", e))?;
         index_pos += 1;
@@ -458,7 +588,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gemma_prompt_folds_system_and_opens_model_turn() {
+        let messages = vec![
+            ("system".to_string(), "S".to_string()),
+            ("user".to_string(), "U".to_string()),
+            ("assistant".to_string(), "A".to_string()),
+        ];
+        assert_eq!(
+            gemma_prompt(&messages),
+            "<start_of_turn>user\nS\n\nU<end_of_turn>\n<start_of_turn>model\nA<end_of_turn>\n\
+             <start_of_turn>model\n"
+        );
+        // System-only input still yields a well-formed user turn.
+        let system_only = vec![("system".to_string(), "S".to_string())];
+        assert_eq!(
+            gemma_prompt(&system_only),
+            "<start_of_turn>user\nS<end_of_turn>\n<start_of_turn>model\n"
+        );
+    }
+
+    // ---- architecture gate -----------------------------------------------
+
+    #[test]
+    fn check_architecture_rejects_unsupported_gemma_variants() {
+        // Supported (or unknown-to-us, handled by the qwen2 loader): ok.
+        for arch in [
+            None,
+            Some("qwen2"),
+            Some("gemma"),
+            Some("gemma2"),
+            Some("gemma3"),
+        ] {
+            assert!(check_architecture(arch).is_ok(), "{arch:?}");
+        }
+        // Gemma 4 (and other future gemma variants): actionable error.
+        for arch in ["gemma4", "gemma3n"] {
+            let err = check_architecture(Some(arch)).unwrap_err().to_string();
+            assert!(err.contains(arch), "{err}");
+            assert!(err.contains("experimental"), "{err}");
+        }
+    }
+
     // ---- gguf selection --------------------------------------------------
+
+    #[test]
+    fn pick_gguf_skips_multimodal_projector_files() {
+        let names = vec![
+            "gemma-4-E4B-it-mmproj.gguf".to_string(),
+            "gemma-4-E4B-it-q4_0.gguf".to_string(),
+        ];
+        assert_eq!(
+            pick_gguf(&names),
+            Some("gemma-4-E4B-it-q4_0.gguf".to_string())
+        );
+        // Only a projector file: nothing usable.
+        assert_eq!(pick_gguf(&names[..1]), None);
+    }
 
     #[test]
     fn pick_gguf_prefers_q4_k_m_then_falls_back() {

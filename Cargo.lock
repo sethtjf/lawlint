@@ -2993,6 +2993,7 @@ version = "0.5.0"
 dependencies = [
  "clap",
  "lawlint-core",
+ "lawlint-judge",
  "serde",
  "serde_json",
  "sha2",
@@ -3014,6 +3015,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokenizers 0.23.1",
+ "ureq",
 ]
 
 [[package]]

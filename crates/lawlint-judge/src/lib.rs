@@ -19,9 +19,14 @@
 
 mod cache;
 mod candle_client;
+pub mod credentials;
+#[cfg(feature = "cloud")]
+mod foundry;
 
 pub use cache::DiskCache;
 pub use candle_client::CandleClient;
+#[cfg(feature = "cloud")]
+pub use foundry::FoundryClient;
 
 // Re-export the ax boundary so consumers can supply custom backends.
 pub use axllm::{AxAIClient, AxError, AxResult};
@@ -37,6 +42,13 @@ use serde_json::{json, Value};
 
 /// Default local model repo (small quantized instruct GGUF).
 pub const DEFAULT_LOCAL_REPO: &str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF";
+
+/// Gemma 4 catalog repo (Google's official QAT q4_0 GGUF of the E4B
+/// instruct model). EXPERIMENTAL: the GGUF architecture is `gemma4`, which
+/// candle 0.11 cannot load yet — `CandleClient` fails with a clear error;
+/// Gemma 2/3 GGUFs run today through the same path. The repo id is
+/// config-editable (`local:<repo>`), so newer runtimes need no code change.
+pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-4-E4B-it-qat-q4_0-gguf";
 
 // ---- AxJudge -----------------------------------------------------------
 
@@ -224,10 +236,15 @@ fn truncate(s: &str, max_chars: usize) -> String {
 /// - `None` / `"local"` / `"local:<hf-repo>"` (optionally `#<gguf-file>`):
 ///   in-process [`CandleClient`] (lazy model download on first evaluate).
 /// - `"anthropic:<model>"` (feature `cloud`): stock ax Anthropic client;
-///   requires `ANTHROPIC_API_KEY`.
+///   requires `ANTHROPIC_API_KEY` (environment or credential store).
 /// - `"openai:<base-url>#<model>"` (feature `cloud`): stock ax
 ///   OpenAI-compatible client (covers any local OpenAI-compatible server);
 ///   uses `OPENAI_API_KEY` when set.
+/// - `"foundry:<deployment>"` (feature `cloud`): [`FoundryClient`]; requires
+///   `AZURE_FOUNDRY_ENDPOINT` + `AZURE_FOUNDRY_API_KEY`.
+///
+/// Hosted-provider keys resolve environment-first, then the user-level
+/// credential store written by `lawlint init` ([`credentials`]).
 pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
     let model = options.model.as_deref().unwrap_or("local");
 
@@ -252,8 +269,10 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
 
     #[cfg(feature = "cloud")]
     if let Some(anthropic_model) = model.strip_prefix("anthropic:") {
-        let key = std::env::var("ANTHROPIC_API_KEY")
-            .context("ANTHROPIC_API_KEY must be set for anthropic:<model> judge backends")?;
+        let key = credentials::lookup("ANTHROPIC_API_KEY").context(
+            "ANTHROPIC_API_KEY must be set (or stored via `lawlint init`) for \
+             anthropic:<model> judge backends",
+        )?;
         let client = axllm::ai(
             "anthropic",
             json!({ "model": anthropic_model, "api_key": key }),
@@ -267,15 +286,28 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
         let (base_url, openai_model) = spec.rsplit_once('#').with_context(|| {
             format!("openai judge model {model:?} must be \"openai:<base-url>#<model>\"")
         })?;
-        let key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "unused".to_string());
+        let key = credentials::lookup("OPENAI_API_KEY").unwrap_or_else(|| "unused".to_string());
         let mut client = axllm::OpenAICompatibleClient::new(key, openai_model)
             .with_api_url(base_url.to_string());
         client.base_url_override = Some(base_url.to_string());
         return Ok(Box::new(AxJudge::new(Box::new(client), model.to_string())));
     }
 
+    #[cfg(feature = "cloud")]
+    if let Some(deployment) = model.strip_prefix("foundry:") {
+        if deployment.is_empty() {
+            bail!("foundry judge model must be \"foundry:<deployment>\"");
+        }
+        let client = FoundryClient::from_credentials(Some(deployment.to_string()))
+            .map_err(|e| anyhow::anyhow!("failed to build foundry client: {e}"))?;
+        return Ok(Box::new(AxJudge::new(Box::new(client), model.to_string())));
+    }
+
     #[cfg(not(feature = "cloud"))]
-    if model.starts_with("anthropic:") || model.starts_with("openai:") {
+    if model.starts_with("anthropic:")
+        || model.starts_with("openai:")
+        || model.starts_with("foundry:")
+    {
         bail!(
             "judge model {model:?} needs the `cloud` feature — \
              rebuild lawlint-judge with `--features cloud`"
@@ -284,7 +316,7 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
 
     bail!(
         "unknown judge model {model:?} — use \"local[:<hf-repo>[#<gguf-file>]]\", \
-         \"anthropic:<model>\", or \"openai:<base-url>#<model>\""
+         \"anthropic:<model>\", \"openai:<base-url>#<model>\", or \"foundry:<deployment>\""
     )
 }
 
@@ -554,6 +586,7 @@ mod tests {
         for model in [
             "anthropic:claude-sonnet-4-5",
             "openai:http://localhost:8080/v1#m",
+            "foundry:gpt-5.5",
         ] {
             let opts = JudgeOptions {
                 model: Some(model.to_string()),
@@ -582,6 +615,21 @@ mod tests {
             ..Default::default()
         };
         assert!(create_judge(&bad).is_err());
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn create_judge_foundry_scheme_requires_deployment() {
+        // Empty deployment fails before any credential lookup.
+        let opts = JudgeOptions {
+            model: Some("foundry:".to_string()),
+            ..Default::default()
+        };
+        let Err(err) = create_judge(&opts) else {
+            panic!("expected error for empty foundry deployment");
+        };
+        let err = err.to_string();
+        assert!(err.contains("foundry:<deployment>"), "{err}");
     }
 
     // ---- helpers ---------------------------------------------------------

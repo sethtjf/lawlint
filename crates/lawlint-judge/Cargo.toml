@@ -20,6 +20,8 @@ candle-core = "0.11"
 candle-transformers = "0.11"
 hf-hub = { version = "0.4", default-features = false, features = ["ureq", "native-tls"] }
 tokenizers = "0.23"
+# Azure Foundry ax client (feature `cloud`) — blocking HTTP, no async runtime.
+ureq = { version = "2", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.11", features = ["metal"] }
@@ -29,6 +31,6 @@ candle-transformers = { version = "0.11", features = ["metal"] }
 tempfile = "3"
 
 [features]
-# Cloud backends ("anthropic:<model>", "openai:<base-url>#<model>") through
-# stock ax clients.
-cloud = []
+# Cloud backends ("anthropic:<model>", "openai:<base-url>#<model>",
+# "foundry:<deployment>") through the ax boundary.
+cloud = ["dep:ureq"]
