@@ -2988,6 +2988,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lawlint-eval"
+version = "0.5.0"
+dependencies = [
+ "clap",
+ "lawlint-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "lawlint-judge"
 version = "0.5.0"
 dependencies = [
