@@ -268,9 +268,14 @@ struct CorpusStats {
 }
 
 fn corpus_stats(files: &[CorpusFile]) -> CorpusStats {
-    // ", and|or " = serial-comma usage; "A, B and C" = its absence. Rough
-    // (clause commas also match the first), but consistency is what matters.
-    let oxford_with = Regex::new(r",\s+(?:and|or)\s").expect("static regex");
+    // Both detectors count only list-shaped text so the two counts are
+    // comparable: "A, B, and C" = serial-comma usage; "A, B and C" = its
+    // absence. Clause commas ("..., and the case proceeded") match neither —
+    // they are not serial-comma evidence either way.
+    let oxford_with = Regex::new(
+        r"[A-Za-z][\w'’-]*,\s+(?:[A-Za-z][\w'’-]*\s+){0,3}[A-Za-z][\w'’-]*,\s+(?:and|or)\s+[A-Za-z]",
+    )
+    .expect("static regex");
     let oxford_without =
         Regex::new(r"[A-Za-z][\w'’-]*,\s+(?:[A-Za-z][\w'’-]*\s+){1,3}(?:and|or)\s+[A-Za-z]")
             .expect("static regex");
@@ -554,10 +559,13 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
     }
 
     // Oxford-comma consistency: only when the corpus is consistent one way
-    // (a handful of lists minimum) does the opposite become a rule.
+    // (a handful of lists minimum) does the opposite become a rule. The
+    // rule patterns are the same list shapes the detectors count, so the
+    // gate exercises exactly what the rule will flag.
     if stats.oxford_without == 0 && stats.oxford_with >= 3 {
         let patterns = vec![PatternYaml {
-            pattern: r", [^,.;:]{1,40} (?:and|or) ".to_string(),
+            pattern: r"[A-Za-z][\w'’-]*,\s+(?:[A-Za-z][\w'’-]*\s+){1,3}(?:and|or)\s+[A-Za-z]"
+                .to_string(),
             message: None,
             suggestion: Some("Add the serial comma before the conjunction.".to_string()),
             fix: None,
@@ -584,7 +592,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
         });
     } else if stats.oxford_with == 0 && stats.oxford_without >= 3 {
         let patterns = vec![PatternYaml {
-            pattern: r", (?:and|or)\b".to_string(),
+            pattern:
+                r"[A-Za-z][\w'’-]*,\s+(?:[A-Za-z][\w'’-]*\s+){0,3}[A-Za-z][\w'’-]*,\s+(?:and|or)\b"
+                    .to_string(),
             message: None,
             suggestion: Some("Drop the comma before the conjunction.".to_string()),
             fix: None,
@@ -837,8 +847,7 @@ fn mining_prompt(stats: &CorpusStats, sample: &[Passage]) -> String {
          {{\"id\": \"kebab-case-name\", \"engine\": \"phrase\" or \"leading\", \
          \"severity\": \"warning\" or \"suggestion\", \"description\": \"...\", \
          \"message\": \"...\", \
-         \"patterns\": [{{\"pattern\": \"<Rust-flavored regex>\", \"suggestion\": \"...\", \
-         \"fix\": \"<literal replacement — ONLY when it is a mechanical drop-in>\"}}], \
+         \"patterns\": [{{\"pattern\": \"<Rust-flavored regex>\", \"suggestion\": \"...\"}}], \
          \"examples\": [{{\"bad\": \"<short counterfactual text the rule flags>\", \
          \"good\": \"<the writer's actual phrasing, quoted from a passage>\"}}], \
          \"mined_from\": \"<source passage and approximate frequency>\"}}\n\
@@ -856,14 +865,17 @@ fn mining_prompt(stats: &CorpusStats, sample: &[Passage]) -> String {
 #[serde(untagged)]
 enum MinedPattern {
     Bare(String),
+    // No `fix` field: a `fix:` ships as a MachineApplicable edit that
+    // `--fix` (and the .docx revision path) applies verbatim, and the gate
+    // never exercises replacement text — examples only check flag/not-flag.
+    // Mechanical fixes stay hand-curated in pass 1; an agent-supplied "fix"
+    // key is ignored by parsing.
     Detailed {
         pattern: String,
         #[serde(default)]
         message: Option<String>,
         #[serde(default)]
         suggestion: Option<String>,
-        #[serde(default)]
-        fix: Option<String>,
     },
 }
 
@@ -1001,12 +1013,11 @@ fn mined_candidate(
                 pattern,
                 message,
                 suggestion,
-                fix,
             } => PatternYaml {
                 pattern,
                 message,
                 suggestion,
-                fix,
+                fix: None,
             },
         })
         .collect();
@@ -1178,12 +1189,47 @@ fn package_name(out: &Path) -> String {
     }
 }
 
+/// Delete generated rule files from earlier runs that this run did not
+/// keep. Without this, a rule the current gate would drop (or no longer
+/// proposes) stays on disk and active in the package — flagging the user's
+/// own current writing, which is exactly what the gate exists to prevent.
+/// Only files starting with GENERATED_HEADER are touched; user-authored
+/// rules survive. Returns how many files were removed.
+fn prune_stale_rules(out: &Path, kept: &[Candidate]) -> Result<usize, String> {
+    let Ok(entries) = fs::read_dir(out.join("rules")) else {
+        return Ok(0); // no package on disk yet
+    };
+    let kept_names: BTreeSet<String> = kept
+        .iter()
+        .map(|candidate| format!("{}.yaml", candidate.id))
+        .collect();
+    let mut removed = 0;
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        let yaml = path.extension().and_then(|ext| ext.to_str()) == Some("yaml");
+        let kept = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| kept_names.contains(name));
+        let generated = yaml
+            && !kept
+            && fs::read_to_string(&path).is_ok_and(|text| text.starts_with(GENERATED_HEADER));
+        if generated {
+            fs::remove_file(&path)
+                .map_err(|error| format!("failed to remove stale {}: {error}", path.display()))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 fn write_package(
     out: &Path,
     package: &str,
     corpus_label: &str,
     kept: &[Candidate],
 ) -> Result<(), String> {
+    prune_stale_rules(out, kept)?;
     let rules_dir = out.join("rules");
     fs::create_dir_all(&rules_dir)
         .map_err(|error| format!("failed to create {}: {error}", rules_dir.display()))?;
@@ -1344,6 +1390,19 @@ fn run_learn(
     )?;
 
     if report.kept.is_empty() {
+        // Stale generated rules from a previous run must still go: leaving
+        // them would keep dropped rules active in the package.
+        let removed = prune_stale_rules(out, &report.kept)?;
+        if removed > 0 {
+            say(
+                output,
+                &format!(
+                    "Removed {removed} stale generated rule{} from {}.",
+                    if removed == 1 { "" } else { "s" },
+                    out.display()
+                ),
+            )?;
+        }
         say(
             output,
             "No rules survived; nothing written. A larger corpus (or a stronger \
@@ -1533,6 +1592,16 @@ mod tests {
         assert!(stats.sentence_words_max >= 8);
         // "the" opens two sentences.
         assert_eq!(stats.opener_top[0], ("the".to_string(), 2));
+
+        // Clause commas are not serial-comma evidence either way.
+        let files = vec![corpus_file(
+            "b.txt",
+            "The court denied the motion, and the case proceeded to trial. \
+             He objected, and the judge overruled it.",
+        )];
+        let stats = corpus_stats(&files);
+        assert_eq!(stats.oxford_with, 0);
+        assert_eq!(stats.oxford_without, 0);
     }
 
     #[test]
@@ -1574,6 +1643,27 @@ mod tests {
         let files = vec![corpus_file("tiny.txt", "Four words of text.")];
         let stats = corpus_stats(&files);
         assert!(statistical_candidates(&files, &stats).is_empty());
+    }
+
+    #[test]
+    fn clause_commas_do_not_fabricate_serial_comma_rules() {
+        // Compound sentences only — plenty of ", and" clause commas, zero
+        // three-item lists. Neither Oxford rule may be inferred from them.
+        let text = "The court denied the motion, and the case proceeded to trial. ".repeat(40);
+        let files = vec![corpus_file("clauses.txt", &text)];
+        let stats = corpus_stats(&files);
+        assert!(stats.words >= MIN_CORPUS_WORDS);
+        assert_eq!(stats.oxford_with, 0);
+        assert_eq!(stats.oxford_without, 0);
+        let ids: Vec<String> = statistical_candidates(&files, &stats)
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert!(
+            !ids.contains(&"serial-comma-required".to_string()),
+            "{ids:?}"
+        );
+        assert!(!ids.contains(&"no-serial-comma".to_string()), "{ids:?}");
     }
 
     #[test]
@@ -1692,6 +1782,22 @@ mod tests {
             .unwrap_err()
             .1
             .contains("no examples"));
+
+        // Agent-supplied fixes never survive: a `fix:` would ship as a
+        // MachineApplicable edit no gate ever exercised.
+        let fixed = rule(
+            r#"{"id": "no-utilize-agent", "description": "d",
+                "patterns": [{"pattern": "\\butilize[sd]?\\b", "suggestion": "use",
+                              "fix": "use"}],
+                "examples": [{"bad": "We utilize it.", "good": "We use it."}]}"#,
+        );
+        let candidate = mined_candidate(fixed, 0, "m", &none).unwrap();
+        assert!(!candidate.yaml.contains("fix:"), "{}", candidate.yaml);
+        assert!(
+            candidate.yaml.contains("suggestion: use"),
+            "{}",
+            candidate.yaml
+        );
 
         // A broken regex is caught by the loader round-trip.
         let broken = rule(
@@ -1889,6 +1995,65 @@ mod tests {
         assert_eq!(client.requests.len(), 2); // exactly one retry
         let transcript = String::from_utf8(output).unwrap();
         assert!(!transcript.contains("unavailable"), "{transcript}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_package_prunes_stale_generated_rules() {
+        let dir = temp_dir("prune");
+        let rules = dir.join("rules");
+        fs::create_dir_all(&rules).unwrap();
+        // A generated rule from an earlier run (not kept this run) and a
+        // user-authored rule (no header).
+        fs::write(
+            rules.join("stale.yaml"),
+            format!("{GENERATED_HEADER}id: stale\n"),
+        )
+        .unwrap();
+        fs::write(rules.join("mine.yaml"), "id: mine\n").unwrap();
+
+        let kept = vec![phrase_candidate(
+            "no-zebra",
+            r"\bzebra\b",
+            "A zebra appears.",
+            "A horse appears.",
+        )];
+        write_package(&dir, "personal", "corpus", &kept).unwrap();
+        assert!(!rules.join("stale.yaml").exists());
+        assert!(rules.join("mine.yaml").exists());
+        assert!(rules.join("no-zebra.yaml").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stale_rules_are_pruned_even_when_nothing_survives() {
+        let dir = temp_dir("prune-empty");
+        let corpus = dir.join("corpus");
+        fs::create_dir_all(&corpus).unwrap();
+        // Under MIN_CORPUS_WORDS: no pass-1 candidates; the agent mines
+        // nothing → kept is empty, yet the stale generated rule must go.
+        fs::write(corpus.join("memo.txt"), "A corpus far too small to mine.").unwrap();
+        let out = dir.join("personal");
+        fs::create_dir_all(out.join("rules")).unwrap();
+        fs::write(
+            out.join("rules/stale.yaml"),
+            format!("{GENERATED_HEADER}id: stale\n"),
+        )
+        .unwrap();
+
+        let files = ingest(&corpus).unwrap();
+        let mut client = FakeClient::new(vec![choices_response("[]")]);
+        let mut output = Vec::new();
+        let code = run_learn(&files, "corpus", &out, &mut client, "m", &mut output).unwrap();
+        assert_eq!(code, 0);
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(
+            transcript.contains("Removed 1 stale generated rule"),
+            "{transcript}"
+        );
+        assert!(!out.join("rules/stale.yaml").exists());
 
         fs::remove_dir_all(&dir).unwrap();
     }
