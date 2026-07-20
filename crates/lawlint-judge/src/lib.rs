@@ -43,12 +43,13 @@ use serde_json::{json, Value};
 /// Default local model repo (small quantized instruct GGUF).
 pub const DEFAULT_LOCAL_REPO: &str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF";
 
-/// Gemma 4 catalog repo (Google's official QAT q4_0 GGUF of the E4B
-/// instruct model). EXPERIMENTAL: the GGUF architecture is `gemma4`, which
-/// candle 0.11 cannot load yet — `CandleClient` fails with a clear error;
-/// Gemma 2/3 GGUFs run today through the same path. The repo id is
+/// Gemma catalog repo (Google's official QAT q4_0 GGUF of the Gemma 3 4B
+/// instruct model — architecture `gemma3`, which the bundled candle runtime
+/// runs today; the repo is gated, hf-hub picks up a cached HF token).
+/// Gemma 4 GGUFs (architecture `gemma4`) have no candle loader yet and fail
+/// with an actionable error in `CandleClient`; the repo id is
 /// config-editable (`local:<repo>`), so newer runtimes need no code change.
-pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-4-E4B-it-qat-q4_0-gguf";
+pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-3-4b-it-qat-q4_0-gguf";
 
 // ---- AxJudge -----------------------------------------------------------
 

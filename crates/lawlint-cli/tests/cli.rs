@@ -223,7 +223,7 @@ fn init_ai_flag_writes_preference_without_prompting_or_downloading() {
         .assert()
         .code(0);
     let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
-    assert!(config.contains("\"model\": \"local:google/gemma-4-E4B-it-qat-q4_0-gguf\""));
+    assert!(config.contains("\"model\": \"local:google/gemma-3-4b-it-qat-q4_0-gguf\""));
     // Invalid values are a config error (exit 2) with guidance.
     cmd(&dir)
         .args(["init", "--yes", "--force", "--ai", "gpt4"])
@@ -235,11 +235,11 @@ fn init_ai_flag_writes_preference_without_prompting_or_downloading() {
 #[test]
 fn init_scaffolds_a_working_rules_package() {
     let dir = TempDir::new().unwrap();
-    // Prompts: AI model (default: local Qwen), judge (default: disabled),
-    // markdown (default: no), starter rules package (yes).
+    // Prompts: AI model (default: local Qwen) + its repo, judge (default:
+    // disabled), markdown (default: no), starter rules package (yes).
     cmd(&dir)
         .arg("init")
-        .write_stdin("\n\n\ny\n")
+        .write_stdin("\n\n\n\ny\n")
         .assert()
         .code(0)
         .stdout(predicate::str::contains(".lawlint/rules/style.yaml"));

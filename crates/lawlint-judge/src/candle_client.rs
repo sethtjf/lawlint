@@ -341,9 +341,9 @@ fn fetch_tokenizer(api: &Api, repo_id: &str) -> AxResult<PathBuf> {
 }
 
 /// Architectures the bundled candle runtime can run. `gemma4` (the Gemma 4
-/// series, catalog entry `DEFAULT_GEMMA_REPO`) and other unknown gemma
-/// variants get an actionable error instead of a metadata-key failure deep
-/// in the loader — the entry stays experimental until candle supports it.
+/// series) and other unknown gemma variants get an actionable error instead
+/// of a metadata-key failure deep in the loader — no candle release ships a
+/// quantized gemma4 loader yet.
 fn check_architecture(arch: Option<&str>) -> AxResult<()> {
     match arch {
         Some(a) if a.starts_with("gemma") && !matches!(a, "gemma" | "gemma2" | "gemma3") => {
