@@ -4,7 +4,8 @@
 //! [`AxJudge`] whose prompt/JSON-contract layer is backend-independent;
 //! backends are [`axllm::AxAIClient`] implementations:
 //!
-//! - [`MistralRsClient`] (default): in-process mistral.rs inference — a
+//! - [`MistralRsClient`] (`local:` specs, explicit opt-in — see #50; there
+//!   is no default backend): in-process mistral.rs inference — a
 //!   small quantized instruct GGUF (Qwen2.5-1.5B-Instruct by default) or a
 //!   safetensors repo quantized in situ (the Gemma 4 series runs this way),
 //!   lazily downloaded into the standard HF hub cache. CPU, with Metal on
@@ -412,10 +413,20 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
     )
 }
 
-/// Create a judge from `JudgeOptions.model` (`None` = default local). See
-/// [`create_client`] for the spec grammar.
+/// Create a judge from `JudgeOptions.model`. See [`create_client`] for the
+/// spec grammar. There is no default backend (#50): `model: None` means the
+/// user never configured one, and silently downloading a multi-GB local
+/// model would be the wrong surprise — it errors with `lawlint init`
+/// guidance instead. Explicit specs (including `local:`) always work.
 pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
-    let (client, model_id) = create_client(options.model.as_deref().unwrap_or("local"))?;
+    let Some(model) = options.model.as_deref() else {
+        bail!(
+            "no AI model is configured — run `lawlint init` to choose one \
+             (hosted providers recommended), or pass an explicit spec such as \
+             \"anthropic:<model>\" or \"local:<hf-repo>\""
+        );
+    };
+    let (client, model_id) = create_client(model)?;
     Ok(Box::new(AxJudge::new(client, model_id)))
 }
 
@@ -791,9 +802,15 @@ mod tests {
     // ---- create_judge routing -------------------------------------------
 
     #[test]
-    fn create_judge_default_is_local_mistralrs() {
-        let judge = create_judge(&JudgeOptions::default()).unwrap();
-        assert_eq!(judge.model_id(), format!("local:{DEFAULT_LOCAL_REPO}"));
+    fn create_judge_unconfigured_errors_with_init_guidance() {
+        // #50: no silent local default — an unconfigured judge must error
+        // with actionable guidance, never start a model download.
+        let Err(err) = create_judge(&JudgeOptions::default()) else {
+            panic!("expected error for unconfigured model");
+        };
+        let err = err.to_string();
+        assert!(err.contains("lawlint init"), "{err}");
+        assert!(err.contains("no AI model is configured"), "{err}");
     }
 
     #[test]

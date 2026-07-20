@@ -1432,6 +1432,22 @@ fn run_learn(
     Ok(0)
 }
 
+/// The mining model spec: `--model` overrides; otherwise the AI preferences
+/// from `lawlint init` (`ai.features.learn`, then `ai.model`). No silent
+/// local fallback (#50): unconfigured errors with init guidance instead of
+/// downloading a model.
+fn resolve_model_spec(model_flag: Option<&str>, config: &LintOptions) -> Result<String, String> {
+    model_flag
+        .map(str::to_string)
+        .or_else(|| config.ai_model("learn"))
+        .ok_or_else(|| {
+            "lawlint learn needs an AI model but none is configured — run `lawlint init` \
+             to choose one (hosted providers recommended), or pass an explicit \
+             --model <spec> (e.g. --model anthropic:<model>)"
+                .to_string()
+        })
+}
+
 pub(crate) fn learn_command(
     path: &Path,
     out: &Path,
@@ -1447,12 +1463,10 @@ pub(crate) fn learn_command(
             path.display()
         ));
     }
-    // --model overrides; otherwise the AI preferences from `lawlint init`
-    // (ai.features.learn, then ai.model); "local" only as the last resort.
-    let spec = model_flag
-        .map(str::to_string)
-        .or_else(|| config.ai_model("learn"))
-        .unwrap_or_else(|| "local".to_string());
+    let spec = resolve_model_spec(model_flag, &config)?;
+    if let Some(notice) = crate::local_notice(&spec, &config) {
+        eprintln!("{notice}");
+    }
     let (mut client, model_id) =
         lawlint_judge::create_client(&spec).map_err(|error| error.to_string())?;
     let stdout = io::stdout();
@@ -2056,6 +2070,39 @@ mod tests {
         assert!(!out.join("rules/stale.yaml").exists());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_model_spec_errors_when_unconfigured() {
+        use lawlint_core::AiOptions;
+        // Nothing configured, no flag: error with init guidance (#50) — the
+        // command must never fall back to downloading a local model.
+        let bare = LintOptions::default();
+        let err = resolve_model_spec(None, &bare).unwrap_err();
+        assert!(err.contains("lawlint init"), "{err}");
+        assert!(err.contains("none is configured"), "{err}");
+
+        // The flag always wins; the ai preferences fill in otherwise
+        // (per-feature override first).
+        assert_eq!(
+            resolve_model_spec(Some("anthropic:cli"), &bare).unwrap(),
+            "anthropic:cli"
+        );
+        let mut config = LintOptions {
+            ai: Some(AiOptions {
+                model: Some("foundry:d".into()),
+                features: Some(
+                    [("learn".to_string(), "anthropic:m".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(resolve_model_spec(None, &config).unwrap(), "anthropic:m");
+        config.ai.as_mut().unwrap().features = None;
+        assert_eq!(resolve_model_spec(None, &config).unwrap(), "foundry:d");
     }
 
     #[test]

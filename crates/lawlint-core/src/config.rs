@@ -46,6 +46,12 @@ pub struct AiOptions {
     pub model: Option<String>,
     /// Per-feature overrides keyed by feature name ("judge", "learn", …).
     pub features: Option<HashMap<String, String>>,
+    /// `true` = the user has acknowledged the local-model constraints
+    /// (multi-GB download, slower inference, measurably lower quality —
+    /// docs/eval-corpus.md). Written by `lawlint init`'s advanced local
+    /// path; while unset, consumers print a one-line constraints notice
+    /// whenever a `local:` spec is used.
+    pub local_acknowledged: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -115,6 +121,13 @@ mod tests {
             ai.features.as_ref().unwrap().get("judge").unwrap(),
             "anthropic:m"
         );
+        // Absent acknowledgment field stays None (notice keeps printing).
+        assert!(ai.local_acknowledged.is_none());
+
+        let o: LintOptions =
+            serde_json::from_str(r#"{"ai": {"model": "local", "localAcknowledged": true}}"#)
+                .unwrap();
+        assert_eq!(o.ai.unwrap().local_acknowledged, Some(true));
     }
 
     #[test]
@@ -124,7 +137,7 @@ mod tests {
 
         o.ai = Some(AiOptions {
             model: Some("local".into()),
-            features: None,
+            ..Default::default()
         });
         assert_eq!(o.ai_model("judge"), Some("local".into()));
 
@@ -135,6 +148,7 @@ mod tests {
                     .into_iter()
                     .collect(),
             ),
+            ..Default::default()
         });
         assert_eq!(o.ai_model("judge"), Some("anthropic:m".into()));
         // Unknown feature falls back to the default model.

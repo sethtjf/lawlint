@@ -408,7 +408,8 @@ retry) is backend-independent; backends are `AxAIClient` implementations:
 1. **`AxJudge`**: implements `lawlint_core::Judge` over `Box<dyn axllm::AxAIClient>`.
    Uses an ax signature to produce the `JudgeFinding[]` JSON contract (§7). One judge,
    any backend. Trait is sync; wrap ax's async internals in a private tokio runtime.
-2. **`MistralRsClient` (default)**: custom `AxAIClient` impl — required method is
+2. **`MistralRsClient` (`local:` specs — an explicit, acknowledged opt-in since #50,
+   not a default)**: custom `AxAIClient` impl — required method is
    just `chat(&mut self, request: Value) -> AxResult<Value>` (verified, axllm v23,
    dyn-compatible). Runs **mistral.rs** inference in-process (`mistralrs`): a
    quantized small instruct GGUF (default Qwen2.5-1.5B-Instruct) via the GGUF
@@ -424,7 +425,13 @@ retry) is backend-independent; backends are `AxAIClient` implementations:
    (custom base URL; also covers any local OpenAI-compatible server such as an
    Ollama/vLLM/llama.cpp sidecar), Anthropic, Gemini, etc. Zero judge-logic changes.
 4. Backend selection: `create_judge(&JudgeOptions) -> Result<Box<dyn Judge>>` keyed on
-   `model` (`local:<hf-repo>` default; `anthropic:<model>`, `openai:<base-url>#<model>`, …).
+   `model` (`anthropic:<model>`, `openai:<base-url>#<model>`, `foundry:<deployment>`,
+   `local:<hf-repo>`). **There is no default backend (#50)**: `model: None` errors with
+   `lawlint init` guidance — the measured local-judge quality (tier-3 F1 0.111/0.000,
+   docs/eval-corpus.md) plus the multi-GB download cost make hosted providers the
+   recommended path, and a silent local download the wrong surprise. `local:` specs
+   stay fully supported as an explicit opt-in; consumers print a one-line constraints
+   notice until the config records `ai.localAcknowledged: true`.
 Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or in CLI.
 
 ## 11. Consumers (phase 2)
@@ -435,14 +442,19 @@ Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or i
 
 ### CLI `init` (added post-v0.3.0)
 
-- `lawlint init [--yes] [--force]` — interactive project setup writing `.lawlint/config.json`:
-  judge backend choice (disabled / `local:` / `anthropic:` / `openai:`), confidence floor
-  (written only when ≠ 0.6), markdown default, and an optional starter rules package
-  (`.lawlint/rules/` — `style.yaml` named after the project directory + one example phrase
-  rule, wired up via `ruleDirs`; existing package files are never overwritten).
+- `lawlint init [--yes] [--force] [--ai MODEL] [--acknowledge-local]` — interactive project
+  setup writing `.lawlint/config.json`: AI-model catalog hosted-first (#50 — Anthropic
+  preselected, then OpenAI, Azure Foundry, OpenAI-compatible endpoint; local models behind
+  a final advanced entry that states the measured constraints and requires acknowledgment,
+  persisted as `ai.localAcknowledged`), judge enable, confidence floor (written only when
+  ≠ 0.6), markdown default, and an optional starter rules package (`.lawlint/rules/` —
+  `style.yaml` named after the project directory + one example phrase rule, wired up via
+  `ruleDirs`; existing package files are never overwritten).
 - Prompts read stdin line-by-line; empty line or EOF accepts the shown default, so piped/CI
   runs degrade to defaults instead of hanging. `--yes` skips prompts; `--force` overwrites an
-  existing `.lawlint/config.json` (exit 2 otherwise).
+  existing `.lawlint/config.json` (exit 2 otherwise); `--ai MODEL` answers the catalog
+  non-interactively and `--acknowledge-local` is the non-interactive constraints
+  acknowledgment for local selections.
 - A legacy `lawlint.config.json` seeds the prompt defaults; its uncovered keys
   (enable/disable/severity/thresholds/…) carry over verbatim, and the interactive flow offers
   to delete the legacy file (`--yes` always keeps it).

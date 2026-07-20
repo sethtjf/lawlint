@@ -33,6 +33,10 @@ mod app {
         /// Judge model spec(s), repeatable or comma-separated: "local",
         /// "local:<hf-repo>[#<gguf-file>]", "anthropic:<model>",
         /// "openai:<base-url>#<model>", "foundry:<deployment>".
+        // The "local" default here is a deliberate, explicit pin — this dev
+        // tool's documented baseline (docs/eval-corpus.md) is the local
+        // judge — not the silent fallback #50 removed from the product
+        // surfaces (`--judge`, `learn`), which error when unconfigured.
         #[arg(long = "model", value_delimiter = ',', default_value = "local")]
         models: Vec<String>,
         /// Evaluate only the first N train samples (smoke runs).
