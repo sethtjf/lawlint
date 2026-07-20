@@ -1,0 +1,57 @@
+id: no-dead-metaphors
+engine: phrase
+scope: text
+severity: warning
+intent: style
+description: "Flags worn-out metaphors and figures of speech."
+rationale: "Orwell's first rule: never use a figure of speech you are used to seeing in print. A dead metaphor no longer calls up an image; it just fills space. State the point plainly."
+message: "Replace this worn-out metaphor with a plain statement."
+examples:
+  - bad: "The settlement was low-hanging fruit for the plaintiff."
+    good: "The plaintiff settled the claim quickly and cheaply."
+patterns:
+  - pattern: '(?i)\blow[- ]hanging fruit\b'
+    message: "Avoid the cliché “low-hanging fruit”."
+    suggestion: "Name the easy win directly."
+  - pattern: '(?i)\blevel playing field\b'
+    message: "Avoid the cliché “level playing field”."
+    suggestion: "Say what is or is not equal."
+  - pattern: '(?i)\bmove the needle\b'
+    message: "Avoid the cliché “move the needle”."
+    suggestion: "State the change you mean."
+  - pattern: '(?i)\bthink(?:ing)? outside the box\b'
+    message: "Avoid the cliché “think outside the box”."
+    suggestion: "Describe the new approach."
+  - pattern: '(?i)\bthe elephant in the room\b'
+    message: "Avoid the cliché “the elephant in the room”."
+    suggestion: "Name the issue people avoid."
+  - pattern: '(?i)\ba perfect storm\b'
+    message: "Avoid the cliché “a perfect storm”."
+    suggestion: "List the causes that combined."
+  - pattern: '(?i)\bwhen push comes to shove\b'
+    message: "Avoid the cliché “when push comes to shove”."
+    suggestion: "Say when, or drop it."
+  - pattern: '(?i)\bback to the drawing board\b'
+    message: "Avoid the cliché “back to the drawing board”."
+    suggestion: "Say what you will redo."
+  - pattern: '(?i)\btip of the iceberg\b'
+    message: "Avoid the cliché “tip of the iceberg”."
+    suggestion: "State how much more there is."
+  - pattern: '(?i)\bpar for the course\b'
+    message: "Avoid the cliché “par for the course”."
+    suggestion: "Say that it is usual."
+  - pattern: '(?i)\bhit the ground running\b'
+    message: "Avoid the cliché “hit the ground running”."
+    suggestion: "Say what starts, and how fast."
+  - pattern: '(?i)\bthe lion[''’]s share\b'
+    message: "Avoid the cliché “the lion’s share”."
+    suggestion: "Use “most” or give the share."
+  - pattern: '(?i)\ba double[- ]edged sword\b'
+    message: "Avoid the cliché “a double-edged sword”."
+    suggestion: "Name the upside and the downside."
+  - pattern: '(?i)\bin a nutshell\b'
+    message: "Avoid the cliché “in a nutshell”."
+    suggestion: "Just state the summary."
+  - pattern: '(?i)\bthe ball is in (?:your|their|his|her|its) court\b'
+    message: "Avoid the cliché “the ball is in your court”."
+    suggestion: "Say who must act next."

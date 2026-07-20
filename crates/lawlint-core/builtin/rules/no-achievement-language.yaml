@@ -1,0 +1,45 @@
+id: no-achievement-language
+engine: phrase
+scope: text
+intent: style
+severity: warning
+description: "Flags achievement language and hype in reports, PRs, and docs."
+rationale: "Prose should state what changed and why. Words like “successfully”, “comprehensive”, and “flawless” praise the work instead of describing it, and are the tell of AI-written status updates. Say what happened; let the reader judge it."
+message: "Cut the achievement language; state what changed and why."
+examples:
+  - bad: "Successfully implemented comprehensive error handling to ensure reliable performance."
+    good: "Added error handling to every API endpoint."
+patterns:
+  - pattern: '(?i)\bsuccessfully\b'
+    message: "Cut “successfully”; state what changed."
+    suggestion: "Say what happened without the self-praise."
+  - pattern: '(?i)\bcomprehensive(?:ly)?\b'
+    message: "Cut “comprehensive”; say what it covers."
+    suggestion: "Name the actual scope."
+  - pattern: '(?i)\breliable\b|\breliably\b'
+    message: "Cut “reliable”; give the concrete behavior."
+    suggestion: "State what it does and when."
+  - pattern: '(?i)\bflawless(?:ly)?\b'
+    message: "Cut “flawless”; describe the result."
+    suggestion: "State the outcome plainly."
+  - pattern: '(?i)\beffortless(?:ly)?\b'
+    message: "Cut “effortless”; describe what the user does."
+    suggestion: "State the steps involved."
+  - pattern: '(?i)\bstate[- ]of[- ]the[- ]art\b'
+    message: "Cut “state-of-the-art”; say what it is."
+    suggestion: "Describe the actual capability."
+  - pattern: '(?i)\bbest[- ]in[- ]class\b'
+    message: "Cut “best-in-class”; give a concrete claim."
+    suggestion: "State a specific, checkable fact."
+  - pattern: '(?i)\bworld[- ]class\b'
+    message: "Cut “world-class”; give a concrete claim."
+    suggestion: "State a specific, checkable fact."
+  - pattern: '(?i)\bgame[- ]chang(?:er|ing)\b'
+    message: "Cut “game-changing”; say what changed."
+    suggestion: "Describe the concrete effect."
+  - pattern: '(?i)\brevolutionary\b|\brevolutioni[sz]e[sd]?\b'
+    message: "Cut “revolutionary”; describe the change."
+    suggestion: "State what is new and why it matters."
+  - pattern: '(?i)\btop[- ]notch\b'
+    message: "Cut “top-notch”; give a concrete claim."
+    suggestion: "State a specific, checkable fact."
