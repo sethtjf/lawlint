@@ -43,12 +43,40 @@ reclassified the anti-discriminative lexical rules as style and folded the
 absolute `core/no-em-dash` rule (train precision 0.065) into the rate-based
 `core/no-em-dash-overuse`.
 
+### Layer-2 statistical rules (#37)
+
+Two document-level statistical rules ship on top of the intent split, each a
+single per-document flag (`metric` + `threshold` + `direction` in YAML;
+computations in `engines/statistical.rs`):
+
+| Rule | Metric | Flag | Train AUC added alone |
+| --- | --- | --- | ---: |
+| `core/uniform-sentence-rhythm` | sentence-length variance (burstiness) | below 105 | 0.697 → 0.858 |
+| `core/triad-overuse` | "A, B, and C" constructions per 1000 words | above 2 | 0.697 → 0.845 |
+
+Thresholds were tuned on the train split only
+(`cargo run -p lawlint-eval --bin tune_statistical`); each shipped metric had
+to individually raise train AUC over the #38 baseline (0.697). Three candidate
+metrics from the issue were measured and **dropped**:
+
+- **cadence autocorrelation** — raw value AUC 0.490 on train (chance); its
+  apparent flag gain was a penalty-scaling artifact (the tuner's always-fire
+  control shows +0.013 from any universal flag).
+- **paired-adjective rate** — raw value AUC 0.561; the only thresholds that
+  gained AUC fired on 79% of human train documents (precision 0.55), and
+  honest thresholds (above the human p90) lost AUC outright.
+- **repeated-opener density** — individually +0.030, but adding it to the
+  shipped pair *lowered* the combined train AUC from 0.913 to 0.890; its
+  human false fires reorder pairs the other two rules already separate.
+
 Non-inferential rules and their intents, with train-split precision:
 
 | Rule | Intent | Train precision | Fired (TP+FP) |
 | --- | --- | ---: | ---: |
 | `core/no-hedging` | detection | 1.000 | 1 |
 | `core/no-ai-cliches` | detection | 0.972 | 36 |
+| `core/uniform-sentence-rhythm` | detection | 0.941 | 101 |
+| `core/triad-overuse` | detection | 0.770 | 161 |
 | `core/no-marketing-language` | detection | 0.972 | 36 |
 | `core/no-not-only` | detection | 0.972 | 36 |
 | `core/no-doublets` | detection | 0.949 | 39 |
@@ -70,8 +98,8 @@ Non-inferential rules and their intents, with train-split precision:
 `core/no-en-dash` joined the style set on its train-split check: all five
 firings land on human prose — typography lint, not an authorship signal.
 `core/no-em-dash-overuse` stays detection per the #38 decision; its three
-train firings are all human, so it is a watch item for the layer-2 retune
-(#37).
+train firings are all human, so it remains a watch item (unchanged by the
+layer-2 work in #37, which added rules rather than retuning it).
 
 ### Train split (CI gate)
 
@@ -79,10 +107,10 @@ The train split contains 330 rows.
 
 | Slice | AUC | Mean human-likeness: human | Mean human-likeness: AI |
 | --- | ---: | ---: | ---: |
-| Overall | 0.697 | 98.012 | 86.618 |
-| Naive | 0.578 | 98.012 | 95.815 |
-| Rule-evading | 0.852 | 98.012 | 79.741 |
-| Self-edit | 0.650 | 98.012 | 84.774 |
+| Overall | 0.913 | 96.261 | 78.576 |
+| Naive | 0.853 | 96.261 | 87.907 |
+| Rule-evading | 0.947 | 96.261 | 72.121 |
+| Self-edit | 0.938 | 96.261 | 76.132 |
 
 ### Held-out test split (headline)
 
@@ -90,19 +118,20 @@ The held-out test split contains 118 rows:
 
 | Slice | AUC | Mean human-likeness: human | Mean human-likeness: AI |
 | --- | ---: | ---: | ---: |
-| Overall | 0.660 | 97.525 | 85.458 |
-| Naive | 0.589 | 97.525 | 94.000 |
-| Rule-evading | 0.801 | 97.525 | 79.167 |
-| Self-edit | 0.608 | 97.525 | 82.150 |
+| Overall | 0.873 | 95.017 | 77.271 |
+| Naive | 0.786 | 95.017 | 86.619 |
+| Rule-evading | 0.942 | 95.017 | 70.222 |
+| Self-edit | 0.903 | 95.017 | 73.800 |
 
 Both splits are printed by `report`; `baseline.json` stores the train-split
 overall/slice AUCs and per-rule precision values for every rule that fired.
 
-The naive slice sits closest to chance because naive generations trip few
-lexical rules at these text lengths; recall, not precision, is now the
-binding constraint (most detection rules fire on under a quarter of AI
-rows). That is the problem the layer-2 statistical rules follow-on (#37)
-targets. Inferential rules (`core/empty-hedge` and `core/padded-elaboration`)
+The naive slice was the layer-2 target: naive generations trip few lexical
+rules at these text lengths, so before #37 that slice sat at 0.578 train /
+0.589 test. The two document-level statistical rules moved it to 0.853 train /
+0.786 test — rhythm and triad rate are properties of the generation itself,
+not of any word list a prompt can name.
+Inferential rules (`core/empty-hedge` and `core/padded-elaboration`)
 are not evaluated in this harness because `evaluate()` runs without a judge.
 
 The complete per-rule precision/recall/F1 table for both splits, labeled by

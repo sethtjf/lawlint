@@ -11,6 +11,7 @@
 
 use serde::Deserialize;
 
+use crate::engines::statistical::{Direction, Metric};
 use crate::error::LoadError;
 use crate::judge::Granularity;
 use crate::rule::RuleExample;
@@ -64,16 +65,22 @@ pub struct RuleDef {
     /// phrase only.
     #[serde(default)]
     pub allow_context: Option<AllowContextDef>,
-    /// density only: matches per 1000 words.
+    /// density: matches per 1000 words. statistical document-level metrics:
+    /// the flag boundary for `direction`.
     #[serde(default)]
     pub threshold: Option<f64>,
-    /// statistical only: sentence-length | repetitive-openers (non-exhaustive;
-    /// unknown metric = load error).
+    /// statistical only (non-exhaustive; unknown metric = load error). Two
+    /// per-sentence metrics (sentence-length, repetitive-openers) plus the
+    /// document-level metrics of `engines::statistical::Metric`.
     #[serde(default)]
     pub metric: Option<String>,
     /// statistical only, e.g. `{ max_words: 45 }` / `{ run_length: 3 }`.
     #[serde(default)]
     pub params: Option<std::collections::HashMap<String, f64>>,
+    /// statistical document-level metrics only: above | below — which side of
+    /// `threshold` the measured value must fall on to flag.
+    #[serde(default)]
+    pub direction: Option<String>,
     /// inferential only: sentence | paragraph | document.
     #[serde(default)]
     pub granularity: Option<String>,
@@ -311,6 +318,19 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
         ));
     }
 
+    // direction is a statistical-engine feature (per-metric fit is checked in
+    // the statistical arm below, after the metric itself validates).
+    if def.direction.is_some() && def.engine != "statistical" {
+        return Err(LoadError::invalid_field(
+            file,
+            "direction",
+            format!(
+                "direction only applies to statistical rules — this rule uses the {} engine",
+                def.engine
+            ),
+        ));
+    }
+
     match def.engine.as_str() {
         "phrase" => {
             if def.patterns.is_empty() {
@@ -378,23 +398,23 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
             compile_regex(file, "patterns[0]", def.patterns[0].pattern())?;
         }
         "statistical" => {
-            let metric = def
+            let metric_str = def
                 .metric
                 .as_deref()
                 .ok_or_else(|| LoadError::MissingField {
                     file: file.to_string(),
                     field: "metric".to_string(),
                 })?;
-            if !matches!(metric, "sentence-length" | "repetitive-openers") {
+            let Some(metric) = Metric::parse(metric_str) else {
                 return Err(LoadError::invalid_field(
                     file,
                     "metric",
                     format!(
-                        "{metric:?} is not a known metric — use sentence-length or \
-                         repetitive-openers"
+                        "{metric_str:?} is not a known metric — use {}",
+                        Metric::alternatives()
                     ),
                 ));
-            }
+            };
             // Params must be valid HERE: RuleSet::instantiate treats a
             // constructor failure on a validated def as a bug (panic), so
             // mirror StatisticalEngine::from_def's checks.
@@ -420,6 +440,42 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
                             "{max_words} is not a valid sentence length — use a positive \
                              number of words like 45"
                         ),
+                    ));
+                }
+            }
+            if !metric.is_document_level() && def.direction.is_some() {
+                return Err(LoadError::invalid_field(
+                    file,
+                    "direction",
+                    format!("direction only applies to document-level metrics, not {metric_str}"),
+                ));
+            }
+            if metric.is_document_level() {
+                let threshold = def.threshold.ok_or_else(|| LoadError::MissingField {
+                    file: file.to_string(),
+                    field: "threshold".to_string(),
+                })?;
+                // Unlike density, negative thresholds are legal: cadence
+                // autocorrelation lives in [-1, 1].
+                if !threshold.is_finite() {
+                    return Err(LoadError::invalid_field(
+                        file,
+                        "threshold",
+                        format!("{threshold} is not a valid threshold — use a finite number"),
+                    ));
+                }
+                let direction =
+                    def.direction
+                        .as_deref()
+                        .ok_or_else(|| LoadError::MissingField {
+                            file: file.to_string(),
+                            field: "direction".to_string(),
+                        })?;
+                if Direction::parse(direction).is_none() {
+                    return Err(LoadError::invalid_field(
+                        file,
+                        "direction",
+                        format!("{direction:?} is not a direction — use above or below"),
                     ));
                 }
             }
@@ -786,10 +842,62 @@ patterns: ["—"]
         let e = err("id: x\nengine: statistical\n");
         assert_eq!(e, "rules/test.yaml: missing required field `metric`");
         let e = err("id: x\nengine: statistical\nmetric: word-frequency\n");
+        assert!(
+            e.starts_with(
+                "rules/test.yaml: metric: \"word-frequency\" is not a known metric — \
+                 use sentence-length, repetitive-openers,"
+            ),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn statistical_document_metric_full_schema() {
+        let def = ok(r#"
+id: uniform-sentence-rhythm
+engine: statistical
+metric: sentence-length-variance
+threshold: 105
+direction: below
+"#);
+        assert_eq!(def.metric.as_deref(), Some("sentence-length-variance"));
+        assert_eq!(def.threshold, Some(105.0));
+        assert_eq!(def.direction.as_deref(), Some("below"));
+        // Negative thresholds are legal for document metrics.
+        ok("id: x\nengine: statistical\nmetric: cadence-autocorrelation\nthreshold: -0.5\ndirection: below\n");
+    }
+
+    #[test]
+    fn statistical_document_metric_needs_threshold_and_direction() {
+        let e = err("id: x\nengine: statistical\nmetric: triad-density\ndirection: above\n");
+        assert_eq!(e, "rules/test.yaml: missing required field `threshold`");
+        let e = err("id: x\nengine: statistical\nmetric: triad-density\nthreshold: 2\n");
+        assert_eq!(e, "rules/test.yaml: missing required field `direction`");
+        let e =
+            err("id: x\nengine: statistical\nmetric: triad-density\nthreshold: 2\ndirection: up\n");
         assert_eq!(
             e,
-            "rules/test.yaml: metric: \"word-frequency\" is not a known metric — \
-             use sentence-length or repetitive-openers"
+            "rules/test.yaml: direction: \"up\" is not a direction — use above or below"
+        );
+        let e = err(
+            "id: x\nengine: statistical\nmetric: triad-density\nthreshold: .nan\ndirection: above\n",
+        );
+        assert!(e.contains("threshold"), "{e}");
+    }
+
+    #[test]
+    fn direction_outside_document_metrics_is_an_error() {
+        let e = err("id: x\nengine: phrase\npatterns: [\"a\"]\ndirection: above\n");
+        assert_eq!(
+            e,
+            "rules/test.yaml: direction: direction only applies to statistical rules — \
+             this rule uses the phrase engine"
+        );
+        let e = err("id: x\nengine: statistical\nmetric: sentence-length\ndirection: above\n");
+        assert_eq!(
+            e,
+            "rules/test.yaml: direction: direction only applies to document-level metrics, \
+             not sentence-length"
         );
     }
 
