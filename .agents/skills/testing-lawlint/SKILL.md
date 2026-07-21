@@ -37,6 +37,24 @@ Compare `score`, `wordCount`, `sentenceCount`, and diagnostic count / rule IDs a
   `curl -s localhost:4321/download | grep -o 'querySelector<\|type UserAgentData\|as Navigator'` should
   return nothing. `bun run build`/`typecheck` will NOT catch this — you must load the page or curl it.
 
+## Testing custom rule packages (Markdown rule files)
+Rule packages load via `--rule-dir <dir>`: `<dir>/style.yaml` (`name`, `version`) plus `rules/*.md`.
+Every rule (hard and soft) is a Claude Code-style Markdown file: YAML frontmatter carries all
+structured fields (`id` and `engine` required); the body is the rubric for inferential (soft) rules
+(with `## Flag examples`/`## Pass examples` sections) or optional explanation prose for hard rules,
+exposed as `explanation` in `rules --json` and rendered on the website rule page.
+- `lawlint rules --json --rule-dir <dir>` proves loading and shows the merged metadata (built-ins + package).
+- `lawlint rules test <dir> --offline` validates flag/pass examples without an AI model (inferential
+  examples are skipped offline — expected, not a failure).
+- Validation errors are a product feature: assert exact messages (they include file path, field, value),
+  e.g. "needs at least 3 flag_examples" or severity "too severe for an inferential rule".
+- Frontmatter rejects unknown fields; `.yaml` files under `rules/` are ignored — a good negative
+  test is dropping an old-format YAML rule in and asserting the rule count is unchanged.
+- A live `--judge` run needs a configured AI model (`lawlint init`, hosted API key); without one, treat
+  judge inference as untested rather than simulating it.
+- The website /rules pages are generated from `lawlint rules --json`, so per-rule pages (including
+  soft-rule "kind"/tier rows) can be cross-checked against the CLI output.
+
 ## Quick checks
 - `bun run build`, `bun run lint`, `bun run typecheck`
 - `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`
