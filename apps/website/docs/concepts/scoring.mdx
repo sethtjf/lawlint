@@ -1,0 +1,84 @@
+---
+title: Scoring
+description: How the 0–100 human-likeness score is computed, and which findings charge it.
+icon: gauge
+---
+
+Every result carries a **human-likeness score** from 0 to 100. Higher is more
+human.
+
+## What charges the score
+
+Only findings from **detection**-intent rules — the subset corpus-validated to
+distinguish AI-generated from authentic human legal prose.
+
+[Style](/docs/concepts/rules#intent-which-rules-move-the-score)-intent findings
+are reported and fixed like any other, but charge nothing. A document full of
+semicolons and Oxford commas can still score 100.
+
+## The formula
+
+Each charging diagnostic contributes a base penalty by severity, multiplied by
+its own weight (default 1):
+
+| Severity | Base penalty |
+| -------- | ------------ |
+| `error` | 5 |
+| `warning` | 3 |
+| `suggestion` (and legacy `info`) | 1 |
+
+Those penalties are summed, normalized per 1,000 words, and decayed:
+
+```txt
+penalty  = Σ (base_penalty × weight)
+density  = penalty ÷ word_count × 1000
+score    = round(100 × e^(−density ÷ 100))   clamped to 0…100
+```
+
+Two consequences follow from the shape of that curve.
+
+<Columns cols={2}>
+  <Column>
+    **Length does not help.** Normalizing per 1,000 words means the score
+    measures issue *density*. Padding a document with clean paragraphs to dilute
+    its findings does not work.
+  </Column>
+  <Column>
+    **The decay is smooth.** There is no cliff, and no threshold to game — the
+    score falls off continuously, so removing any single finding always moves it
+    in the right direction.
+  </Column>
+</Columns>
+
+## Weights
+
+Density rules — [`no-hedging`](/docs/rules/no-hedging),
+[`no-em-dash-overuse`](/docs/rules/no-em-dash-overuse) — charge in proportion to
+how far past their threshold the text runs, rather than a flat penalty per
+match. A document slightly over the hedging threshold is charged slightly; one
+far over is charged far more.
+
+## Worked example
+
+A 100-word passage with one `warning`-severity detection finding of weight 2:
+
+```txt
+penalty  = 3 × 2            = 6
+density  = 6 ÷ 100 × 1000   = 60
+score    = round(100 × e^(−0.6)) = 55
+```
+
+## Reading it honestly
+
+The score is a density measurement of specific, enumerated patterns. It is not
+a classifier, and it does not claim to detect AI authorship.
+
+:::warning
+Do not use the score as evidence that a document was machine-written. Human
+writers produce high-scoring prose in the same house styles the detection rules
+target, and a careful editor can move any document's score without changing who
+wrote it.
+:::
+
+The useful reading is comparative: the same author's before and after, or one
+draft against another.

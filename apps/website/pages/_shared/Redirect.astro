@@ -1,0 +1,29 @@
+---
+// A static redirect stub.
+//
+// Blume's `redirects` config applies `basePath` to a redirect's `from` as well
+// as its `to`, so it can only express redirects between routes that already sit
+// under /docs. The legacy `/rules/*` URLs sit outside it, so they redirect from
+// here instead.
+interface Props {
+  to: string;
+}
+const { to } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content={`0; url=${to}`} />
+    <link rel="canonical" href={to} />
+    <meta name="robots" content="noindex" />
+    <title>Redirecting…</title>
+  </head>
+  <body>
+    <p>This page has moved to <a href={to}>{to}</a>.</p>
+    <script is:inline define:vars={{ to }}>
+      window.location.replace(to);
+    </script>
+  </body>
+</html>

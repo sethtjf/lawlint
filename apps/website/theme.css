@@ -1,0 +1,60 @@
+/*
+ * Docs-surface tokens. The landing page, playground, download, and changelog are
+ * hand-built Astro pages with their own paper/oxblood variables (see
+ * `pages/_shared/Layout.astro`); these map the same palette onto Blume's tokens
+ * so the two surfaces read as one site.
+ *
+ * Blume declares its dark values at the dark selector's specificity, so every
+ * colour that should change with the theme has to be declared in both blocks.
+ */
+
+/*
+ * Blume reads only the `:root` token blocks out of this file — any other
+ * selector is dropped when it generates the app stylesheet. Site chrome that
+ * needs real rules (the header wordmark) lives in pages/_shared/SiteFooter.astro.
+ */
+
+:root {
+  --paper: #f5f0e7;
+  --paper-deep: #e9e0d2;
+  --ink: #211e1b;
+  --oxblood: #7e2528;
+
+  --blume-background: var(--paper);
+  --blume-foreground: var(--ink);
+  --blume-muted: var(--paper-deep);
+  --blume-muted-foreground: #756d64;
+  --blume-border: #cfc4b5;
+  --blume-accent: var(--oxblood);
+  --blume-accent-foreground: var(--paper);
+  --blume-action: var(--oxblood);
+  /* Inline code and code blocks share this token, and the light Shiki theme
+     paints dark text — so it takes a paper tone, not the ink the marketing
+     pages use behind their <pre> blocks. */
+  --blume-code-background: #ece4d5;
+
+  /* Consumed by the playground (src/styles/global.css and the draft editor's
+     writing surface, which sits a shade above the page). */
+  --lawlint-destructive: #a33a3d;
+  --lawlint-surface: #f8f4ed;
+}
+
+:root[data-theme="dark"] {
+  --paper: #17150f;
+  --paper-deep: #211e17;
+  --ink: #ece4d5;
+  --oxblood: #c9736f;
+
+  --blume-background: var(--paper);
+  --blume-foreground: var(--ink);
+  --blume-muted: var(--paper-deep);
+  --blume-muted-foreground: #9b9285;
+  --blume-border: #3a352b;
+  --blume-accent: var(--oxblood);
+  --blume-accent-foreground: #17150f;
+  --blume-action: var(--oxblood);
+  --blume-code-background: #100e0a;
+
+  --lawlint-destructive: #e0817c;
+  --lawlint-surface: #1d1a13;
+}

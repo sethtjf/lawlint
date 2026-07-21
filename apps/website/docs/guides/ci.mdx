@@ -1,0 +1,75 @@
+---
+title: Continuous integration
+description: Gating a pull request on prose, using exit codes honestly.
+icon: git-branch
+---
+
+lawlint is a single static binary with no runtime dependencies and no network
+access, which makes it cheap to run on every pull request.
+
+## Exit codes
+
+| Code | Meaning | In CI |
+| ---- | ------- | ----- |
+| `0` | Clean, within limits | Pass |
+| `1` | An error-severity finding, or warnings over `--max-warnings` | Fail the check |
+| `2` | I/O or configuration problem | Fail the *build* — nothing was linted |
+
+Keeping `2` distinct from `1` is the point: a `2` means your setup is broken and
+the document was never examined. Do not collapse them into "non-zero means bad".
+
+## A GitHub Actions job
+
+```yaml .github/workflows/prose.yml
+name: prose
+on: pull_request
+
+jobs:
+  lawlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lawlint
+        run: curl -fsSL https://lawlint.com/install.sh | sh
+      - name: Lint changed documents
+        run: |
+          lawlint --no-update-check --max-warnings 20 docs/**/*.md
+```
+
+`--no-update-check` skips the once-a-day release check, which has no business
+running in CI.
+
+## Choosing a gate
+
+<Columns cols={2}>
+  <Column>
+    **Advisory** — run without `--max-warnings` so only error-severity findings
+    fail. Everything else is information in the log. Start here.
+  </Column>
+  <Column>
+    **Budgeted** — set `--max-warnings` to roughly today's count and ratchet it
+    down. Prevents regression without demanding a cleanup first.
+  </Column>
+</Columns>
+
+:::warning[Do not gate on the score]
+The [human-likeness score](/docs/concepts/scoring) is a density measurement of
+specific patterns, not a classifier. A score threshold in CI rewards whoever
+learns which rules move it — gate on findings, which name what to change.
+:::
+
+## Machine-readable output
+
+```sh
+lawlint --format json --quiet draft.md > findings.json
+```
+
+`--quiet` suppresses the pretty report while preserving the exit status. See
+the [JSON output reference](/docs/reference/json-output) for the schema, and key
+off `tier` rather than the hard/soft terminology.
+
+## Keep the judge out of it
+
+The [AI judge](/docs/guides/judge) sends document text to a model provider and
+can vary between runs. Neither belongs in a required check. Run the
+deterministic rules in CI, and leave `--judge` for the desk.

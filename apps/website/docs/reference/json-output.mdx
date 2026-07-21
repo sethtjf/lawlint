@@ -1,0 +1,116 @@
+---
+title: JSON output
+description: The schema of --format json — diagnostics, spans, fixes, and stats.
+icon: braces
+---
+
+```sh
+lawlint draft.md --format json
+```
+
+```json
+{
+  "diagnostics": [
+    {
+      "ruleId": "no-em-dash",
+      "severity": "warning",
+      "tier": "static",
+      "intent": "detection",
+      "span": { "start": 42, "end": 45 },
+      "message": "An em dash where a comma would do.",
+      "line": 3,
+      "column": 12,
+      "endLine": 3,
+      "endColumn": 15,
+      "excerpt": "The clause — which we drafted — is void.",
+      "suggestion": "Use a comma.",
+      "weight": 1,
+      "fix": {
+        "edits": [{ "range": { "start": 42, "end": 45 }, "replacement": "," }],
+        "applicability": "machineApplicable"
+      }
+    }
+  ],
+  "stats": { "wordCount": 812, "sentenceCount": 41, "score": 73 }
+}
+```
+
+Optional fields are omitted rather than emitted as `null`.
+
+## `diagnostics[]`
+
+<TypeTable type={{
+  ruleId: { type: "string", required: true, description: "Namespaced for package rules: <package>/<id>." },
+  severity: { type: '"error" | "warning" | "suggestion"', required: true, description: "\"info\" is accepted on input as an alias for \"suggestion\"." },
+  tier: { type: '"static" | "statistical" | "inferential"', required: true, description: "The stable kind contract. static and statistical are hard rules; inferential is soft." },
+  intent: { type: '"detection" | "style"', default: '"detection"', description: "Only detection findings charge the score. Absent in results serialized before intent existed." },
+  span: { type: "{ start, end }", required: true, description: "Byte offsets into the linted text." },
+  message: { type: "string", required: true, description: "What the rule found." },
+  line: { type: "number", required: true, description: "1-based." },
+  column: { type: "number", required: true, description: "1-based, in UTF-16 code units." },
+  endLine: { type: "number", description: "1-based. Omitted for single-position findings." },
+  endColumn: { type: "number", description: "1-based, UTF-16 code units." },
+  excerpt: { type: "string", required: true, description: "The trimmed source line the finding sits on." },
+  suggestion: { type: "string", description: "Prose advice. Present even when there is no applicable fix." },
+  weight: { type: "number", description: "Score penalty multiplier. Density rules scale it by how far past threshold the text runs." },
+  confidence: { type: "number", description: "Inferential (soft-rule) findings only." },
+  fix: { type: "Fix", description: "Present only when the rule produced one." },
+}} />
+
+:::note
+`span` is in **byte** offsets, while `column` is in **UTF-16 code units**. Use
+`span` to slice the source text and `column` to position a cursor in an editor;
+they disagree on any line containing non-ASCII characters — including the em
+dashes several rules flag.
+:::
+
+## `fix`
+
+<TypeTable type={{
+  edits: { type: "{ range: { start, end }, replacement: string }[]", required: true, description: "Byte ranges to replace. A fix may carry more than one edit." },
+  applicability: { type: '"machineApplicable" | "maybeIncorrect"', required: true, description: "--fix applies machineApplicable edits only." },
+}} />
+
+See [Fixes and tracked changes](/docs/guides/fixing#only-what-is-safe).
+
+## `stats`
+
+<TypeTable type={{
+  wordCount: { type: "number", required: true, description: "Words in the linted text — the denominator for score normalization." },
+  sentenceCount: { type: "number", required: true },
+  score: { type: "number", required: true, description: "Human-likeness score, 0–100." },
+}} />
+
+## `judge`
+
+Present only when the [AI judge](/docs/guides/judge) ran, carrying that run's
+judging statistics.
+
+## Rule metadata
+
+`lawlint rules --json` prints the loaded rule set rather than a lint result:
+
+```json
+[
+  {
+    "id": "empty-hedge",
+    "meta": {
+      "tier": "inferential",
+      "scope": "text",
+      "severity": "warning",
+      "description": "Flags hedges that carry no information about actual uncertainty.",
+      "docsUrl": "https://lawlint.com/rules/empty-hedge",
+      "examples": [],
+      "rationale": "A hedge earns its place only when it tells the reader what is uncertain and why."
+    }
+  }
+]
+```
+
+This is what generates the [rule reference](/docs/rules).
+
+## Compatibility
+
+Key off `tier`, not the hard/soft terminology — `tier` is the serialized
+contract and will not change. New optional fields may be added; parse
+permissively.

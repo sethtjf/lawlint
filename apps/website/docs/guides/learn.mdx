@@ -1,0 +1,77 @@
+---
+title: Learning your voice
+description: Mining a personal rule package from writing you have already done.
+icon: graduation-cap
+---
+
+The built-in rules encode general advice. `lawlint learn` encodes *yours* —
+generating a rule package from prose you have already written.
+
+```sh
+lawlint learn ~/my-writing/
+```
+
+Point it at a file or a directory of `.docx`, `.md`, or `.txt`. Requires a
+configured model; see [Setting up AI features](/docs/guides/ai-setup).
+
+## How it works
+
+<Steps>
+
+<Step title="A statistical pass over the whole corpus">
+
+Local and deterministic. Measures the distributions that characterize your
+writing — sentence length, opener variety, punctuation habits — across
+everything you gave it.
+
+</Step>
+
+<Step title="An AI mining pass over a small sample">
+
+Only a sample goes to the model, and only to name the patterns the statistical
+pass surfaced. The bulk of your corpus is never uploaded.
+
+</Step>
+
+<Step title="A self-consistency gate">
+
+Every generated rule is run back against your own corpus, and any rule that
+flags your own prose is discarded. A rule package derived from your writing
+that fires on your writing would be worse than useless.
+
+</Step>
+
+</Steps>
+
+## Options
+
+```sh
+lawlint learn ~/my-writing/ --out .lawlint/rules/house
+lawlint learn draft.docx --model anthropic:<model>
+```
+
+<TypeTable type={{
+  "PATH": { type: "path", required: true, description: "A file or directory of your writing (.docx, .md, .txt)." },
+  "--out": { type: "path", default: ".lawlint/rules/personal", description: "Where to write the generated rule package." },
+  "--model": { type: "string", description: "Mining model, overriding the lawlint init AI preferences." },
+}} />
+
+## Using the result
+
+The output is an ordinary rule package — a `style.yaml` manifest and a
+`rules/` directory of Markdown files, exactly as if you had [written it by
+hand](/docs/guides/authoring-rules). Read it, edit it, delete the rules you
+disagree with, and commit it.
+
+`lawlint init`'s default config already lists `.lawlint/rules` in `ruleDirs`, so
+a package written to the default `--out` is picked up automatically. Otherwise:
+
+```sh
+lawlint --rule-dir .lawlint/rules/house draft.md
+```
+
+:::tip
+Generated rules are a starting point, not an oracle. Run `lawlint rules test` on
+the package to see each rule evaluated against its own examples before you rely
+on it.
+:::

@@ -1,0 +1,24 @@
+---
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import Redirect from "../_shared/Redirect.astro";
+
+// Every diagnostic the engine emits carries `docsUrl:
+// https://lawlint.com/rules/<id>`, and released binaries in the wild keep
+// emitting it. The rule reference now lives inside the docs surface, so each
+// of those URLs redirects to its new home.
+//
+// The id list comes from the same built-in rule files the reference pages are
+// generated from (see scripts/generate-rule-docs.ts), so a new rule gets its
+// legacy URL without a second place to update.
+export function getStaticPaths() {
+  const rulesDir = resolve(process.cwd(), "../../crates/lawlint-core/builtin/rules");
+  return readdirSync(rulesDir)
+    .filter((file) => file.endsWith(".md"))
+    .map((file) => ({ params: { id: file.replace(/\.md$/, "") } }));
+}
+
+const { id } = Astro.params;
+---
+
+<Redirect to={`/docs/rules/${id}`} />

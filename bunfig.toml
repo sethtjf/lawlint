@@ -1,0 +1,7 @@
+# Blume generates an Astro project under `apps/website/.blume/` whose config and
+# runtime import Blume's own dependencies (@astrojs/mdx, @tailwindcss/typography,
+# …) by bare specifier. Bun's default isolated linker leaves those transitive
+# packages unreachable from the generated project, so the website build resolves
+# them only under the classic hoisted layout.
+[install]
+linker = "hoisted"

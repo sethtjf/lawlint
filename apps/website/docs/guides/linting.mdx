@@ -1,0 +1,148 @@
+---
+title: Linting documents
+description: Choosing input, selecting rules, and picking an output format.
+icon: file-search
+---
+
+## Input
+
+```sh
+lawlint contract.docx     # a file
+lawlint -                 # stdin, explicitly
+cat memo.txt | lawlint    # stdin, implicitly
+```
+
+Format is inferred from the extension. For piped Markdown there is no extension
+to infer from, so pass `--markdown` — see [File
+formats](/docs/concepts/file-formats).
+
+## Choosing rules
+
+<Tabs>
+
+<Tab title="Only these">
+
+```sh
+lawlint --rules no-em-dash,no-hedging draft.md
+```
+
+Runs exactly the listed rules and nothing else. Useful when you want a single
+question answered rather than a full review.
+
+</Tab>
+
+<Tab title="All but these">
+
+```sh
+lawlint --disable no-legalese,no-semicolons contract.docx
+```
+
+Runs the full set minus the listed rules. This is the right shape for a house
+style: most of the defaults, minus the handful that fight your conventions.
+
+</Tab>
+
+<Tab title="Durably">
+
+```json
+// .lawlint/config.json
+{
+  "disable": ["no-legalese", "no-semicolons"],
+  "severity": { "no-em-dash": "suggestion" }
+}
+```
+
+Committed to the repo, so everyone on the project lints the same way. See
+[Configuration](/docs/reference/configuration).
+
+</Tab>
+
+</Tabs>
+
+Both flags accept full rule ids or bare aliases, and both override the
+corresponding config file setting.
+
+## Output formats
+
+<Tabs>
+
+<Tab title="pretty">
+
+```sh
+lawlint draft.md
+```
+
+The default. Human-readable findings with the source line, the span underlined,
+and a suggestion where one exists — followed by the [human-likeness
+score](/docs/concepts/scoring).
+
+Add `--quiet` to suppress it entirely while keeping the exit code, which is what
+you usually want in CI.
+
+</Tab>
+
+<Tab title="json">
+
+```sh
+lawlint draft.md --format json
+```
+
+The full result as JSON: every diagnostic with its rule id, severity, tier,
+intent, span, line and column, excerpt, suggestion, and fix — plus document
+stats. See the [JSON output reference](/docs/reference/json-output).
+
+</Tab>
+
+<Tab title="prompt">
+
+```sh
+lawlint draft.md --format prompt
+```
+
+An AI revision brief: the flagged text plus instructions, formatted to hand
+straight to a writing assistant. This is the reverse of `--judge` — instead of
+asking a model to *find* problems, it asks one to *fix* the problems lawlint
+already found deterministically.
+
+</Tab>
+
+</Tabs>
+
+## Extra rule packages
+
+```sh
+lawlint --rule-dir ./house-style draft.md
+lawlint --rule-dir ./house-style --rule-dir ./team-rules draft.md
+```
+
+Repeatable, and merged over the built-ins — a package rule with the same id as
+a built-in replaces it. The durable equivalent is `ruleDirs` in
+`.lawlint/config.json`.
+
+:::note
+`--rule-dir` paths resolve against the current directory. `ruleDirs` in a config
+file resolve against that config file's directory, so a committed config keeps
+working no matter where in the project you run from.
+:::
+
+See [Authoring rules](/docs/guides/authoring-rules) for what goes in one.
+
+## Limiting noise
+
+```sh
+lawlint --max-warnings 10 draft.md
+```
+
+Exits `1` when warnings exceed the limit. The default is `inf` — warnings never
+fail on their own, only error-severity findings do.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Fixes and tracked changes" href="/docs/guides/fixing" icon="wand">
+    Apply what is safe to apply.
+  </Card>
+  <Card title="Continuous integration" href="/docs/guides/ci" icon="git-branch">
+    Exit codes, quiet output, and gating a pull request.
+  </Card>
+</CardGroup>

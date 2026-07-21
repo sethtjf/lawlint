@@ -1,7 +1,36 @@
 ---
-import LawlintPlayground from "../components/LawlintPlayground";
-import Layout from "../layouts/Layout.astro";
+// The playground runs the engine compiled to WebAssembly, client-side.
+//
+// The React island brings its own shadcn palette (`.shadcn-theme`), which
+// src/styles/global.css maps onto Blume's tokens — so it follows the site's
+// light/dark toggle. That stylesheet is imported here rather than by a shared
+// layout: it carries a second Tailwind entry (for the shadcn colour utilities
+// Blume's theme doesn't define), and this is the only page that needs it.
+import data from "blume:data";
+import LawlintPlayground from "@/components/LawlintPlayground";
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import SiteFooter from "./_shared/SiteFooter.astro";
+import "@/styles/global.css";
+
+const { config } = data;
+const description = "Paste text and lint it in your browser — nothing you write leaves this page.";
 ---
-<Layout title="Playground" description="Paste text and lint it in your browser — nothing you write leaves this page.">
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  page={{ title: "Playground — lawlint", description, route: "/playground" }}
+  logo={config.logo}
+  favicon={config.favicon}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  themeMode={config.theme.mode}
+  fontCssVars={data.fontCssVars}
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  x={config.x}
+>
   <LawlintPlayground client:load />
-</Layout>
+  <SiteFooter slot="footer" />
+</PageLayout>

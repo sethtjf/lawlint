@@ -1,0 +1,94 @@
+---
+title: Fixes and tracked changes
+description: Previewing with --diff, applying with --fix, and how Word documents are edited.
+icon: wand
+---
+
+Some findings carry a fix. `--fix` applies them in place.
+
+```sh
+lawlint --diff draft.md   # preview
+lawlint --fix draft.md    # apply
+lawlint --fix --diff draft.md   # apply, and show what changed
+```
+
+## Only what is safe
+
+Every fix declares an **applicability**, and `--fix` applies exactly one of the
+two.
+
+<Columns cols={2}>
+  <Column>
+    **`machineApplicable`** — a mechanical substitution with no judgement in it:
+    an em dash for a comma, a doublet reduced to one word. Applied by `--fix`.
+  </Column>
+  <Column>
+    **`maybeIncorrect`** — a suggestion that needs a human to decide. Reported,
+    and offered in the output, but never applied automatically.
+  </Column>
+</Columns>
+
+Findings with no fix at all — most statistical and all inferential ones — are
+reported and left alone. There is no `--fix-all`, and no flag that applies
+`maybeIncorrect` edits: the guarantee that `--fix` never needs reviewing is
+worth more than the handful of extra edits.
+
+## Word documents
+
+For `.docx`, `--fix` does not rewrite the document. It writes each fix as a
+native Word **tracked change**, with a review **comment** naming the rule that
+produced it.
+
+<Steps>
+
+<Step title="Run the fix">
+
+```sh
+lawlint --fix brief.docx
+```
+
+</Step>
+
+<Step title="Open it in Word">
+
+Every change appears in the normal review flow, attributed and commented.
+
+</Step>
+
+<Step title="Accept or reject, one at a time">
+
+Nothing is silently applied. If you disagree with a rule, reject its changes and
+[disable it](/docs/guides/linting#choosing-rules) for next time.
+
+</Step>
+
+</Steps>
+
+Everything else in the document survives byte for byte — styles, numbering,
+headers, images, and any tracked changes already present.
+
+:::warning[Fixes crossing run boundaries are skipped]
+Word splits paragraphs into runs at every formatting change. A fix whose span
+crosses one — a bolded word inside a flagged phrase — is reported and skipped
+rather than applied. The finding still appears in the output; only the
+automatic edit is withheld.
+:::
+
+## Handing the rest to an assistant
+
+`--fix` deliberately leaves the judgement calls alone. For those, `--format
+prompt` emits a revision brief — the flagged text plus instructions — to hand to
+a writing assistant:
+
+```sh
+lawlint --format prompt draft.md | pbcopy
+```
+
+The deterministic engine decides *what* is worth changing; the model only
+proposes wording. That ordering is the point: it keeps the model out of the
+detection loop.
+
+## Stdin has nothing to fix
+
+`--fix` edits a file in place, so it does nothing for piped input. Use `--diff`
+or `--format prompt` instead.

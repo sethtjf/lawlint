@@ -1,0 +1,97 @@
+---
+title: Setting up AI features
+description: What lawlint init does, which providers are supported, and where API keys are stored.
+icon: settings
+---
+
+Linting is deterministic and offline. Two features are not — the soft-rule [AI
+judge](/docs/guides/judge) and [`lawlint learn`](/docs/guides/learn) — and
+neither does anything until you configure a model.
+
+```sh
+lawlint init
+```
+
+The walkthrough covers AI-model choice, whether the judge runs on every lint,
+Markdown handling for stdin, and custom rule directories. It writes
+`.lawlint/config.json`, plus an optional starter rules package under
+`.lawlint/rules/`.
+
+:::note
+Until a model is configured, AI features exit with guidance instead of running.
+Nothing is ever downloaded silently.
+:::
+
+## Hosted providers
+
+The recommended path: better quality, no multi-gigabyte download.
+
+| Provider | Model spec | Key |
+| -------- | ---------- | --- |
+| Anthropic *(recommended)* | `anthropic:<model>` | `ANTHROPIC_API_KEY` |
+| OpenAI-compatible | `openai:<base-url>#<model>` | `OPENAI_API_KEY` |
+| Azure AI Foundry | `foundry:<deployment>` | `AZURE_FOUNDRY_API_KEY` |
+
+API keys go to a user-level credential file — `~/.config/lawlint/credentials`,
+mode `0600` — or to the environment. **The environment wins.** Keys are never
+written into your project, so `.lawlint/config.json` is safe to commit.
+
+## Local models
+
+Local models — Qwen 2.5 and Gemma, via the embedded `mistral.rs` runtime —
+remain available as an explicit advanced choice.
+
+:::warning[Local models are measurably worse]
+They involve multi-gigabyte downloads, noticeably slower inference, and lower
+judgement quality than the hosted providers. `init` asks you to acknowledge
+that before enabling one, and records the acknowledgement as
+`ai.localAcknowledged`.
+:::
+
+Spec: `local:<hf-repo>[#<gguf>]`.
+
+## Non-interactive setup
+
+```sh
+lawlint init --yes                          # accept defaults (hosted)
+lawlint init --ai anthropic:claude-haiku-4-5-20251001
+lawlint init --ai qwen --acknowledge-local  # a local model, unattended
+lawlint init --force                        # overwrite an existing config
+```
+
+<TypeTable type={{
+  "--yes": { type: "flag", description: "Accept the default answer for every prompt." },
+  "--force": { type: "flag", description: "Overwrite an existing .lawlint/config.json." },
+  "--ai": { type: "string", description: "Model preference, skipping the catalog prompt: qwen, gemma, or a full spec." },
+  "--acknowledge-local": { type: "flag", description: "Acknowledge the local-model constraints without a prompt. Only meaningful with a local model." },
+}} />
+
+## What it writes
+
+```jsonc
+// .lawlint/config.json — every field optional, camelCase
+{
+  "ai": {
+    "model": "anthropic:claude-haiku-4-5-20251001",
+    "features": { "judge": "...", "learn": "..." },
+    "localAcknowledged": false
+  },
+  "judge": { "enabled": false },
+  "markdown": false,
+  "ruleDirs": [".lawlint/rules"]
+}
+```
+
+`ai.model` is the default for every AI feature; `ai.features` overrides it per
+feature. The full schema is in
+[Configuration](/docs/reference/configuration).
+
+## Where config is found
+
+The CLI walks up from the current directory looking for `.lawlint/config.json`,
+falling back to the legacy `lawlint.config.json` at each level. The first
+directory containing either is the project root, and relative `ruleDirs`
+resolve against it.
+
+A config file that exists but does not parse is a configuration error — exit
+`2` — never a silent skip.

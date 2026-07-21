@@ -4,25 +4,31 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run --cwd ../../ wasm:build && bun run --cwd ../../ rules:generate && astro dev",
-    "build": "bun run --cwd ../../ wasm:build && bun run --cwd ../../ rules:generate && astro build"
+    "prepare:content": "bun run --cwd ../../ wasm:build && bun run scripts/generate-rule-docs.ts && bun run scripts/generate-changelog.ts",
+    "dev": "bun run prepare:content && blume dev",
+    "build": "bun run prepare:content && blume build",
+    "preview": "blume preview",
+    "check": "blume check",
+    "validate": "blume validate",
+    "doctor": "blume doctor"
   },
   "dependencies": {
-    "@astrojs/react": "4.3.0",
-    "astro": "^5.1.0",
+    "@astrojs/mdx": "^7.0.0",
+    "@astrojs/react": "^6.0.0",
+    "@tailwindcss/vite": "^4",
+    "astro": "^7.0.2",
+    "blume": "1.1.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.1.11",
     "@types/react": "19.1.0",
     "@types/react-dom": "19.1.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "tailwind-merge": "3.3.0",
-    "tailwindcss": "4.1.11",
     "wrangler": "4.107.1"
   }
 }

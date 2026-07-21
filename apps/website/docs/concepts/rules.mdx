@@ -1,0 +1,95 @@
+---
+title: Hard and soft rules
+description: The two user-facing rule kinds, the five engines behind them, and the tier names the API still serializes.
+icon: layers
+---
+
+lawlint has two user-facing rule kinds. The distinction is not a taxonomy for
+its own sake — it decides whether a check can run offline.
+
+<Columns cols={2}>
+  <Column>
+    ### Hard rules
+
+    Deterministic checks over the text. No model, no network, no variance
+    between runs: the same document always produces the same findings. Every
+    rule enabled by default is a hard rule.
+  </Column>
+  <Column>
+    ### Soft rules
+
+    Inferential checks evaluated by the optional [AI judge](/docs/guides/judge)
+    against a written rubric. They catch what a pattern cannot — whether a hedge
+    actually says what is uncertain — and run only under `--judge`.
+  </Column>
+</Columns>
+
+## Engines
+
+A rule declares one `engine`, which decides both how it is evaluated and which
+kind it belongs to.
+
+| Engine | Kind | Tier | What it does |
+| ------ | ---- | ---- | ------------ |
+| `phrase` | Hard | `static` | Matches regex fragments against the text, optionally suppressed by surrounding context. |
+| `leading` | Hard | `static` | Matches only at the start of a sentence — for openers and transitions. |
+| `density` | Hard | `statistical` | Counts matches per 1,000 words and flags above a threshold. |
+| `statistical` | Hard | `statistical` | Measures a document- or sentence-level metric and flags on the wrong side of a threshold. |
+| `inferential` | Soft | `inferential` | Hands the text to the AI judge with a rubric and worked examples. |
+
+## Tiers are the serialized name
+
+The engine has always serialized three tiers — `static`, `statistical`, and
+`inferential` — and still does. Every `--format json` payload, every
+`lawlint rules --json` entry, and every rule-package field keeps those exact
+values.
+
+Hard and soft are the explanatory terms layered on top: `static` and
+`statistical` are hard; `inferential` is soft.
+
+:::note
+If you are parsing lawlint output, key off `tier`. It is the stable contract.
+"Hard" and "soft" appear in prose and in this documentation, not in the JSON.
+:::
+
+## Intent: which rules move the score
+
+Independently of kind, every rule declares an `intent`.
+
+<Columns cols={2}>
+  <Column>
+    **`detection`** — corpus-validated to distinguish AI-generated from
+    authentic human legal prose. These are the only rules that charge the
+    human-likeness score. This is the default when `intent` is absent.
+  </Column>
+  <Column>
+    **`style`** — real writing advice that says nothing about provenance: the
+    Oxford comma, semicolons, sentence length, the Orwell rules. Reports
+    findings, participates in `--fix`, never moves the score.
+  </Column>
+</Columns>
+
+Both kinds are reported, and both are fixable. Intent only governs
+[scoring](/docs/concepts/scoring).
+
+## Severity
+
+`error`, `warning`, or `suggestion` — set per rule, overridable per project in
+[configuration](/docs/reference/configuration). The legacy value `info` is
+accepted as an alias for `suggestion`.
+
+Severity drives two things: the penalty weight a detection finding charges
+against the score, and the [exit code](/docs/guides/ci). Soft-rule severity is
+capped at `warning` or `suggestion` — an inferential judgement never fails a
+build on its own.
+
+## Selecting rules
+
+```sh
+lawlint --rules no-em-dash,no-hedging draft.md   # only these
+lawlint --disable no-legalese contract.docx      # all but these
+```
+
+Both accept full ids or bare aliases, and both have durable equivalents in
+`.lawlint/config.json`. The [rule reference](/docs/rules) lists every built-in
+rule with its engine, tier, intent, and severity.

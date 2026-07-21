@@ -1,0 +1,83 @@
+---
+title: The AI judge
+description: Running soft rules — inferential checks a regular expression cannot make.
+icon: scale
+---
+
+Soft rules are the inferential tier: judgements about whether a sentence
+*means* something, which no pattern can settle. They are evaluated by the AI
+judge, and only when you ask.
+
+```sh
+lawlint --judge draft.md
+```
+
+Requires a configured model — see [Setting up AI
+features](/docs/guides/ai-setup). Without one, `--judge` exits with guidance
+rather than running.
+
+## Choosing a model
+
+```sh
+lawlint --judge draft.md                    # the model from lawlint init
+lawlint --judge=anthropic:<model> draft.md  # override for this run
+```
+
+Bare `--judge` uses the configured model. `--judge=MODEL` overrides it, taking
+the same specs as `init`:
+
+| Spec | Provider |
+| ---- | -------- |
+| `anthropic:<model>` | Anthropic |
+| `openai:<base-url>#<model>` | Any OpenAI-compatible endpoint |
+| `foundry:<deployment>` | Azure AI Foundry |
+| `local:<hf-repo>[#<gguf>]` | Local, via the embedded `mistral.rs` runtime |
+
+:::note
+`--judge` uses `=` rather than a space: `--judge=anthropic:...`, not
+`--judge anthropic:...`. The flag takes an optional value, and that is how it
+tells "no model given" from "the next argument is the filename".
+:::
+
+To run the judge on every lint without the flag, set `judge.enabled` in
+`.lawlint/config.json`.
+
+## What it costs you
+
+Judging sends the text being linted to the configured provider. That is the
+trade, stated plainly:
+
+<Columns cols={2}>
+  <Column>
+    **Without `--judge`** — nothing leaves the machine. Deterministic findings
+    only, identical on every run.
+  </Column>
+  <Column>
+    **With `--judge`** — the document goes to your model provider, and findings
+    may vary slightly between runs. Results are cached on disk, so re-linting an
+    unchanged document does not re-spend.
+  </Column>
+</Columns>
+
+Soft-rule severity is capped at `warning` or `suggestion`, so an inferential
+judgement never fails a build on its own. Each soft finding also carries a
+`confidence` value in [JSON output](/docs/reference/json-output).
+
+## Judging versus revising
+
+Two different things use a model, in opposite directions:
+
+| | Direction | Command |
+| --- | --- | --- |
+| **Judge** | Model *finds* problems | `--judge` |
+| **Revision brief** | Model *fixes* problems lawlint already found | `--format prompt` |
+
+`--format prompt` needs no configuration and sends nothing anywhere — it just
+prints a brief for you to paste. See [Fixes and tracked
+changes](/docs/guides/fixing#handing-the-rest-to-an-assistant).
+
+## Writing soft rules
+
+Soft rules use their Markdown body as the judge's rubric, and require at least
+three flag examples and three pass examples. See [Authoring
+rules](/docs/guides/authoring-rules#soft-rules).

@@ -1,0 +1,88 @@
+---
+// The site footer, mounted through Blume's `Footer` layout slot on the docs
+// (see `components.ts`) and passed explicitly as `slot="footer"` by the custom
+// pages. It carries the links back to the site's other surfaces: Blume prefixes
+// `basePath` onto config-provided navigation hrefs, so `/playground` there would
+// resolve to `/docs/playground`. Written as plain anchors, these stay at the
+// site root where those pages actually live.
+//
+// It also carries the site's global chrome CSS, because it is the only
+// component Blume renders on *every* page of both layouts. The alternatives
+// don't reach: `theme.css` is parsed for `:root` token blocks only, and
+// PageLayout — unlike RootLayout — doesn't forward `defineComponents` layout
+// overrides to its Header, so a `Logo` slot override would style the docs and
+// silently miss the landing page.
+const links = [
+  { href: "/", label: "Home" },
+  { href: "/playground", label: "Playground" },
+  { href: "/docs/installation", label: "Install" },
+  { href: "/docs/changelog", label: "Changelog" },
+  { href: "https://github.com/sethtjf/lawlint", label: "GitHub ↗" },
+];
+---
+
+<footer class="docs-footer">
+  <span>lawlint — writing, made human.</span>
+  <nav aria-label="Site">
+    {links.map((link) => <a href={link.href}>{link.label}</a>)}
+  </nav>
+</footer>
+
+<style is:global>
+  /*
+   * The header wordmark. Blume renders the site title at `font-semibold
+   * text-base`, which reads as a label; this is the logotype the site has always
+   * used — serif, 1.35rem, bold, tightly tracked, with the oxblood full stop.
+   * The wordmark is the header's first link, and `data-blume-header` is a stable
+   * hook (Blume's own JS keys off it for the nav toggle and theme button).
+   */
+  [data-blume-header] > a:first-of-type {
+    font-family: var(--blume-font-display);
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+
+  /*
+   * The brand full stop — decorative, so it stays out of the accessible name.
+   * Hung off the inner wordmark span rather than the link itself: the link is a
+   * flex row with a `gap`, so an `::after` on it would be spaced away from the
+   * text as its own flex item.
+   */
+  [data-blume-header] > a:first-of-type > span::after {
+    content: ".";
+    color: var(--blume-accent);
+  }
+</style>
+
+<style>
+  .docs-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.4rem;
+    justify-content: space-between;
+    align-items: baseline;
+    border-top: 1px solid var(--blume-border);
+    margin-top: 4rem;
+    /* The slot renders outside the docs content column, so the gutters are the
+       footer's own. */
+    padding: 1.5rem 2rem;
+    color: var(--blume-muted-foreground);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .docs-footer nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.4rem;
+  }
+  .docs-footer a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .docs-footer a:hover {
+    color: var(--blume-accent);
+  }
+</style>

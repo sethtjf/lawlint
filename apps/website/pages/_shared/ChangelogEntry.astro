@@ -1,0 +1,14 @@
+---
+// Re-exports Blume's `Update` (the version-rail changelog entry) so it can be
+// registered in the MDX component map by path. Blume wires `Update` only into
+// its own generated changelog index, not the authoring map, and referencing it
+// from `components.ts` directly would mean importing a `.astro` file from a
+// `.ts` one — which `blume check` / `tsc` cannot type.
+//
+// Used by docs/changelog.mdx, which scripts/generate-changelog.ts writes.
+import Update from "blume/components/content/Update.astro";
+
+const props = Astro.props;
+---
+
+<Update {...props}><slot /></Update>
