@@ -1,3 +1,4 @@
+---
 id: no-doublets
 engine: phrase
 scope: text
@@ -12,3 +13,4 @@ patterns:
   - pattern: '(?i)\b(?:cease and desist|null and void|any and all)\b'
     message: "This legal doublet is often unnecessary."
     suggestion: "Use one precise term."
+---

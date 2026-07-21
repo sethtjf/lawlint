@@ -1,3 +1,4 @@
+---
 id: no-legalese
 engine: phrase
 scope: text
@@ -27,3 +28,4 @@ patterns:
   - pattern: '(?i)\bherein\b|\bthereto\b'
     message: "Avoid archaic legalese."
     suggestion: "Use a specific noun or pronoun."
+---

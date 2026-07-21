@@ -1,3 +1,4 @@
+---
 id: no-not-only
 engine: phrase
 scope: text
@@ -11,3 +12,4 @@ examples:
 patterns:
   - pattern: '(?is)\bnot only\b[\s\S]{0,120}\bbut also\b'
     message: "Avoid the formulaic “not only ... but also” construction."
+---

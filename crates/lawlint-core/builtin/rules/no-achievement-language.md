@@ -1,3 +1,4 @@
+---
 id: no-achievement-language
 engine: phrase
 scope: text
@@ -43,3 +44,4 @@ patterns:
   - pattern: '(?i)\btop[- ]notch\b'
     message: "Cut “top-notch”; give a concrete claim."
     suggestion: "State a specific, checkable fact."
+---

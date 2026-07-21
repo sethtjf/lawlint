@@ -1,3 +1,4 @@
+---
 id: no-throat-clearing
 engine: leading
 scope: text
@@ -24,3 +25,4 @@ patterns:
   - pattern: 'before (?:i|we) (?:begin|start|dive in)'
     message: "Cut the throat-clearing and lead with the point."
     suggestion: "Cut the throat-clearing and lead with the point."
+---

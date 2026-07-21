@@ -5,7 +5,7 @@
 //! Ambiguity is a config error, silently preferring nothing.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use include_dir::{include_dir, Dir};
 
@@ -17,22 +17,8 @@ use crate::loader::{self, parse_manifest, parse_rule, PackageManifest, RuleDef};
 use crate::rule::{Interests, Rule, RuleMeta};
 use crate::types::{Intent, RuleId, Scope, Severity};
 
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            _ => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
-}
-
 /// The embedded built-in package (`crates/lawlint-core/builtin/`):
-/// `style.yaml` + `rules/*.yaml`, loaded through the same loader as user
+/// `style.yaml` + `rules/*.md`, loaded through the same loader as user
 /// packages.
 pub(crate) static BUILTIN_DIR: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin");
 
@@ -113,6 +99,7 @@ fn build_meta(package: &str, def: &RuleDef) -> RuleMeta {
             .clone()
             .unwrap_or_else(|| format!("https://lawlint.com/rules/{}", def.id)),
         rationale: def.rationale.clone(),
+        explanation: def.explanation.clone(),
         examples: def.examples.clone(),
     }
 }
@@ -145,12 +132,7 @@ impl RuleSet {
         if let Some(rules_dir) = dir.get_dir("rules") {
             let mut files: Vec<_> = rules_dir
                 .files()
-                .filter(|f| {
-                    matches!(
-                        f.path().extension().and_then(|e| e.to_str()),
-                        Some("yaml") | Some("yml")
-                    )
-                })
+                .filter(|f| matches!(f.path().extension().and_then(|e| e.to_str()), Some("md")))
                 .collect();
             files.sort_by_key(|f| f.path().to_path_buf());
             for f in files {
@@ -159,38 +141,14 @@ impl RuleSet {
                     file: name.clone(),
                     message: "file is not valid UTF-8".to_string(),
                 })?;
-                let raw = loader::parse_rule_def(&name, text)?;
-                let def = if let Some(skill) = raw.skill.clone() {
-                    let skill_path = normalize_path(
-                        f.path()
-                            .parent()
-                            .unwrap_or_else(|| Path::new(""))
-                            .join(skill),
-                    );
-                    let skill_name = format!("builtin/{}", skill_path.display());
-                    let skill_file = dir.get_file(&skill_path).ok_or_else(|| LoadError::Io {
-                        path: skill_name.clone(),
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            "referenced skill file not found",
-                        ),
-                    })?;
-                    let skill_text = skill_file.contents_utf8().ok_or_else(|| LoadError::Yaml {
-                        file: skill_name.clone(),
-                        message: "file is not valid UTF-8".to_string(),
-                    })?;
-                    loader::parse_rule_with_skill(&name, text, &skill_name, skill_text)?
-                } else {
-                    parse_rule(&name, text)?
-                };
+                let def = parse_rule(&name, text)?;
                 rules.push((name.clone(), def));
             }
         }
         Self::from_parts(&manifest, rules)
     }
 
-    /// Load a package directory (`style.yaml` + `rules/*.yaml`). Skill files
-    /// referenced by inferential YAML rules are resolved relative to them.
+    /// Load a package directory (`style.yaml` + `rules/*.md`).
     /// The rules directory may be absent or empty; the manifest is required.
     pub fn load_dir(path: &Path) -> Result<RuleSet, LoadError> {
         let manifest_path = path.join("style.yaml");
@@ -211,12 +169,7 @@ impl RuleSet {
                 })?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| {
-                    matches!(
-                        p.extension().and_then(|e| e.to_str()),
-                        Some("yaml") | Some("yml")
-                    )
-                })
+                .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("md")))
                 .collect();
             entries.sort();
             for p in entries {
@@ -228,7 +181,7 @@ impl RuleSet {
         Self::from_parts(&manifest, rules)
     }
 
-    /// Build a package from in-memory YAML rule sources — the same
+    /// Build a package from in-memory Markdown rule sources — the same
     /// validation path as `load_dir`, minus the filesystem. `files` is
     /// `(name, yaml)` pairs; `name` plays the role of the file path in error
     /// context. Ids become `<package_name>/<id>`; duplicate ids within the
@@ -246,7 +199,12 @@ impl RuleSet {
         };
         let mut rules: Vec<(String, RuleDef)> = Vec::with_capacity(files.len());
         for (name, yaml) in files {
-            let def = parse_rule(name, yaml)?;
+            let markdown = if yaml.trim_start().starts_with("---") {
+                yaml.clone()
+            } else {
+                format!("---\n{yaml}\n---\n")
+            };
+            let def = parse_rule(name, &markdown)?;
             rules.push((name.clone(), def));
         }
         Self::from_parts(&manifest, rules)
@@ -388,7 +346,7 @@ mod tests {
 
     #[test]
     fn builtin_dir_is_embedded_with_manifest() {
-        // The embedded package must at least carry its manifest; rules/*.yaml
+        // The embedded package must at least carry its manifest; rules/*.md
         // arrive with agent E.
         assert!(BUILTIN_DIR.get_file("style.yaml").is_some());
     }
@@ -407,17 +365,22 @@ mod tests {
     }
 
     fn rule(file: &str, yaml: &str) -> (String, RuleDef) {
-        (file.to_string(), parse_rule(file, yaml).unwrap())
+        let markdown = if yaml.trim_start().starts_with("---") {
+            yaml.to_string()
+        } else {
+            format!("---\n{yaml}\n---\n")
+        };
+        (file.to_string(), parse_rule(file, &markdown).unwrap())
     }
 
     fn phrase_yaml(id: &str) -> String {
-        format!("id: {id}\nengine: phrase\nseverity: error\npatterns: [\"—\"]\n")
+        format!("---\nid: {id}\nengine: phrase\nseverity: error\npatterns: [\"—\"]\n---\n")
     }
 
     fn inferential_yaml(id: &str) -> String {
         format!(
-            "id: {id}\nengine: inferential\nseverity: warning\ngranularity: paragraph\n\
-             rubric: Flag it.\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n"
+            "---\nid: {id}\nengine: inferential\nseverity: warning\ngranularity: paragraph\n\
+             flag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag it.\n"
         )
     }
 
@@ -442,76 +405,23 @@ mod tests {
     }
 
     #[test]
-    fn load_dir_reads_manifest_and_rules() {
+    fn load_dir_reads_markdown_rules_and_ignores_yaml() {
         let base =
             std::env::temp_dir().join(format!("lawlint-registry-load-dir-{}", std::process::id()));
         let rules_dir = base.join("rules");
         std::fs::create_dir_all(&rules_dir).unwrap();
         std::fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
-        std::fs::write(rules_dir.join("no-x.yaml"), phrase_yaml("no-x")).unwrap();
-        std::fs::create_dir_all(rules_dir.join("skills")).unwrap();
+        std::fs::write(rules_dir.join("no-x.yaml"), phrase_yaml("ignored")).unwrap();
         std::fs::write(
-            rules_dir.join("soft-check.yaml"),
-            "id: soft-check\nengine: inferential\nskill: ./skills/soft-check.md\n",
-        )
-        .unwrap();
-        std::fs::write(
-            rules_dir.join("skills/soft-check.md"),
-            "---\ndescription: Soft check.\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag this pattern.\n",
+            rules_dir.join("no-x.md"),
+            "---\nid: no-x\nengine: phrase\npatterns: [\"—\"]\n---\n",
         )
         .unwrap();
         std::fs::write(rules_dir.join("notes.txt"), "not a rule").unwrap();
 
         let rs = RuleSet::load_dir(&base).unwrap();
-        assert_eq!(rs.metas().len(), 2);
+        assert_eq!(rs.metas().len(), 1);
         assert!(rs.resolve("no-x").is_some());
-        assert_eq!(rs.metas()[1].id.0, "firm/soft-check");
-        assert_eq!(rs.resolve("no-x").unwrap().0, "firm/no-x");
-
-        std::fs::remove_dir_all(&base).unwrap();
-    }
-
-    #[test]
-    fn load_dir_rejects_skill_on_phrase_rule() {
-        let base =
-            std::env::temp_dir().join(format!("lawlint-registry-collision-{}", std::process::id()));
-        let rules_dir = base.join("rules");
-        std::fs::create_dir_all(&rules_dir).unwrap();
-        std::fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
-        std::fs::write(
-            rules_dir.join("same.yaml"),
-            "id: same\nengine: phrase\nskill: ./same.md\npatterns: [x]\n",
-        )
-        .unwrap();
-        std::fs::write(
-            rules_dir.join("same.md"),
-            "---\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag it.\n",
-        )
-        .unwrap();
-
-        let e = RuleSet::load_dir(&base).unwrap_err();
-        assert!(e.to_string().contains("same.yaml: skill"), "{e}");
-        assert!(e.to_string().contains("phrase"), "{e}");
-        std::fs::remove_dir_all(&base).unwrap();
-    }
-
-    #[test]
-    fn load_dir_reports_missing_skill_file() {
-        let base = std::env::temp_dir().join(format!(
-            "lawlint-registry-missing-skill-{}",
-            std::process::id()
-        ));
-        let rules_dir = base.join("rules");
-        std::fs::create_dir_all(&rules_dir).unwrap();
-        std::fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
-        std::fs::write(
-            rules_dir.join("soft.yaml"),
-            "id: soft\nengine: inferential\nskill: ./missing.md\n",
-        )
-        .unwrap();
-
-        let e = RuleSet::load_dir(&base).unwrap_err();
-        assert!(e.to_string().contains("missing.md"), "{e}");
         std::fs::remove_dir_all(&base).unwrap();
     }
 
@@ -551,7 +461,7 @@ mod tests {
             "user",
             &[(
                 "bad.yaml".to_string(),
-                "id: no-x\nengine: phrase\nseverity: high\npatterns: [x]\n".to_string(),
+                "---\nid: no-x\nengine: phrase\nseverity: high\npatterns: [x]\n---\n".to_string(),
             )],
         )
         .unwrap_err();

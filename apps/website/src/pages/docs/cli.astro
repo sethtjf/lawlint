@@ -29,8 +29,8 @@ lawlint rules --json</pre>
     </div>
     <h2>Rule kinds</h2>
     <p><strong>Hard rules</strong> are deterministic phrase, leading, density, and statistical checks (static and statistical tiers). <strong>Soft rules</strong> are inferential rules evaluated by the optional AI judge. The JSON API keeps the stable <code>tier</code> values <code>static</code>, <code>statistical</code>, and <code>inferential</code>.</p>
-    <h2>Skill-file references</h2>
-    <p>Rules are always YAML. An inferential rule can point to a Claude Code-style skill file with <code>skill: ./skills/name/SKILL.md</code>, resolved relative to the YAML file. The skill file's YAML frontmatter and Markdown body provide optional metadata and the rubric. Add at least three bullets under both <code>## Flag examples</code> and <code>## Pass examples</code>, or provide <code>flag_examples</code> and <code>pass_examples</code> arrays in frontmatter. YAML fields take precedence; setting both <code>rubric</code> and <code>skill</code> is invalid. Severity may be warning or suggestion.</p>
+    <h2>Markdown rule files</h2>
+    <p>Rules are Markdown files with YAML frontmatter. Hard-rule bodies may explain what a deterministic check catches; soft-rule bodies provide the AI judge's rubric. Add at least three bullets under both <code>## Flag examples</code> and <code>## Pass examples</code>, or provide <code>flag_examples</code> and <code>pass_examples</code> arrays in frontmatter. The package manifest is still <code>style.yaml</code>, while rule discovery accepts only <code>rules/*.md</code>.</p>
     <p><a href="/docs/sdk">Next: SDK reference →</a></p>
   </article>
 </Layout>

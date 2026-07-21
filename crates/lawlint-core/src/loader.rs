@@ -1,9 +1,9 @@
-//! YAML rule parsing + validation, with optional Markdown skill references. [agent D]
+//! Markdown rule parsing + validation. [agent D]
 //!
 //! Package = directory: `style.yaml` (`name`, `version`, optional
-//! `description`) + `rules/*.yaml`, one rule per file. Built-in package
-//! embedded via `include_dir!` (see registry.rs). Inferential YAML rules may
-//! reference a Claude Code-style Markdown skill file.
+//! `description`) + `rules/*.md`, one rule per file. Built-in package
+//! embedded via `include_dir!` (see registry.rs). Each Markdown rule uses
+//! Claude Code-style YAML frontmatter.
 //!
 //! Validation is a product feature: errors must carry file path, field, given
 //! value, and valid alternatives in plain English (see `LoadError`).
@@ -29,7 +29,8 @@ pub struct PackageManifest {
     pub description: Option<String>,
 }
 
-/// One `rules/*.yaml` file, capturing the full schema of design doc §6.
+/// One `rules/*.md` file, capturing the full schema of design doc §6 in its
+/// YAML frontmatter plus an optional Markdown body.
 /// Raw (pre-validation) representation; `RuleSet` stores validated defs.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,49 +96,9 @@ pub struct RuleDef {
     /// inferential only; >= 3 required.
     #[serde(default)]
     pub pass_examples: Vec<String>,
-    /// inferential only: path to a Claude Code-style Markdown skill file.
+    /// Explanatory prose for hard rules, taken from the Markdown body.
     #[serde(default)]
-    pub skill: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SkillFrontmatter {
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    severity: Option<String>,
-    #[serde(default)]
-    granularity: Option<String>,
-    #[serde(default)]
-    scope: Option<String>,
-    #[serde(default)]
-    intent: Option<String>,
-    #[serde(default)]
-    docs: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
-    #[serde(default)]
-    rationale: Option<String>,
-    #[serde(default)]
-    flag_examples: Vec<String>,
-    #[serde(default)]
-    pass_examples: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SkillContent {
-    pub(crate) description: Option<String>,
-    pub(crate) severity: Option<String>,
-    pub(crate) granularity: Option<String>,
-    pub(crate) scope: Option<String>,
-    pub(crate) intent: Option<String>,
-    pub(crate) docs: Option<String>,
-    pub(crate) message: Option<String>,
-    pub(crate) rationale: Option<String>,
-    pub(crate) rubric: String,
-    pub(crate) flag_examples: Vec<String>,
-    pub(crate) pass_examples: Vec<String>,
+    pub explanation: Option<String>,
 }
 
 /// A `patterns:` list item — bare string or detailed object.
@@ -277,104 +238,30 @@ fn compile_regex(file: &str, field: &str, pattern: &str) -> Result<(), LoadError
         })
 }
 
-pub fn parse_rule_def(file: &str, yaml: &str) -> Result<RuleDef, LoadError> {
-    serde_yaml::from_str(yaml).map_err(|e| map_serde_error(file, e))
-}
-
-/// Parse + validate a single rule file. `file` is used for error context.
-pub fn parse_rule(file: &str, yaml: &str) -> Result<RuleDef, LoadError> {
-    let def = parse_rule_def(file, yaml)?;
-    if def.skill.is_some() {
-        return Err(LoadError::invalid_field(
-            file,
-            "skill",
-            "skill references must be loaded from a rule file",
-        ));
-    }
+/// Parse + validate a single Markdown rule file. `file` is used for error context.
+pub fn parse_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError> {
+    let def = parse_rule_markdown(file, markdown)?;
     validate_rule(file, &def)?;
     Ok(def)
 }
 
-/// Parse a YAML rule file and resolve an optional skill reference relative to
-/// that file's location.
+/// Parse a Markdown rule file from disk.
 pub fn parse_rule_file(path: &Path) -> Result<RuleDef, LoadError> {
     let file = path.display().to_string();
     let markdown = std::fs::read_to_string(path).map_err(|source| LoadError::Io {
         path: file.clone(),
         source,
     })?;
-    let def = parse_rule_def(&file, &markdown)?;
-    let Some(skill) = def.skill.clone() else {
-        validate_rule(&file, &def)?;
-        return Ok(def);
-    };
-    let skill_path = path.parent().unwrap_or_else(|| Path::new("")).join(skill);
-    let skill_file = skill_path.display().to_string();
-    let skill_markdown = std::fs::read_to_string(&skill_path).map_err(|source| LoadError::Io {
-        path: skill_file.clone(),
-        source,
-    })?;
-    parse_rule_with_skill(&file, &markdown, &skill_file, &skill_markdown)
+    parse_rule(&file, &markdown)
 }
 
-pub(crate) fn parse_rule_with_skill(
-    file: &str,
-    yaml: &str,
-    skill_file: &str,
-    markdown: &str,
-) -> Result<RuleDef, LoadError> {
-    let mut def = parse_rule_def(file, yaml)?;
-    if def.skill.is_none() {
-        return Err(LoadError::invalid_field(
-            file,
-            "skill",
-            "a skill file can only be merged when the rule declares skill",
-        ));
-    }
-    if def.engine != "inferential" {
-        return Err(LoadError::invalid_field(
-            file,
-            "skill",
-            format!(
-                "skill references only apply to inferential rules — this rule uses the {} engine",
-                def.engine
-            ),
-        ));
-    }
-    if def.rubric.is_some() {
-        return Err(LoadError::invalid_field(
-            file,
-            "rubric",
-            "a rule cannot set both rubric and skill — use the skill file as the rubric source",
-        ));
-    }
-    let skill = parse_skill_content(skill_file, markdown)?;
-    def.description = def.description.or(skill.description);
-    def.severity = def.severity.or(skill.severity);
-    def.granularity = def.granularity.or(skill.granularity);
-    def.scope = def.scope.or(skill.scope);
-    def.intent = def.intent.or(skill.intent);
-    def.docs = def.docs.or(skill.docs);
-    def.message = def.message.or(skill.message);
-    def.rationale = def.rationale.or(skill.rationale);
-    def.rubric = Some(skill.rubric);
-    if def.flag_examples.is_empty() {
-        def.flag_examples = skill.flag_examples;
-    }
-    if def.pass_examples.is_empty() {
-        def.pass_examples = skill.pass_examples;
-    }
-    validate_rule(file, &def)?;
-    Ok(def)
-}
-
-pub(crate) fn parse_skill_content(file: &str, markdown: &str) -> Result<SkillContent, LoadError> {
+fn parse_rule_markdown(file: &str, markdown: &str) -> Result<RuleDef, LoadError> {
     let mut lines = markdown.lines();
     if lines.next().map(str::trim) != Some("---") {
         return Err(LoadError::invalid_field(
             file,
             "frontmatter",
-            "a skill file must start with YAML frontmatter between --- fences",
+            "a rule file must start with YAML frontmatter between --- fences",
         ));
     }
     let mut frontmatter = String::new();
@@ -394,31 +281,27 @@ pub(crate) fn parse_skill_content(file: &str, markdown: &str) -> Result<SkillCon
             "missing closing --- fence",
         ));
     }
-    let fm: SkillFrontmatter =
+    let mut def: RuleDef =
         serde_yaml::from_str(&frontmatter).map_err(|e| map_serde_error(file, e))?;
     let body = lines.collect::<Vec<_>>();
     let (rubric, body_flags, body_passes) = extract_skill_sections(&body);
-    Ok(SkillContent {
-        description: fm.description,
-        severity: fm.severity,
-        granularity: fm.granularity,
-        scope: fm.scope,
-        intent: fm.intent,
-        docs: fm.docs,
-        message: fm.message,
-        rationale: fm.rationale,
-        rubric,
-        flag_examples: if fm.flag_examples.is_empty() {
-            body_flags
-        } else {
-            fm.flag_examples
-        },
-        pass_examples: if fm.pass_examples.is_empty() {
-            body_passes
-        } else {
-            fm.pass_examples
-        },
-    })
+    if def.engine == "inferential" {
+        if def.rubric.is_none() && !rubric.is_empty() {
+            def.rubric = Some(rubric);
+        }
+        if def.flag_examples.is_empty() {
+            def.flag_examples = body_flags;
+        }
+        if def.pass_examples.is_empty() {
+            def.pass_examples = body_passes;
+        }
+    } else {
+        let explanation = body.join("\n").trim().to_string();
+        if !explanation.is_empty() {
+            def.explanation = Some(explanation);
+        }
+    }
+    Ok(def)
 }
 
 fn extract_skill_sections(lines: &[&str]) -> (String, Vec<String>, Vec<String>) {
@@ -778,14 +661,24 @@ pub fn parse_manifest(file: &str, yaml: &str) -> Result<PackageManifest, LoadErr
 mod tests {
     use super::*;
 
-    const F: &str = "rules/test.yaml";
+    const F: &str = "rules/test.md";
 
-    fn ok(yaml: &str) -> RuleDef {
-        parse_rule(F, yaml).expect("rule should parse")
+    fn ok(frontmatter: &str) -> RuleDef {
+        let markdown = if frontmatter.trim_start().starts_with("---") {
+            frontmatter.to_string()
+        } else {
+            format!("---\n{frontmatter}\n---\n")
+        };
+        parse_rule(F, &markdown).expect("rule should parse")
     }
 
-    fn err(yaml: &str) -> String {
-        parse_rule(F, yaml)
+    fn err(frontmatter: &str) -> String {
+        let markdown = if frontmatter.trim_start().starts_with("---") {
+            frontmatter.to_string()
+        } else {
+            format!("---\n{frontmatter}\n---\n")
+        };
+        parse_rule(F, &markdown)
             .expect_err("rule should not parse")
             .to_string()
     }
@@ -894,10 +787,10 @@ pass_examples: ["x", "y", "z"]
     }
 
     #[test]
-    fn skill_file_extracts_frontmatter_and_examples() {
-        let skill = parse_skill_content(
-            "rules/hedging.md",
-            r#"---
+    fn markdown_soft_rule_extracts_frontmatter_and_examples() {
+        let def = ok(r#"---
+id: empty-hedge
+engine: inferential
 description: Flags empty hedges.
 severity: warning
 granularity: paragraph
@@ -916,57 +809,47 @@ Flag a hedge when it adds no useful uncertainty.
 - The result may vary with jurisdiction.
 - Perhaps the witness misunderstood the question.
 - It may be true if the contract says so.
-"#,
-        )
-        .unwrap();
-        assert_eq!(skill.granularity.as_deref(), Some("paragraph"));
-        assert!(skill.rubric.contains("adds no useful"));
-        assert!(!skill.rubric.contains("Flag examples"));
-        assert_eq!(skill.flag_examples.len(), 3);
-        assert_eq!(skill.pass_examples.len(), 3);
+"#);
+        assert_eq!(def.id, "empty-hedge");
+        assert_eq!(def.granularity.as_deref(), Some("paragraph"));
+        assert!(def.rubric.as_deref().unwrap().contains("adds no useful"));
+        assert!(!def.rubric.as_deref().unwrap().contains("Flag examples"));
+        assert_eq!(def.flag_examples.len(), 3);
+        assert_eq!(def.pass_examples.len(), 3);
     }
 
     #[test]
-    fn yaml_rule_merges_skill_with_yaml_precedence() {
-        let def = parse_rule_with_skill(
-            "rules/my-rule.yaml",
-            "id: my-rule\nengine: inferential\nseverity: warning\nskill: ./my-rule.md\ndescription: YAML description\nflag_examples: [yaml-a, yaml-b, yaml-c]\n",
-            "rules/my-rule.md",
-            "---\ndescription: Skill description\nmessage: Skill message\nflag_examples: [skill-a, skill-b, skill-c]\npass_examples: [x, y, z]\n---\nSkill rubric.\n",
-        )
-        .unwrap();
-        assert_eq!(def.description.as_deref(), Some("YAML description"));
-        assert_eq!(def.message.as_deref(), Some("Skill message"));
-        assert_eq!(def.rubric.as_deref(), Some("Skill rubric."));
-        assert_eq!(def.flag_examples, ["yaml-a", "yaml-b", "yaml-c"]);
-        assert_eq!(def.pass_examples, ["x", "y", "z"]);
+    fn markdown_hard_rule_stores_explanation() {
+        let def = ok("---\nid: no-em-dash\nengine: phrase\npatterns: ['—']\n---\nAvoid em dashes when a comma is clearer.\n");
+        assert_eq!(
+            def.explanation.as_deref(),
+            Some("Avoid em dashes when a comma is clearer.")
+        );
     }
 
     #[test]
-    fn yaml_rule_rejects_rubric_and_skill_together() {
-        let e = parse_rule_with_skill(
-            "rules/my-rule.yaml",
-            "id: my-rule\nengine: inferential\nrubric: YAML rubric\nskill: ./my-rule.md\n",
-            "rules/my-rule.md",
-            "---\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nSkill rubric.\n",
+    fn markdown_hard_rule_allows_empty_body() {
+        let def = ok("---\nid: no-em-dash\nengine: phrase\npatterns: ['—']\n---\n");
+        assert!(def.explanation.is_none());
+    }
+
+    #[test]
+    fn markdown_frontmatter_rejects_unknown_fields() {
+        let e = parse_rule(
+            F,
+            "---\nid: x\nengine: phrase\npatterns: [x]\nunknown: true\n---\n",
         )
         .unwrap_err()
         .to_string();
-        assert!(e.contains("rules/my-rule.yaml: rubric"), "{e}");
+        assert!(e.contains("unknown"), "{e}");
     }
 
     #[test]
-    fn yaml_rule_skill_validation_uses_yaml_file_context() {
-        let e = parse_rule_with_skill(
-            "rules/my-rule.yaml",
-            "id: my-rule\nengine: inferential\nskill: ./my-rule.md\n",
-            "rules/my-rule.md",
-            "---\nseverity: error\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nA rubric.\n",
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(e.contains("rules/my-rule.yaml: severity"), "{e}");
-        assert!(e.contains("too severe"), "{e}");
+    fn markdown_rule_requires_explicit_id() {
+        let e = parse_rule(F, "---\nengine: phrase\npatterns: [x]\n---\n")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("missing required field `id`"), "{e}");
     }
 
     // ---- schema flexibility --------------------------------------------
@@ -999,7 +882,7 @@ examples: { bad: "b", good: "g" }
         let e = err("id: x\nengine: phrase\nintent: scoring\npatterns: [\"—\"]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: intent: \"scoring\" is not an intent — use style or detection"
+            "rules/test.md: intent: \"scoring\" is not an intent — use style or detection"
         );
     }
 
@@ -1022,13 +905,13 @@ patterns: ["—"]
     #[test]
     fn bad_severity_matches_doc_example() {
         let e = parse_rule(
-            "builtin/rules/no-em-dash.yaml",
-            "id: no-em-dash\nengine: phrase\nseverity: high\npatterns: [\"—\"]\n",
+            "builtin/rules/no-em-dash.md",
+            "---\nid: no-em-dash\nengine: phrase\nseverity: high\npatterns: [\"—\"]\n---\n",
         )
         .unwrap_err();
         assert_eq!(
             e.to_string(),
-            "builtin/rules/no-em-dash.yaml: severity: \"high\" is not a severity — \
+            "builtin/rules/no-em-dash.md: severity: \"high\" is not a severity — \
              use error, warning, or suggestion"
         );
     }
@@ -1038,7 +921,7 @@ patterns: ["—"]
         let e = err("id: x\nengine: regexp\npatterns: [\"a\"]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: engine: \"regexp\" is not an engine — \
+            "rules/test.md: engine: \"regexp\" is not an engine — \
              use phrase, leading, density, statistical, or inferential"
         );
     }
@@ -1048,7 +931,7 @@ patterns: ["—"]
         let e = err("id: x\nengine: phrase\nscope: body\npatterns: [\"a\"]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: scope: \"body\" is not a scope — use prose, text, or all"
+            "rules/test.md: scope: \"body\" is not a scope — use prose, text, or all"
         );
     }
 
@@ -1058,7 +941,7 @@ patterns: ["—"]
              flag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: granularity: \"word\" is not a granularity — \
+            "rules/test.md: granularity: \"word\" is not a granularity — \
              use sentence, paragraph, or document"
         );
     }
@@ -1067,7 +950,7 @@ patterns: ["—"]
     fn invalid_regex_surfaces_regex_error_text() {
         let e = err("id: x\nengine: phrase\npatterns: [\"(unclosed\"]\n");
         assert!(
-            e.starts_with("rules/test.yaml: patterns[0]: invalid regex \"(unclosed\":"),
+            e.starts_with("rules/test.md: patterns[0]: invalid regex \"(unclosed\":"),
             "{e}"
         );
         assert!(e.contains("unclosed group"), "{e}");
@@ -1089,7 +972,7 @@ patterns: ["—"]
         );
         assert_eq!(
             e,
-            "rules/test.yaml: allow_context: allow_context only applies to phrase rules — \
+            "rules/test.md: allow_context: allow_context only applies to phrase rules — \
              this rule uses the leading engine"
         );
     }
@@ -1099,7 +982,7 @@ patterns: ["—"]
         let e = err("id: x\nengine: phrase\n");
         assert_eq!(
             e,
-            "rules/test.yaml: patterns: a phrase rule needs at least one pattern — \
+            "rules/test.md: patterns: a phrase rule needs at least one pattern — \
              add a patterns list"
         );
     }
@@ -1107,7 +990,7 @@ patterns: ["—"]
     #[test]
     fn density_needs_threshold() {
         let e = err("id: x\nengine: density\npatterns: [\"a\"]\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `threshold`");
+        assert_eq!(e, "rules/test.md: missing required field `threshold`");
     }
 
     #[test]
@@ -1115,12 +998,12 @@ patterns: ["—"]
         let e = err("id: x\nengine: density\nthreshold: 8\npatterns: [\"a\", \"b\"]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: patterns: a density rule needs exactly one pattern — found 2"
+            "rules/test.md: patterns: a density rule needs exactly one pattern — found 2"
         );
         let e = err("id: x\nengine: density\nthreshold: 8\n");
         assert_eq!(
             e,
-            "rules/test.yaml: patterns: a density rule needs exactly one pattern — found 0"
+            "rules/test.md: patterns: a density rule needs exactly one pattern — found 0"
         );
     }
 
@@ -1129,7 +1012,7 @@ patterns: ["—"]
         let e = err("id: x\nengine: density\nthreshold: -3\npatterns: [\"a\"]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: threshold: -3 is not a valid threshold — use a non-negative \
+            "rules/test.md: threshold: -3 is not a valid threshold — use a non-negative \
              number of matches per 1000 words, like 8"
         );
     }
@@ -1137,11 +1020,11 @@ patterns: ["—"]
     #[test]
     fn statistical_needs_known_metric() {
         let e = err("id: x\nengine: statistical\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `metric`");
+        assert_eq!(e, "rules/test.md: missing required field `metric`");
         let e = err("id: x\nengine: statistical\nmetric: word-frequency\n");
         assert!(
             e.starts_with(
-                "rules/test.yaml: metric: \"word-frequency\" is not a known metric — \
+                "rules/test.md: metric: \"word-frequency\" is not a known metric — \
                  use sentence-length, repetitive-openers,"
             ),
             "{e}"
@@ -1167,14 +1050,14 @@ direction: below
     #[test]
     fn statistical_document_metric_needs_threshold_and_direction() {
         let e = err("id: x\nengine: statistical\nmetric: triad-density\ndirection: above\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `threshold`");
+        assert_eq!(e, "rules/test.md: missing required field `threshold`");
         let e = err("id: x\nengine: statistical\nmetric: triad-density\nthreshold: 2\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `direction`");
+        assert_eq!(e, "rules/test.md: missing required field `direction`");
         let e =
             err("id: x\nengine: statistical\nmetric: triad-density\nthreshold: 2\ndirection: up\n");
         assert_eq!(
             e,
-            "rules/test.yaml: direction: \"up\" is not a direction — use above or below"
+            "rules/test.md: direction: \"up\" is not a direction — use above or below"
         );
         let e = err(
             "id: x\nengine: statistical\nmetric: triad-density\nthreshold: .nan\ndirection: above\n",
@@ -1187,13 +1070,13 @@ direction: below
         let e = err("id: x\nengine: phrase\npatterns: [\"a\"]\ndirection: above\n");
         assert_eq!(
             e,
-            "rules/test.yaml: direction: direction only applies to statistical rules — \
+            "rules/test.md: direction: direction only applies to statistical rules — \
              this rule uses the phrase engine"
         );
         let e = err("id: x\nengine: statistical\nmetric: sentence-length\ndirection: above\n");
         assert_eq!(
             e,
-            "rules/test.yaml: direction: direction only applies to document-level metrics, \
+            "rules/test.md: direction: direction only applies to document-level metrics, \
              not sentence-length"
         );
     }
@@ -1207,7 +1090,7 @@ direction: below
         );
         assert_eq!(
             e,
-            "rules/test.yaml: params.run_length: 0 is not a valid run length — \
+            "rules/test.md: params.run_length: 0 is not a valid run length — \
              use a whole number of at least 1"
         );
         let e = err("id: rep\nengine: statistical\nmetric: repetitive-openers\nparams: { run_length: 2.5 }\n");
@@ -1231,12 +1114,12 @@ direction: below
     fn inferential_needs_rubric_and_examples() {
         let e =
             err("id: x\nengine: inferential\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `rubric`");
+        assert_eq!(e, "rules/test.md: missing required field `rubric`");
 
         let e = err("id: x\nengine: inferential\nrubric: r\nflag_examples: [a, b]\npass_examples: [x, y, z]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: flag_examples: an inferential rule needs at least 3 \
+            "rules/test.md: flag_examples: an inferential rule needs at least 3 \
              flag_examples — found 2"
         );
 
@@ -1245,7 +1128,7 @@ direction: below
         );
         assert_eq!(
             e,
-            "rules/test.yaml: pass_examples: an inferential rule needs at least 3 \
+            "rules/test.md: pass_examples: an inferential rule needs at least 3 \
              pass_examples — found 0"
         );
     }
@@ -1256,7 +1139,7 @@ direction: below
              flag_examples: [a, b, c]\npass_examples: [x, y, z]\n");
         assert_eq!(
             e,
-            "rules/test.yaml: severity: \"error\" is too severe for an inferential rule — \
+            "rules/test.md: severity: \"error\" is too severe for an inferential rule — \
              judge findings are advisory; use warning or suggestion"
         );
     }
@@ -1264,22 +1147,22 @@ direction: below
     #[test]
     fn unknown_field_is_an_error() {
         let e = err("id: x\nengine: phrase\npatterns: [\"a\"]\nseverityy: error\n");
-        assert!(e.contains("rules/test.yaml"), "{e}");
+        assert!(e.contains("rules/test.md"), "{e}");
         assert!(e.contains("unknown field `severityy`"), "{e}");
     }
 
     #[test]
     fn missing_required_fields_are_named() {
         let e = err("engine: phrase\npatterns: [\"a\"]\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `id`");
+        assert_eq!(e, "rules/test.md: missing required field `id`");
         let e = err("id: x\npatterns: [\"a\"]\n");
-        assert_eq!(e, "rules/test.yaml: missing required field `engine`");
+        assert_eq!(e, "rules/test.md: missing required field `engine`");
     }
 
     #[test]
     fn invalid_yaml_reports_file() {
         let e = err(": : :");
-        assert!(e.starts_with("rules/test.yaml: invalid YAML:"), "{e}");
+        assert!(e.starts_with("rules/test.md: invalid YAML:"), "{e}");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+---
 id: no-sycophantic-openers
 engine: leading
 scope: text
@@ -18,3 +19,4 @@ patterns:
   - pattern: 'that[''’]s a (?:great|fascinating|wonderful|excellent) (?:question|point)'
     message: "Skip the sycophantic opener and start with the substance."
     suggestion: "Skip the sycophantic opener and start with the substance."
+---

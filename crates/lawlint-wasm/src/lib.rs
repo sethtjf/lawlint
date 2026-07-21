@@ -233,6 +233,8 @@ struct MetaJs<'a> {
     docs_url: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     rationale: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<&'a str>,
     examples: &'a [RuleExample],
 }
 
@@ -246,6 +248,7 @@ fn meta_js(m: &RuleMeta) -> MetaJs<'_> {
         description: &m.description,
         docs_url: &m.docs_url,
         rationale: m.rationale.as_deref(),
+        explanation: m.explanation.as_deref(),
         examples: &m.examples,
     }
 }
@@ -260,7 +263,12 @@ struct Validation {
 }
 
 fn validate_rule_impl(name: &str, yaml: &str) -> Validation {
-    match parse_rule(name, yaml) {
+    let markdown = if yaml.trim_start().starts_with("---") {
+        yaml.to_string()
+    } else {
+        format!("---\n{yaml}\n---\n")
+    };
+    match parse_rule(name, &markdown) {
         Ok(_) => Validation {
             ok: true,
             message: None,
@@ -414,7 +422,7 @@ pub fn apply_judge_findings_js(
     }
 }
 
-/// Validate one YAML rule for live editor feedback:
+/// Validate one Markdown rule for live editor feedback:
 /// `{ok: true} | {ok: false, message}`.
 #[wasm_bindgen(js_name = validateRule)]
 pub fn validate_rule(name: &str, yaml: &str) -> Result<JsValue, JsValue> {

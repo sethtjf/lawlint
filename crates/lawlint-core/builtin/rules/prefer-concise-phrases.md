@@ -1,3 +1,4 @@
+---
 id: prefer-concise-phrases
 engine: phrase
 scope: text
@@ -71,3 +72,4 @@ patterns:
     message: "Replace this phrase with “can”."
     suggestion: "Use “can”."
     fix: "can"
+---

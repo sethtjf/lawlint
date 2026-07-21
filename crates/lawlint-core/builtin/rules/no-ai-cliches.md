@@ -1,3 +1,4 @@
+---
 id: no-ai-cliches
 engine: phrase
 scope: text
@@ -22,3 +23,4 @@ patterns:
     message: "State the important point directly."
   - pattern: '(?i)\bnavigate the complexities\b'
     message: "Use a concrete description of the task or issue."
+---

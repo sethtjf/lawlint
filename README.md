@@ -101,42 +101,26 @@ rules evaluated by the optional AI judge (tier `inferential`). The serialized
 `Tier::{Static, Statistical, Inferential}` values and rule-package fields stay
 unchanged; hard/soft is the explanatory terminology used in the docs.
 
-### Skill-file references
+### Markdown rule files
 
-Rules are always authored as YAML files. An inferential soft rule can reference
-a Claude Code-style Markdown skill file with `skill`; the path is resolved
-relative to the YAML rule:
-
-```yaml
-id: empty-hedge
-engine: inferential
-severity: warning
-skill: ./skills/empty-hedge/SKILL.md
-```
-
-The referenced file contains YAML frontmatter and uses its Markdown body as
-the rubric:
+Every rule is a Claude Code-style Markdown file. YAML frontmatter carries the
+structured fields and must declare an explicit stable `id`. Hard rules (phrase,
+leading, density, and statistical engines) may use the body for explanatory
+prose. Soft rules (inferential/AI-judge rules) use the body as their rubric:
 
 ```markdown
 ---
-description: Flags hedges that add no useful uncertainty.
+id: empty-hedge
+engine: inferential
 severity: warning
-granularity: sentence
-scope: prose
-intent: detection
 ---
-Flag hedges that add no information about actual uncertainty.
-
-## Flag examples
-- Perhaps this is good.
-- It may arguably work.
-- It could possibly pass.
-
-## Pass examples
-- The result may vary with jurisdiction.
-- Perhaps the witness misunderstood the question.
-- It may be true if the contract says so.
+Flag a sentence when it hedges a claim without saying what is uncertain or why.
 ```
+
+Soft rules need at least three flag examples and three pass examples, either as
+frontmatter arrays or in `## Flag examples` and `## Pass examples` sections.
+The package manifest remains `style.yaml`; only `.md` files under `rules/` are
+discovered as rules.
 
 `description`, `severity`, `granularity`, `scope`, `intent`, `docs`, `message`,
 and `rationale` are optional; granularity defaults to `sentence`. The

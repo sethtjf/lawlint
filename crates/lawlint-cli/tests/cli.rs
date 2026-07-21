@@ -13,8 +13,28 @@ fn cmd(dir: &TempDir) -> Command {
 }
 
 fn write(dir: &TempDir, rel: &str, content: &str) -> std::path::PathBuf {
+    let is_rule = (rel.contains("/rules/") || !rel.ends_with("style.yaml"))
+        && matches!(
+            std::path::Path::new(rel)
+                .extension()
+                .and_then(|ext| ext.to_str()),
+            Some("yaml" | "yml")
+        );
+    let rel = if is_rule {
+        std::path::Path::new(rel)
+            .with_extension("md")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        rel.to_string()
+    };
     let path = dir.path().join(rel);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let content = if is_rule && !content.trim_start().starts_with("---") {
+        format!("---\n{content}---\n")
+    } else {
+        content.to_string()
+    };
     fs::write(&path, content).unwrap();
     path
 }
@@ -830,11 +850,11 @@ fn judge_without_config_errors_with_init_guidance() {
     write(&dir, "lawlint.config.json", "{}");
     write(
         &dir,
-        "rule.yaml",
-        "id: r\nengine: phrase\npatterns: [\"z\"]\n",
+        "rule.md",
+        "---\nid: r\nengine: phrase\npatterns: [\"z\"]\n---\n",
     );
     cmd(&dir)
-        .args(["rules", "test", "rule.yaml", "--judge"])
+        .args(["rules", "test", "rule.md", "--judge"])
         .assert()
         .code(2)
         .stderr(predicate::str::contains("lawlint init"));

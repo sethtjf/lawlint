@@ -879,7 +879,8 @@ mod tests {
              granularity: {granularity}\nrubric: Flag it.\n\
              flag_examples: [a, b, c]\npass_examples: [x, y, z]\n"
         );
-        let rule = loader::parse_rule("r.yaml", &yaml).unwrap();
+        let markdown = format!("---\n{yaml}\n---\n");
+        let rule = loader::parse_rule("r.md", &markdown).unwrap();
         RuleSet::from_parts(&manifest, vec![("r.yaml".to_string(), rule)]).unwrap()
     }
 

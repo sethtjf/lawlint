@@ -140,6 +140,7 @@ mod tests {
             description: "desc".into(),
             docs_url: format!("https://lawlint.com/rules/{id}"),
             rationale: None,
+            explanation: None,
             examples: vec![],
         }
     }
@@ -166,7 +167,7 @@ mod tests {
             rubric: None,
             flag_examples: vec![],
             pass_examples: vec![],
-            skill: None,
+            explanation: None,
         }
     }
 

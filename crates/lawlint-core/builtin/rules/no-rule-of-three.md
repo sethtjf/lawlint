@@ -1,3 +1,4 @@
+---
 id: no-rule-of-three
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "The rule is clear and fair."
 patterns:
   - '(?i)\b\w+(?:\s+\w+){0,3},\s+\w+(?:\s+\w+){0,3},\s+and\s+\w+'
+---

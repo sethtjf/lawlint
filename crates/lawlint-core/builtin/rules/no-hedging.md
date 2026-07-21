@@ -1,3 +1,4 @@
+---
 id: no-hedging
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "The claim is strong."
 patterns:
   - '(?i)\b(?:arguably|it could be said|generally speaking|perhaps|likely)\b'
+---

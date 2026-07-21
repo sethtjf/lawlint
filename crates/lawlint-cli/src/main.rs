@@ -133,7 +133,7 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum RulesAction {
-    /// Run each YAML rule's own examples and report pass/fail per example.
+    /// Run each Markdown rule's own examples and report pass/fail per example.
     Test {
         #[arg(value_name = "FILE_OR_DIR")]
         path: PathBuf,
@@ -687,6 +687,9 @@ fn rule_meta_json(meta: &RuleMeta) -> serde_json::Value {
     if let Some(rationale) = &meta.rationale {
         wrapped["rationale"] = serde_json::json!(rationale);
     }
+    if let Some(explanation) = &meta.explanation {
+        wrapped["explanation"] = serde_json::json!(explanation);
+    }
     serde_json::json!({ "id": flat_id, "meta": wrapped })
 }
 
@@ -730,7 +733,10 @@ fn rules_list(json: bool, cli_dirs: &[PathBuf]) -> Result<i32, String> {
 /// (`style.yaml` + `rules/`), or a loose directory of rule files.
 fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
+        if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            return Ok(vec![path.to_path_buf()]);
+        }
+        return Err(format!("no rule files found in {}", path.display()));
     }
     if !path.is_dir() {
         return Err(format!(
@@ -748,10 +754,8 @@ fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|p| {
-            matches!(
-                p.extension().and_then(|ext| ext.to_str()),
-                Some("yaml") | Some("yml")
-            ) && p.file_name().and_then(|name| name.to_str()) != Some("style.yaml")
+            matches!(p.extension().and_then(|ext| ext.to_str()), Some("md"))
+                && p.file_name().and_then(|name| name.to_str()) != Some("style.yaml")
         })
         .collect();
     files.sort();
@@ -803,18 +807,6 @@ fn single_rule_set(file: &Path, package: &str) -> Result<RuleSet, String> {
             .file_name()
             .ok_or_else(|| format!("{}: not a file", file.display()))?;
         fs::copy(file, rules_dir.join(name)).map_err(|error| error.to_string())?;
-        let yaml = fs::read_to_string(file).map_err(|error| error.to_string())?;
-        if let Some(skill) = loader::parse_rule_def(&file.display().to_string(), &yaml)
-            .map_err(|error| error.to_string())?
-            .skill
-        {
-            let source = file.parent().unwrap_or_else(|| Path::new("")).join(&skill);
-            let target = rules_dir.join(&skill);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
-            fs::copy(source, target).map_err(|error| error.to_string())?;
-        }
         RuleSet::load_dir(&staging).map_err(|error| error.to_string())
     };
     let result = build();
@@ -1445,6 +1437,7 @@ mod tests {
             description: "Flags em dashes.".into(),
             docs_url: "https://lawlint.com/rules/no-em-dash".into(),
             rationale: None,
+            explanation: None,
             examples: vec![],
         };
         let value = rule_meta_json(&meta);
@@ -1514,24 +1507,24 @@ mod tests {
         let rules = base.join("rules");
         fs::create_dir_all(&rules).unwrap();
         fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
-        fs::write(rules.join("b.yaml"), "x").unwrap();
-        fs::write(rules.join("a.yml"), "x").unwrap();
+        fs::write(rules.join("b.md"), "x").unwrap();
+        fs::write(rules.join("a.md"), "x").unwrap();
         fs::write(rules.join("notes.txt"), "x").unwrap();
 
-        // Package dir → YAML rule files, sorted.
+        // Package dir → Markdown rule files, sorted.
         let files = collect_rule_files(&base).unwrap();
         assert_eq!(
             files
                 .iter()
                 .map(|p| p.file_name().unwrap().to_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["a.yml", "b.yaml"]
+            vec!["a.md", "b.md"]
         );
-        // Loose dir (no manifest) → YAML rule files, style.yaml excluded.
+        // Loose dir (no manifest) → Markdown rule files, style.yaml excluded.
         let files = collect_rule_files(&rules).unwrap();
         assert_eq!(files.len(), 2);
         // Single file.
-        let single = collect_rule_files(&rules.join("b.yaml")).unwrap();
+        let single = collect_rule_files(&rules.join("b.md")).unwrap();
         assert_eq!(single.len(), 1);
         // Missing path → error.
         assert!(collect_rule_files(&base.join("nope")).is_err());
@@ -1540,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn rules_test_accepts_yaml_rule_referencing_skill_file() {
+    fn rules_test_accepts_markdown_inferential_rule() {
         let base =
             std::env::temp_dir().join(format!("lawlint-cli-skill-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -1548,13 +1541,8 @@ mod tests {
         fs::create_dir_all(&rules).unwrap();
         fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
         fs::write(
-            rules.join("soft.yaml"),
-            "id: soft\nengine: inferential\nskill: ./soft.md\n",
-        )
-        .unwrap();
-        fs::write(
             rules.join("soft.md"),
-            "---\ndescription: Soft check.\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag this pattern.\n",
+            "---\nid: soft\nengine: inferential\ndescription: Soft check.\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag this pattern.\n",
         )
         .unwrap();
 
@@ -1569,23 +1557,31 @@ mod tests {
         let rules = base.join("rules");
         fs::create_dir_all(&rules).unwrap();
         fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
-        let rule = rules.join("no-x.yaml");
-        fs::write(&rule, "id: no-x\nengine: phrase\npatterns: [\"z\"]\n").unwrap();
+        let rule = rules.join("no-x.md");
+        fs::write(
+            &rule,
+            "---\nid: no-x\nengine: phrase\npatterns: [\"z\"]\n---\n",
+        )
+        .unwrap();
         assert_eq!(package_name_for(&rule), "firm");
 
-        let loose = base.join("loose.yaml");
-        fs::write(&loose, "id: loose\nengine: phrase\npatterns: [\"z\"]\n").unwrap();
+        let loose = base.join("loose.md");
+        fs::write(
+            &loose,
+            "---\nid: loose\nengine: phrase\npatterns: [\"z\"]\n---\n",
+        )
+        .unwrap();
         // style.yaml IS a sibling here, so the manifest still wins.
         assert_eq!(package_name_for(&loose), "firm");
 
         let orphan_dir = base.join("orphan");
         fs::create_dir_all(&orphan_dir).unwrap();
-        let orphan = orphan_dir.join("o.yaml");
+        let orphan = orphan_dir.join("o.md");
         fs::write(&orphan, "x").unwrap();
         // Parent of parent is `base` which has style.yaml… so use a deeper dir.
         let deep_dir = base.join("deep").join("deeper");
         fs::create_dir_all(&deep_dir).unwrap();
-        let deep = deep_dir.join("d.yaml");
+        let deep = deep_dir.join("d.md");
         fs::write(&deep, "x").unwrap();
         assert_eq!(package_name_for(&deep), "test");
 
@@ -1597,10 +1593,10 @@ mod tests {
         let base = std::env::temp_dir().join(format!("lawlint-cli-single-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let good = base.join("no-x.yaml");
+        let good = base.join("no-x.md");
         fs::write(
             &good,
-            "id: no-x\nengine: phrase\nseverity: error\npatterns: [\"zebra\"]\n",
+            "---\nid: no-x\nengine: phrase\nseverity: error\npatterns: [\"zebra\"]\n---\n",
         )
         .unwrap();
         let set = single_rule_set(&good, "firm").unwrap();
@@ -1609,8 +1605,12 @@ mod tests {
         let result = lint_with("A zebra appears.", &LintOptions::default(), &set);
         assert!(has_rule(&result, "firm/no-x"));
 
-        let bad = base.join("broken.yaml");
-        fs::write(&bad, "id: broken\nengine: phrase\npatterns: [\"(\"]\n").unwrap();
+        let bad = base.join("broken.md");
+        fs::write(
+            &bad,
+            "---\nid: broken\nengine: phrase\npatterns: [\"(\"]\n---\n",
+        )
+        .unwrap();
         assert!(single_rule_set(&bad, "firm").is_err());
 
         fs::remove_dir_all(&base).unwrap();

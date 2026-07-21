@@ -1,3 +1,4 @@
+---
 id: no-semicolons
 engine: phrase
 scope: text
@@ -13,3 +14,4 @@ patterns:
   - pattern: ';'
     message: "Prefer periods over semicolons."
     suggestion: "Two short sentences beat one stitched-together one."
+---

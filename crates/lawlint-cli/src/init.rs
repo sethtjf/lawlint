@@ -666,7 +666,7 @@ fn ask<R: BufRead, W: Write>(
 
 // ---- scaffolding -------------------------------------------------------
 
-const SAMPLE_RULE: &str = r#"# Example project rule. Check it with: lawlint rules test .lawlint/rules
+const SAMPLE_RULE: &str = r#"---
 id: no-avoidance-of-doubt
 engine: phrase
 severity: warning
@@ -679,6 +679,9 @@ patterns:
   - pattern: '(?i)\bfor the avoidance of doubt\b'
     message: "Drop the filler phrase; state the point directly."
     suggestion: "State the point directly."
+---
+
+# Example project rule. Check it with: lawlint rules test .lawlint/rules
 "#;
 
 /// Write the starter package. Never overwrites: an existing style.yaml or
@@ -700,11 +703,11 @@ fn scaffold_rules_package(directory: &Path, package: &str) -> Result<Vec<String>
         .map_err(|error| format!("failed to write {}: {error}", manifest.display()))?;
         created.push(format!("{RULES_DIR}/style.yaml"));
     }
-    let sample = rules.join("no-avoidance-of-doubt.yaml");
+    let sample = rules.join("no-avoidance-of-doubt.md");
     if !sample.exists() {
         fs::write(&sample, SAMPLE_RULE)
             .map_err(|error| format!("failed to write {}: {error}", sample.display()))?;
-        created.push(format!("{RULES_DIR}/rules/no-avoidance-of-doubt.yaml"));
+        created.push(format!("{RULES_DIR}/rules/no-avoidance-of-doubt.md"));
     }
     Ok(created)
 }

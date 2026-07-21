@@ -210,6 +210,7 @@ mod tests {
             description: "default description".into(),
             docs_url: "https://lawlint.com/rules/test-phrase".into(),
             rationale: None,
+            explanation: None,
             examples: vec![],
         }
     }

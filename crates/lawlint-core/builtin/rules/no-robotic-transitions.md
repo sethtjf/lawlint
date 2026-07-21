@@ -1,3 +1,4 @@
+---
 id: no-robotic-transitions
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "The claim also fails."
 patterns:
   - '(?im)^\s*(Moreover|Furthermore|Additionally|In conclusion),'
+---
