@@ -18,8 +18,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod diff;
 mod init;
+mod init_tui;
 mod learn;
 mod tui;
+mod ui;
 mod update;
 
 #[derive(Debug, Parser)]
@@ -1070,11 +1072,53 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
 
 // ---- entry -------------------------------------------------------------
 
+/// Bare `lawlint`: if the project has no discoverable config, offer the setup
+/// wizard first (with a skip), then open the TUI. A completed wizard writes
+/// `.lawlint/config.json`, which the TUI's own `find_config` then picks up.
+fn launch_tui() -> Result<i32, String> {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let (_, config_dir) = find_config(cwd)?;
+    if config_dir.is_none() {
+        match init_tui::run_setup(init_tui::SetupContext::FirstRun)? {
+            init_tui::SetupOutcome::Aborted => return Ok(0),
+            init_tui::SetupOutcome::Completed | init_tui::SetupOutcome::Skipped => {}
+        }
+    }
+    tui::run_tui()
+}
+
+/// `lawlint init`: an interactive terminal gets the ratatui wizard and then
+/// drops into the TUI; anything scripted (`--yes`, a pipe, CI) takes the
+/// line-oriented walkthrough and exits, unchanged.
+fn init_command(
+    yes: bool,
+    force: bool,
+    ai: Option<&str>,
+    acknowledge_local: bool,
+) -> Result<i32, String> {
+    let interactive = !yes && io::stdin().is_terminal() && io::stdout().is_terminal();
+    if interactive {
+        match init_tui::run_setup(init_tui::SetupContext::Explicit {
+            force,
+            ai: ai.map(str::to_string),
+            acknowledge_local,
+        })? {
+            init_tui::SetupOutcome::Completed => tui::run_tui(),
+            // Explicit init has no "skip"; a user who bailed out gets a
+            // non-zero exit and no TUI.
+            init_tui::SetupOutcome::Aborted | init_tui::SetupOutcome::Skipped => Ok(1),
+        }
+    } else {
+        init::init_command(yes, force, ai, acknowledge_local)
+    }
+}
+
 fn run(cli: Cli) -> Result<i32, String> {
     // A bare `lawlint` in an interactive terminal launches the TUI instead of
-    // blocking on stdin.
+    // blocking on stdin — running the setup wizard first if this project has no
+    // config yet.
     if std::env::args().len() == 1 && io::stdin().is_terminal() {
-        return tui::run_tui();
+        return launch_tui();
     }
 
     match &cli.command {
@@ -1083,7 +1127,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             force,
             ai,
             acknowledge_local,
-        }) => init::init_command(*yes, *force, ai.as_deref(), *acknowledge_local),
+        }) => init_command(*yes, *force, ai.as_deref(), *acknowledge_local),
         Some(Command::Learn { path, out, model }) => {
             learn::learn_command(path, out, model.as_deref())
         }
