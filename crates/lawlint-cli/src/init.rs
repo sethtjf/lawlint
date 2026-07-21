@@ -25,19 +25,59 @@
 
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use serde_json::{json, Value};
 
-const DEFAULT_FLOOR: f64 = 0.6;
-const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-4-5-20251001";
-const DEFAULT_OPENAI_HOSTED_MODEL: &str = "gpt-5.5";
-const OPENAI_HOSTED_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_FOUNDRY_DEPLOYMENT: &str = "gpt-5.5";
-const DEFAULT_COMPAT_BASE_URL: &str = "http://localhost:11434/v1";
-const DEFAULT_COMPAT_MODEL: &str = "llama3.2";
-const RULES_DIR: &str = ".lawlint/rules";
+pub(crate) const DEFAULT_FLOOR: f64 = 0.6;
+pub(crate) const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-4-5-20251001";
+pub(crate) const DEFAULT_OPENAI_HOSTED_MODEL: &str = "gpt-5.5";
+pub(crate) const OPENAI_HOSTED_BASE_URL: &str = "https://api.openai.com/v1";
+pub(crate) const DEFAULT_FOUNDRY_DEPLOYMENT: &str = "gpt-5.5";
+pub(crate) const DEFAULT_COMPAT_BASE_URL: &str = "http://localhost:11434/v1";
+pub(crate) const DEFAULT_COMPAT_MODEL: &str = "llama3.2";
+pub(crate) const RULES_DIR: &str = ".lawlint/rules";
+
+// ---- shared prompt copy ------------------------------------------------
+// The catalog and local-constraints wording is shared verbatim between the
+// non-interactive line walkthrough (`ask_ai`/`ask_local`) and the ratatui
+// setup wizard (`init_tui`), so the two front-ends never drift.
+
+/// The AI-catalog question stem (hosted providers first, #50).
+pub(crate) const AI_CATALOG_PROMPT: &str =
+    "Which AI model should lawlint use? It powers the tier-3 judge and future AI \
+     features. Hosted providers are recommended.";
+
+/// The five catalog entries, in display order. Every entry says where text
+/// goes; local sits last and is marked advanced.
+pub(crate) const AI_CATALOG_OPTIONS: [&str; 5] = [
+    "Claude (Anthropic — hosted, recommended; text is sent to the provider, \
+     requires API key)",
+    "GPT (OpenAI — hosted; text is sent to the provider, requires API key)",
+    "Azure Foundry (hosted — text is sent to the provider, requires API key + \
+     endpoint)",
+    "OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp, … — text goes to that \
+     server)",
+    "Local model (advanced — private, no text leaves this machine; multi-GB \
+     download, measurably lower quality)",
+];
+
+/// The local-model constraints, stated with the measured numbers before the
+/// acknowledgment (docs/eval-corpus.md).
+pub(crate) const LOCAL_CONSTRAINTS: &str =
+    "  Local models are private (no text leaves this machine) but constrained:\n\
+     \x20   - multi-GB model download on first use, slower inference\n\
+     \x20   - measurably lower quality than hosted models: on lawlint's tier-3 eval\n\
+     \x20     the local default scored F1 0.111 (empty-hedge) and 0.000\n\
+     \x20     (padded-elaboration), with 38 of 330 chunks failing closed\n\
+     \x20     (docs/eval-corpus.md)";
+
+/// The two local-model choices, in display order (Qwen default, then Gemma).
+pub(crate) const LOCAL_CHOICE_OPTIONS: [&str; 2] = [
+    "Qwen2.5-1.5B (~1 GB GGUF download on first use)",
+    "Gemma 4 E4B (~16 GB download on first use, runs 4-bit-quantized in memory)",
+];
 
 // ---- answers -----------------------------------------------------------
 
@@ -46,14 +86,14 @@ const RULES_DIR: &str = ".lawlint/rules";
 /// whether the local-model constraints were acknowledged (#50) — persisted
 /// as `ai.localAcknowledged` so the per-use notice stays quiet.
 #[derive(Debug, Clone, PartialEq)]
-struct AiSelection {
-    model: String,
-    keys: Vec<(String, String)>,
-    acknowledge_local: bool,
+pub(crate) struct AiSelection {
+    pub(crate) model: String,
+    pub(crate) keys: Vec<(String, String)>,
+    pub(crate) acknowledge_local: bool,
 }
 
 impl AiSelection {
-    fn keyless(model: impl Into<String>) -> Self {
+    pub(crate) fn keyless(model: impl Into<String>) -> Self {
         AiSelection {
             model: model.into(),
             keys: Vec::new(),
@@ -62,7 +102,7 @@ impl AiSelection {
     }
 
     /// A local selection whose constraints were acknowledged.
-    fn acknowledged_local(model: impl Into<String>) -> Self {
+    pub(crate) fn acknowledged_local(model: impl Into<String>) -> Self {
         AiSelection {
             model: model.into(),
             keys: Vec::new(),
@@ -72,22 +112,22 @@ impl AiSelection {
 }
 
 /// Is `model` a local (mistral.rs) spec?
-fn is_local_spec(model: &str) -> bool {
+pub(crate) fn is_local_spec(model: &str) -> bool {
     model == "local" || model.starts_with("local:")
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Answers {
+pub(crate) struct Answers {
     /// `None` = leave the base config's `ai` section untouched.
-    ai: Option<AiSelection>,
+    pub(crate) ai: Option<AiSelection>,
     /// `None` = leave the base config's `judge` untouched.
-    judge_enabled: Option<bool>,
+    pub(crate) judge_enabled: Option<bool>,
     /// Confidence floor; only written when it differs from the engine
     /// default. Meaningless unless the judge is enabled.
-    floor: Option<f64>,
+    pub(crate) floor: Option<f64>,
     /// `None` = leave the base config's `markdown` untouched.
-    markdown: Option<bool>,
-    scaffold_rules: bool,
+    pub(crate) markdown: Option<bool>,
+    pub(crate) scaffold_rules: bool,
 }
 
 impl Answers {
@@ -121,7 +161,7 @@ impl Answers {
 
 /// `--ai` shorthand: `qwen`/`gemma` name the catalog's local entries;
 /// anything else must be a full model spec.
-fn parse_ai_flag(value: &str) -> Result<AiSelection, String> {
+pub(crate) fn parse_ai_flag(value: &str) -> Result<AiSelection, String> {
     let model = match value {
         "qwen" | "local" => "local".to_string(),
         "gemma" => format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO),
@@ -335,7 +375,7 @@ impl<R: BufRead, W: Write> Prompter<R, W> {
 /// config), for the prompt default. Hosted entries lead (#50): a fresh
 /// project (empty spec) preselects Anthropic; local specs map to the
 /// advanced local entry.
-fn default_catalog_index(model: &str) -> usize {
+pub(crate) fn default_catalog_index(model: &str) -> usize {
     if is_local_spec(model) {
         4
     } else if let Some(spec) = model.strip_prefix("openai:") {
@@ -357,7 +397,7 @@ fn default_catalog_index(model: &str) -> usize {
 /// runtime — its GGUF loader carries no gemma architecture. Gemma runs
 /// from safetensors repos instead (quantized in situ), so warn at
 /// selection time, not after a multi-GB download at first run.
-fn looks_like_gemma_gguf(repo: &str) -> bool {
+pub(crate) fn looks_like_gemma_gguf(repo: &str) -> bool {
     let lower = repo.to_lowercase();
     lower.contains("gemma") && lower.contains("gguf")
 }
@@ -408,24 +448,14 @@ fn ask_local<R: BufRead, W: Write>(
     ack_default: bool,
     prompter: &mut Prompter<R, W>,
 ) -> Result<Option<AiSelection>, String> {
-    prompter.say(
-        "  Local models are private (no text leaves this machine) but constrained:\n\
-         \x20   - multi-GB model download on first use, slower inference\n\
-         \x20   - measurably lower quality than hosted models: on lawlint's tier-3 eval\n\
-         \x20     the local default scored F1 0.111 (empty-hedge) and 0.000\n\
-         \x20     (padded-elaboration), with 38 of 330 chunks failing closed\n\
-         \x20     (docs/eval-corpus.md)",
-    )?;
+    prompter.say(LOCAL_CONSTRAINTS)?;
     if !prompter.confirm("Use a local model with these constraints?", ack_default)? {
         return Ok(None);
     }
     let is_gemma = |repo: &str| repo.to_lowercase().contains("gemma");
     let local_choice = prompter.choice(
         "Which local model?",
-        &[
-            "Qwen2.5-1.5B (~1 GB GGUF download on first use)",
-            "Gemma 4 E4B (~16 GB download on first use, runs 4-bit-quantized in memory)",
-        ],
+        &LOCAL_CHOICE_OPTIONS,
         if base_model.strip_prefix("local:").is_some_and(is_gemma) {
             1
         } else {
@@ -479,19 +509,8 @@ fn ask_ai<R: BufRead, W: Write>(
     prompter: &mut Prompter<R, W>,
 ) -> Result<AiSelection, String> {
     let choice = prompter.choice(
-        "Which AI model should lawlint use? It powers the tier-3 judge and future AI \
-         features. Hosted providers are recommended.",
-        &[
-            "Claude (Anthropic — hosted, recommended; text is sent to the provider, \
-             requires API key)",
-            "GPT (OpenAI — hosted; text is sent to the provider, requires API key)",
-            "Azure Foundry (hosted — text is sent to the provider, requires API key + \
-             endpoint)",
-            "OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp, … — text goes to that \
-             server)",
-            "Local model (advanced — private, no text leaves this machine; multi-GB \
-             download, measurably lower quality)",
-        ],
+        AI_CATALOG_PROMPT,
+        &AI_CATALOG_OPTIONS,
         default_catalog_index(base_model),
     )?;
 
@@ -707,6 +726,136 @@ fn read_config_object(path: &Path) -> Result<Option<Value>, String> {
     })
 }
 
+/// Where the seed defaults came from, so each front-end can narrate it in its
+/// own voice (the line flow prints a notice, the wizard shows a styled line).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum SeedSource {
+    /// An existing `.lawlint/config.json` (reachable only under `--force`).
+    ExistingNested,
+    /// A legacy `lawlint.config.json` that parsed; its settings carry over.
+    LegacyCarried,
+    /// A legacy `lawlint.config.json` present but not valid JSON — left alone.
+    LegacyUnparseable,
+    /// Nothing to seed from; a fresh project.
+    Fresh,
+}
+
+/// The resolved seed for an init run: the base config the answers apply over,
+/// plus the legacy file (if any) so the front-end can offer to remove it.
+pub(crate) struct Seed {
+    pub(crate) base: Value,
+    /// The parsed legacy `lawlint.config.json`, if it existed and parsed.
+    pub(crate) legacy: Option<Value>,
+    pub(crate) legacy_carried: bool,
+    pub(crate) legacy_path: PathBuf,
+    pub(crate) source: SeedSource,
+}
+
+/// Resolve the seed config, mirroring discovery precedence: an existing
+/// `.lawlint/config.json` (under `--force`), then a legacy
+/// `lawlint.config.json`, then empty — so re-running init preserves prior
+/// settings instead of regenerating from scratch. Errors if the nested config
+/// already exists without `--force` (init refuses to clobber it).
+pub(crate) fn resolve_seed(directory: &Path, force: bool) -> Result<Seed, String> {
+    let config_path = directory.join(".lawlint").join("config.json");
+    if config_path.exists() && !force {
+        return Err(format!(
+            "{} already exists; rerun with --force to overwrite",
+            config_path.display()
+        ));
+    }
+    let legacy_path = directory.join("lawlint.config.json");
+    let existing = read_config_object(&config_path)?;
+    let legacy = read_config_object(&legacy_path)?;
+    let legacy_exists = legacy_path.is_file();
+    let (base, legacy_carried, source) = match (existing, &legacy) {
+        (Some(existing), _) => (existing, false, SeedSource::ExistingNested),
+        (None, Some(legacy)) => (legacy.clone(), true, SeedSource::LegacyCarried),
+        (None, None) => (
+            json!({}),
+            false,
+            if legacy_exists {
+                SeedSource::LegacyUnparseable
+            } else {
+                SeedSource::Fresh
+            },
+        ),
+    };
+    Ok(Seed {
+        base,
+        legacy,
+        legacy_carried,
+        legacy_path,
+        source,
+    })
+}
+
+/// The result of writing an init run's answers to disk.
+pub(crate) struct Applied {
+    /// Project-relative paths created (config, and any scaffolded rule files).
+    pub(crate) created: Vec<String>,
+    /// Where credentials were stored, if any — front-ends echo this so the
+    /// user knows the key landed outside the committed project config.
+    pub(crate) credential_message: Option<String>,
+}
+
+/// Apply `answers` over `base`: write `.lawlint/config.json`, scaffold the
+/// starter rules package if requested, and store any API credentials in the
+/// user-level file. Front-end-agnostic — legacy-file removal and the on-screen
+/// summary stay with each caller. Both the line walkthrough and the ratatui
+/// wizard funnel through here so they write identical config.
+pub(crate) fn apply_answers(
+    directory: &Path,
+    base: &Value,
+    answers: &Answers,
+    credentials_path: Option<&Path>,
+) -> Result<Applied, String> {
+    let lawlint_dir = directory.join(".lawlint");
+    let config_path = lawlint_dir.join("config.json");
+    let config = build_config(base, answers);
+    fs::create_dir_all(&lawlint_dir)
+        .map_err(|error| format!("failed to create {}: {error}", lawlint_dir.display()))?;
+    let mut text = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    text.push('\n');
+    fs::write(&config_path, text)
+        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+
+    let mut created = vec![".lawlint/config.json".to_string()];
+    if answers.scaffold_rules {
+        created.extend(scaffold_rules_package(directory, &package_name(directory))?);
+    }
+
+    // Credentials land outside the project (the config gets committed);
+    // report exactly where the key went.
+    let credential_message = match &answers.ai {
+        Some(selection) if !selection.keys.is_empty() => {
+            let path = match credentials_path {
+                Some(path) => {
+                    lawlint_judge::credentials::store_at(path, &selection.keys)?;
+                    path.to_path_buf()
+                }
+                None => lawlint_judge::credentials::store(&selection.keys)?,
+            };
+            Some(format!(
+                "Stored {} in {} (outside your project, owner-only permissions).",
+                selection
+                    .keys
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                path.display()
+            ))
+        }
+        _ => None,
+    };
+
+    Ok(Applied {
+        created,
+        credential_message,
+    })
+}
+
 fn run_init<R: BufRead, W: Write>(
     directory: &Path,
     yes: bool,
@@ -716,50 +865,31 @@ fn run_init<R: BufRead, W: Write>(
     credentials_path: Option<&Path>,
     prompter: &mut Prompter<R, W>,
 ) -> Result<i32, String> {
-    let lawlint_dir = directory.join(".lawlint");
-    let config_path = lawlint_dir.join("config.json");
-    if config_path.exists() && !force {
-        return Err(format!(
-            "{} already exists; rerun with --force to overwrite",
-            config_path.display()
-        ));
-    }
     let ai_override = ai_flag.map(parse_ai_flag).transpose()?;
 
-    // Seed order mirrors discovery precedence: the existing
-    // .lawlint/config.json (reachable only under --force), then the legacy
-    // lawlint.config.json, then empty — so re-running init preserves prior
-    // settings instead of regenerating from scratch.
-    let legacy_path = directory.join("lawlint.config.json");
-    let existing = read_config_object(&config_path)?;
-    let legacy = read_config_object(&legacy_path)?;
-    let legacy_exists = legacy_path.is_file();
-    let (base, legacy_carried) = match (existing, &legacy) {
-        (Some(existing), _) => {
-            prompter.say(&format!(
-                "Existing {} found — its settings seed the defaults below and carry over.",
-                ".lawlint/config.json".bold()
-            ))?;
-            (existing, false)
-        }
-        (None, Some(legacy)) => {
-            prompter.say(&format!(
-                "Found lawlint.config.json — its settings seed the defaults below and \
-                 carry over to {}.",
-                ".lawlint/config.json".bold()
-            ))?;
-            (legacy.clone(), true)
-        }
-        (None, None) => {
-            if legacy_exists {
-                prompter.say(
-                    "Found lawlint.config.json but it is not valid JSON; starting fresh \
-                     (the old file is left untouched).",
-                )?;
-            }
-            (json!({}), false)
-        }
-    };
+    let Seed {
+        base,
+        legacy,
+        legacy_carried,
+        legacy_path,
+        source,
+    } = resolve_seed(directory, force)?;
+    match source {
+        SeedSource::ExistingNested => prompter.say(&format!(
+            "Existing {} found — its settings seed the defaults below and carry over.",
+            ".lawlint/config.json".bold()
+        ))?,
+        SeedSource::LegacyCarried => prompter.say(&format!(
+            "Found lawlint.config.json — its settings seed the defaults below and \
+             carry over to {}.",
+            ".lawlint/config.json".bold()
+        ))?,
+        SeedSource::LegacyUnparseable => prompter.say(
+            "Found lawlint.config.json but it is not valid JSON; starting fresh \
+             (the old file is left untouched).",
+        )?,
+        SeedSource::Fresh => {}
+    }
 
     let mut answers = if yes {
         Answers::accept_defaults(&base, ai_override)
@@ -794,41 +924,9 @@ fn run_init<R: BufRead, W: Write>(
         }
     }
 
-    let config = build_config(&base, &answers);
-    fs::create_dir_all(&lawlint_dir)
-        .map_err(|error| format!("failed to create {}: {error}", lawlint_dir.display()))?;
-    let mut text = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
-    text.push('\n');
-    fs::write(&config_path, text)
-        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
-
-    let mut created = vec![".lawlint/config.json".to_string()];
-    if answers.scaffold_rules {
-        created.extend(scaffold_rules_package(directory, &package_name(directory))?);
-    }
-
-    // Credentials land outside the project (the config gets committed);
-    // announce exactly where the key went.
-    if let Some(selection) = &answers.ai {
-        if !selection.keys.is_empty() {
-            let path = match credentials_path {
-                Some(path) => {
-                    lawlint_judge::credentials::store_at(path, &selection.keys)?;
-                    path.to_path_buf()
-                }
-                None => lawlint_judge::credentials::store(&selection.keys)?,
-            };
-            prompter.say(&format!(
-                "Stored {} in {} (outside your project, owner-only permissions).",
-                selection
-                    .keys
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                path.display()
-            ))?;
-        }
+    let applied = apply_answers(directory, &base, &answers, credentials_path)?;
+    if let Some(message) = &applied.credential_message {
+        prompter.say(message)?;
     }
 
     // The new file shadows the legacy one (same-directory precedence), so
@@ -856,7 +954,7 @@ fn run_init<R: BufRead, W: Write>(
     }
 
     prompter.say("")?;
-    for file in &created {
+    for file in &applied.created {
         prompter.say(&format!("  {} {file}", "created".green()))?;
     }
     prompter.say(&format!(

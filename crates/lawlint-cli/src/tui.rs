@@ -17,6 +17,10 @@
 //! - `PageUp`/`PageDown` scroll the transcript; `Esc` clears the composer;
 //!   `Ctrl+C`/`Ctrl+Q` quit.
 
+use crate::ui::{
+    build_composer, bullet_line, pad_line, plural, tilde, wrap_line, AMBER, BRAND, BRAND_DARK, DIM,
+    GOOD, INPUT_BAR_BG, SELECT_BG, SLATE,
+};
 use crate::{build_rule_set, find_config, judge_spec, lint_text};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -28,32 +32,13 @@ use crossterm::terminal::{
 use lawlint_core::{LintOptions, LintResult, RuleSet, Severity};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Terminal;
 use ratatui_textarea::TextArea;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::{Path, PathBuf};
-
-// Litvue palette, from apps/desktop/src/styles.css. Foreground accents use a
-// lighter tint of the oxblood hue so they stay readable on dark terminals.
-/// Oxblood tinted up for foreground accents (base: --oxblood #7e2528).
-const BRAND: Color = Color::Rgb(199, 62, 71);
-/// True oxblood, for borders and quiet accents.
-const BRAND_DARK: Color = Color::Rgb(126, 37, 40);
-/// Warm muted gray (--muted #82796f).
-const DIM: Color = Color::Rgb(130, 121, 111);
-/// Red-tinted bar behind echoed input.
-const INPUT_BAR_BG: Color = Color::Rgb(56, 40, 40);
-/// Selected row in the file browser.
-const SELECT_BG: Color = Color::Rgb(94, 32, 34);
-/// Green from the desktop app's status dot (#557b59, tinted up).
-const GOOD: Color = Color::Rgb(118, 160, 123);
-/// Warm amber for warnings.
-const AMBER: Color = Color::Rgb(202, 152, 74);
-/// Slate for suggestions.
-const SLATE: Color = Color::Rgb(126, 148, 158);
 
 struct TerminalGuard;
 
@@ -851,39 +836,7 @@ fn render_browser(f: &mut ratatui::Frame, browser: &FileBrowser, host: Rect) {
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
-/// Shorten a path for display by replacing the home directory with `~`.
-fn tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
-            format!("~{}", &path[home.len()..])
-        }
-        _ => path.to_string(),
-    }
-}
-
 // ---- shared rendering --------------------------------------------------
-
-fn build_composer() -> TextArea<'static> {
-    let mut t = TextArea::default();
-    t.set_style(Style::default().fg(Color::Reset));
-    t.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-    t.set_cursor_line_style(Style::default());
-    t.set_placeholder_text("Type or paste text to lint, /help for commands");
-    t.set_placeholder_style(Style::default().fg(DIM));
-    t
-}
-
-fn bullet_line(head: Span<'static>, dim_tail: String) -> Line<'static> {
-    let mut spans = vec![Span::styled("◆ ", Style::default().fg(BRAND)), head];
-    if !dim_tail.is_empty() {
-        spans.push(Span::styled(dim_tail, Style::default().fg(DIM)));
-    }
-    Line::from(spans)
-}
-
-fn plural(n: usize, word: &str) -> String {
-    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
-}
 
 /// The Litvue wordmark header: an oxblood left bar with the tool name and
 /// session facts, followed by dim getting-started hints.
@@ -945,82 +898,6 @@ fn banner_lines(banner: &Banner) -> Vec<Line<'static>> {
         ]),
         Line::default(),
     ]
-}
-
-// ---- line wrapping -----------------------------------------------------
-
-/// Word-wrap a styled line to `width` characters, preserving span styles.
-fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
-    let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-    if total <= width || width == 0 {
-        return vec![line.clone()];
-    }
-
-    let chars: Vec<(char, Style)> = line
-        .spans
-        .iter()
-        .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
-        .collect();
-
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let mut start = 0;
-    while start < chars.len() {
-        // Skip leading spaces on continuation rows.
-        if !rows.is_empty() {
-            while start < chars.len() && chars[start].0 == ' ' {
-                start += 1;
-            }
-        }
-        if start >= chars.len() {
-            break;
-        }
-        let hard_end = (start + width).min(chars.len());
-        let end = if hard_end == chars.len() {
-            hard_end
-        } else {
-            // Break at the last space in the window, or hard-break mid-word.
-            (start..hard_end)
-                .rev()
-                .find(|&i| chars[i].0 == ' ')
-                .map(|i| i + 1)
-                .unwrap_or(hard_end)
-        };
-        rows.push(spans_from_chars(&chars[start..end]));
-        start = end;
-    }
-    rows
-}
-
-/// Rebuild spans from styled characters, merging consecutive equal styles.
-fn spans_from_chars(chars: &[(char, Style)]) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut current = String::new();
-    let mut style = Style::default();
-    for (c, s) in chars {
-        if current.is_empty() || *s == style {
-            style = *s;
-            current.push(*c);
-        } else {
-            spans.push(Span::styled(current.clone(), style));
-            current.clear();
-            current.push(*c);
-            style = *s;
-        }
-    }
-    if !current.is_empty() {
-        spans.push(Span::styled(current, style));
-    }
-    Line::from(spans)
-}
-
-/// Extend a line with `fill`-styled spaces out to the full terminal width.
-fn pad_line(mut line: Line<'static>, width: usize, fill: Style) -> Line<'static> {
-    let used: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-    if used < width {
-        line.spans
-            .push(Span::styled(" ".repeat(width - used), fill));
-    }
-    line
 }
 
 fn should_quit(key: &KeyEvent) -> bool {
