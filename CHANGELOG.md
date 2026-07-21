@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/sethtjf/lawlint/compare/v0.6.0...v0.7.0) (2026-07-21)
+
+
+### Features
+
+* **cli:** TUI-native setup wizard that launches lawlint ([#53](https://github.com/sethtjf/lawlint/issues/53)) ([004e48e](https://github.com/sethtjf/lawlint/commit/004e48e104d327f554540dd69b11337ca602e63b))
+
 ## [0.6.0](https://github.com/sethtjf/lawlint/compare/v0.5.0...v0.6.0) (2026-07-20)
 
 
