@@ -1,0 +1,124 @@
+---
+// The landing page. Blume's PageLayout supplies the document shell, SEO/OG
+// tags, fonts, the theme pre-paint script, and the site header; the body below
+// is a full-width slot, styled with Tailwind against Blume's design tokens.
+import data from "blume:data";
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import SiteFooter from "./_shared/SiteFooter.astro";
+
+const { config } = data;
+---
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  page={{ title: "Writing, made human. — lawlint", description: config.description, route: "/" }}
+  logo={config.logo}
+  favicon={config.favicon}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  themeMode={config.theme.mode}
+  fontCssVars={data.fontCssVars}
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  x={config.x}
+>
+  <section class="mx-auto max-w-5xl px-6 pt-28 pb-32">
+    <p class="font-mono text-xs uppercase tracking-[0.13em] text-accent">
+      A text linter for the age of generated prose
+    </p>
+    <h1
+      class="mt-6 max-w-[22ch] font-display text-5xl leading-[1.04] tracking-[-0.05em] text-foreground text-balance sm:text-6xl lg:text-7xl"
+    >
+      Make machine-written text sound human.
+    </h1>
+    <p class="mt-8 max-w-xl text-xl leading-relaxed text-muted-foreground text-pretty">
+      lawlint finds the clichés, legalese, and rhythmic tells that make AI-generated
+      writing feel synthetic — then points toward something clearer.
+    </p>
+    <div class="mt-10 flex flex-wrap items-center gap-6">
+      <a
+        href="/playground"
+        class="rounded-blume bg-accent px-5 py-3 font-mono text-xs uppercase tracking-[0.06em] text-accent-foreground no-underline transition-opacity hover:opacity-90"
+      >
+        Try the playground
+      </a>
+      <a
+        href="/docs/installation"
+        class="font-mono text-xs uppercase tracking-[0.06em] text-foreground underline underline-offset-4"
+      >
+        Install the CLI →
+      </a>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-5xl border-t border-border px-6 py-20">
+    <p class="font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">In practice</p>
+    <div class="mt-8 grid gap-12 lg:grid-cols-2">
+      <div>
+        <h2
+          class="font-display text-4xl leading-[1.05] tracking-[-0.045em] text-foreground text-balance"
+        >
+          A second pair of eyes.
+        </h2>
+        <p class="mt-6 text-lg leading-relaxed text-muted-foreground text-pretty">
+          Designed for legal teams, editors, and anyone who wants direct, credible
+          prose without sanding away its character.
+        </p>
+      </div>
+      <div class="rounded-blume border border-border bg-muted p-6">
+        <div class="flex gap-3 leading-relaxed">
+          <span class="font-mono text-accent">−</span>
+          <span
+            >It is important to note that we <u
+              class="decoration-accent decoration-2 underline-offset-2">delve</u
+            > into the <u class="decoration-accent decoration-2 underline-offset-2"
+              >landscape of</u
+            > obligations.</span
+          >
+        </div>
+        <div
+          class="my-4 border-y border-border py-3 font-mono text-[0.7rem] uppercase tracking-wide text-accent"
+        >
+          no-ai-cliches · replace with a direct verb
+        </div>
+        <div class="flex gap-3 leading-relaxed">
+          <span class="font-mono text-accent">+</span>
+          <span>We <strong class="font-semibold">examine</strong> the parties’ obligations.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-5xl border-t border-border px-6 py-20">
+    <div class="grid gap-12 lg:grid-cols-2">
+      <div>
+        <p class="font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">
+          Start small
+        </p>
+        <h2
+          class="mt-8 font-display text-4xl leading-[1.05] tracking-[-0.045em] text-foreground text-balance"
+        >
+          Native tools, no account.
+        </h2>
+      </div>
+      <div>
+        <pre
+          class="overflow-x-auto rounded-blume bg-[var(--blume-code-background)] p-5 font-mono text-sm">curl -fsSL https://lawlint.com/install.sh | sh</pre>
+        <p class="mt-6 text-lg leading-relaxed text-muted-foreground text-pretty">
+          Install the native CLI in one line and keep linting in your terminal,
+          scripts, and editors.
+        </p>
+        <a
+          href="/docs/installation"
+          class="mt-4 inline-block font-mono text-xs uppercase tracking-[0.06em] text-foreground underline underline-offset-4"
+        >
+          See CLI downloads →
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <SiteFooter slot="footer" />
+</PageLayout>

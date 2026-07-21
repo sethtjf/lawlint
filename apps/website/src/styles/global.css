@@ -1,25 +1,41 @@
 @import "tailwindcss/theme.css";
 @import "tailwindcss/utilities.css";
 
+/*
+ * Blume builds from a generated Astro project rooted at `.blume/`, so
+ * Tailwind's automatic source detection — which walks out from the Vite root —
+ * never reaches this app's own components. The custom pages and the shadcn
+ * components they use are declared explicitly. (Blume's own stylesheet scans
+ * the docs surface separately.)
+ */
+@source "../../src";
+@source "../../pages";
+
+/*
+ * The shadcn palette the playground's components read, mapped onto Blume's
+ * tokens rather than onto raw hex. Blume flips those tokens on
+ * `:root[data-theme="dark"]` (see theme.css), so the playground follows the
+ * site's light/dark toggle without a second set of dark values here.
+ */
 .shadcn-theme {
-  --background: var(--paper);
-  --foreground: var(--ink);
-  --card: var(--paper);
-  --card-foreground: var(--ink);
-  --popover: var(--paper);
-  --popover-foreground: var(--ink);
-  --primary: var(--oxblood);
-  --primary-foreground: var(--paper);
-  --secondary: var(--paper-deep);
-  --secondary-foreground: var(--ink);
-  --muted: var(--paper-deep);
-  --muted-foreground: #756d64;
-  --accent: var(--paper-deep);
-  --accent-foreground: var(--ink);
-  --destructive: #a33a3d;
-  --border: var(--line);
-  --input: var(--line);
-  --ring: var(--oxblood);
+  --background: var(--blume-background);
+  --foreground: var(--blume-foreground);
+  --card: var(--blume-background);
+  --card-foreground: var(--blume-foreground);
+  --popover: var(--blume-background);
+  --popover-foreground: var(--blume-foreground);
+  --primary: var(--blume-accent);
+  --primary-foreground: var(--blume-accent-foreground);
+  --secondary: var(--blume-muted);
+  --secondary-foreground: var(--blume-foreground);
+  --muted: var(--blume-muted);
+  --muted-foreground: var(--blume-muted-foreground);
+  --accent: var(--blume-muted);
+  --accent-foreground: var(--blume-foreground);
+  --destructive: var(--lawlint-destructive);
+  --border: var(--blume-border);
+  --input: var(--blume-border);
+  --ring: var(--blume-accent);
   --radius: 0.2rem;
 }
 
@@ -49,17 +65,32 @@
   --radius-lg: var(--radius);
 }
 
+/*
+ * Diagnostic highlights in the draft. Mixed from the accent rather than a fixed
+ * oxblood wash so the tint keeps its weight against the dark background too.
+ *
+ * The base rule matters: the engine's severities are error, warning, and
+ * suggestion (with `info` as a legacy alias), so an unstyled severity would fall
+ * through to the browser's default `<mark>` — bright yellow, and unreadable on
+ * the dark surface.
+ */
+.shadcn-theme mark {
+  background: transparent;
+  color: inherit;
+}
+
 .shadcn-theme .mark-error {
-  background: rgb(126 37 40 / 28%);
-  box-shadow: inset 0 -2px 0 var(--oxblood);
+  background: color-mix(in srgb, var(--blume-accent) 28%, transparent);
+  box-shadow: inset 0 -2px 0 var(--blume-accent);
 }
 
 .shadcn-theme .mark-warning {
-  background: rgb(126 37 40 / 14%);
-  box-shadow: inset 0 -2px 0 rgb(126 37 40 / 55%);
+  background: color-mix(in srgb, var(--blume-accent) 14%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--blume-accent) 55%, transparent);
 }
 
+.shadcn-theme .mark-suggestion,
 .shadcn-theme .mark-info {
-  background: rgb(117 109 100 / 18%);
-  box-shadow: inset 0 -2px 0 var(--muted-foreground);
+  background: color-mix(in srgb, var(--blume-muted-foreground) 18%, transparent);
+  box-shadow: inset 0 -2px 0 var(--blume-muted-foreground);
 }

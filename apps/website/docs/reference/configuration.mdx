@@ -1,0 +1,88 @@
+---
+title: Configuration
+description: The .lawlint/config.json schema, discovery rules, and how CLI flags override it.
+icon: settings-2
+---
+
+Configuration is optional. Linting works with none at all.
+
+```jsonc
+// .lawlint/config.json — every field optional, camelCase
+{
+  "enable": ["no-em-dash", "no-hedging"],
+  "disable": ["no-legalese"],
+  "severity": { "no-em-dash": "suggestion" },
+  "thresholds": { "no-hedging": 8 },
+  "markdown": false,
+  "ruleDirs": [".lawlint/rules"],
+  "judge": { "enabled": false },
+  "ai": {
+    "model": "anthropic:claude-haiku-4-5-20251001",
+    "features": { "judge": "...", "learn": "..." },
+    "localAcknowledged": false
+  }
+}
+```
+
+Written by [`lawlint init`](/docs/guides/ai-setup). Safe to commit — API keys
+are never stored here.
+
+## Fields
+
+<TypeTable type={{
+  enable: { type: "string[]", description: "Run only these rules. Full ids or bare aliases." },
+  disable: { type: "string[]", description: "Run every rule except these." },
+  severity: { type: "Record<string, \"error\" | \"warning\" | \"suggestion\">", description: "Override a rule's severity. \"info\" is accepted as an alias for \"suggestion\"." },
+  thresholds: { type: "Record<string, number>", description: "Override a density or statistical rule's threshold." },
+  markdown: { type: "boolean", description: "Treat stdin as Markdown. .md files enable this on their own." },
+  ruleDirs: { type: "string[]", description: "Additional rule package directories, merged over the built-ins. Resolved relative to the config file's directory." },
+  judge: { type: "{ enabled: boolean }", description: "Run the soft-rule AI judge on every lint, without passing --judge." },
+  ai: { type: "AiOptions", description: "Which model powers AI features. See below." },
+}} />
+
+### `ai`
+
+<TypeTable type={{
+  model: { type: "string", description: "Default model spec for every AI feature." },
+  features: { type: "Record<string, string>", description: "Per-feature overrides keyed by feature name (\"judge\", \"learn\", …). Takes precedence over `model`." },
+  localAcknowledged: { type: "boolean", description: "Set by init's local-model consent step. While unset, a local: spec prints a one-line constraints notice on every use." },
+}} />
+
+API keys are **not** part of this file. They live in
+`~/.config/lawlint/credentials` (mode `0600`) or in the environment —
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_FOUNDRY_API_KEY` — and the
+environment wins.
+
+## Discovery
+
+The CLI walks up from the current directory. At each level it looks for
+`.lawlint/config.json`, falling back to the legacy `lawlint.config.json`. The
+first directory containing either is the project root.
+
+If both exist at the same level, the nested `.lawlint/config.json` is used and
+the CLI warns.
+
+:::warning
+A config file that exists but does not parse is a configuration error — exit
+`2` — not a silent fallback to defaults. A typo in your config never quietly
+changes which rules run.
+:::
+
+Relative `ruleDirs` resolve against the project root, so a committed config
+works no matter which subdirectory you run from. Paths passed to `--rule-dir`
+resolve against the current directory instead.
+
+## Precedence
+
+CLI flags override the config file, field by field:
+
+| Config field | Overridden by |
+| ------------ | ------------- |
+| `enable` | `--rules` |
+| `disable` | `--disable` |
+| `markdown` | `--markdown` |
+| `judge.enabled` | `--judge` |
+| `ai.model` | `--judge=MODEL`, `learn --model` |
+
+`severity` and `thresholds` merge rather than replace: a CLI override applies to
+the named rule and leaves the rest of the map intact.

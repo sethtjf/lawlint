@@ -30,6 +30,12 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # Blume's CLI runs under Node (its bin has a `node` shebang) and requires
+      # 22.12+, as does the Astro 7 it generates against.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - run: bun install --frozen-lockfile
       - run: bun run build
 

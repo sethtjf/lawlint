@@ -1,0 +1,120 @@
+---
+title: Rust SDK
+description: Embedding the lawlint engine — lawlint-core, LintOptions, and the WebAssembly build.
+icon: package
+---
+
+`lawlint-core` is the engine the CLI, the desktop app, and the
+<a href="/playground">playground</a> all run on. It is pure Rust, and performs no file or
+stdin I/O of its own — you hand it a string.
+
+```rust
+use lawlint_core::{lint, LintOptions};
+
+let result = lint(
+    "It is important to note that we delve into the landscape.",
+    &LintOptions::default(),
+);
+
+println!("score: {}", result.stats.score);
+for diagnostic in &result.diagnostics {
+    println!("{}: {}", diagnostic.rule_id, diagnostic.message);
+}
+```
+
+Add it as a path or git dependency on this repository:
+
+```toml Cargo.toml
+[dependencies]
+lawlint-core = { git = "https://github.com/sethtjf/lawlint" }
+```
+
+## `LintOptions`
+
+<TypeTable type={{
+  enable: { type: "Option<Vec<String>>", description: "Run only these rules." },
+  disable: { type: "Option<Vec<String>>", description: "Run every rule except these." },
+  severity: { type: "Option<HashMap<String, Severity>>", description: "Per-rule severity overrides." },
+  thresholds: { type: "Option<HashMap<String, f64>>", description: "Per-rule threshold overrides." },
+  markdown: { type: "Option<bool>", description: "Strip fenced code blocks before linting." },
+  rule_dirs: { type: "Option<Vec<String>>", description: "Consumed by the CLI and desktop app. Ignored by core `lint()`." },
+  judge: { type: "Option<JudgeOptions>", description: "Soft-rule judging. Requires a judge implementation." },
+  ai: { type: "Option<AiOptions>", description: "Model preferences written by `lawlint init`. Consumed by the CLI and desktop app; ignored by core `lint()`." },
+}} />
+
+```rust
+let result = lint(
+    text,
+    &LintOptions {
+        disable: Some(vec!["no-legalese".into()]),
+        ..Default::default()
+    },
+);
+```
+
+:::note[Configuration discovery belongs to the CLI]
+`lint()` takes options directly and never looks for `.lawlint/config.json`. If
+your integration wants that behavior, read the file yourself and deserialize it
+into `LintOptions` — it is the same type, with the same camelCase serde
+representation documented in
+[Configuration](/docs/reference/configuration).
+:::
+
+Two fields are carried on `LintOptions` purely so one deserialized config
+covers every consumer: `rule_dirs` and `ai` are read by the CLI and desktop app,
+and ignored by `lint()`.
+
+## `LintResult`
+
+```rust
+pub struct LintResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub stats: Stats,          // word_count, sentence_count, score
+    pub judge: Option<JudgeStats>,
+}
+```
+
+The serde representation is documented field by field in [JSON
+output](/docs/reference/json-output) — the same types, camelCased.
+
+## Rule packages
+
+```rust
+use lawlint_core::{lint_with, loader, RuleSet};
+
+let mut rules = RuleSet::built_in();
+loader::load_dir(&mut rules, "./house-style")?;
+
+let result = lint_with(text, &rules, &LintOptions::default());
+```
+
+`lint()` is `lint_with()` over the built-in set. Loader errors are written to be
+shown to a user verbatim — propagate them rather than rewording.
+
+## Applying fixes
+
+```rust
+use lawlint_core::{apply_fixes, Applicability};
+
+let fixed = apply_fixes(text, &result.diagnostics, Applicability::MachineApplicable);
+```
+
+`.docx` tracked-change writing lives in `lawlint-docx`, not in core — core deals
+in strings.
+
+## WebAssembly
+
+`lawlint-wasm` compiles the same engine for the browser. The
+<a href="/playground">playground</a> runs it client-side, so text typed there never leaves
+the page.
+
+## Crates
+
+<Tree>
+  <Tree.Folder name="crates" defaultOpen>
+    <Tree.File name="lawlint-core — the linting SDK" />
+    <Tree.File name="lawlint-cli — the native CLI" />
+    <Tree.File name="lawlint-docx — .docx reading and tracked-change writing" />
+    <Tree.File name="lawlint-wasm — browser binding for the playground" />
+  </Tree.Folder>
+</Tree>

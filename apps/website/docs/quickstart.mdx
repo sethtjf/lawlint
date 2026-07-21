@@ -1,0 +1,127 @@
+---
+title: Quickstart
+description: Install lawlint, lint a document, and understand what comes back.
+icon: rocket
+sidebar:
+  order: 2
+---
+
+Five minutes from nothing to a linted document. Linting itself needs no
+configuration and runs entirely offline.
+
+<Steps>
+
+<Step title="Install the CLI">
+
+<CodeGroup>
+
+```sh macOS / Linux
+curl -fsSL https://lawlint.com/install.sh | sh
+```
+
+```powershell Windows
+irm https://lawlint.com/install.ps1 | iex
+```
+
+</CodeGroup>
+
+The installer places the binary in a user-local bin directory.
+[Installation](/docs/installation) has the per-platform archives, the
+build-from-source route, and how to stay up to date.
+
+</Step>
+
+<Step title="Lint a document">
+
+```sh
+lawlint contract.docx
+```
+
+Pass a `.txt`, `.md`, or `.docx` file, or `-` to read stdin. With no argument
+at all, lawlint reads stdin.
+
+```sh
+cat memo.txt | lawlint
+```
+
+</Step>
+
+<Step title="Read the output">
+
+Each finding names the rule that produced it, the severity, and the line and
+column, followed by the offending text and — where one is useful — a suggested
+replacement. The summary line carries the human-likeness score.
+
+Findings are advice, not errors. A rule firing means *look at this sentence*,
+not *this sentence is wrong*.
+
+</Step>
+
+<Step title="Apply the safe fixes">
+
+```sh
+lawlint --diff draft.md   # preview what would change
+lawlint --fix draft.md    # apply it
+```
+
+`--fix` only applies fixes marked machine-applicable. For `.docx`, fixes are
+written back as native Word **tracked changes** with a review comment per fix,
+so every one can be accepted or rejected in Word.
+
+</Step>
+
+<Step title="Optionally, set up AI features">
+
+```sh
+lawlint init
+```
+
+Everything above is deterministic and offline. The walkthrough configures a
+model for the two features that need one — the soft-rule [AI
+judge](/docs/guides/judge) and [`lawlint learn`](/docs/guides/learn) — and
+writes `.lawlint/config.json`. Until a model is configured, those features exit
+with guidance rather than downloading anything silently.
+
+</Step>
+
+</Steps>
+
+## Everyday commands
+
+```sh
+lawlint brief.docx                 # lint; findings + human-likeness score
+lawlint --fix brief.docx           # apply fixes (tracked changes in Word)
+lawlint --diff draft.md            # preview what --fix would change
+lawlint --judge draft.md           # add soft-rule findings (needs init)
+lawlint --format prompt draft.md   # emit an AI revision brief
+lawlint --format json draft.md     # machine-readable findings
+lawlint learn ~/my-writing/        # mine a personal rule package
+lawlint rules --json               # built-in rule metadata
+```
+
+## Exit codes
+
+lawlint is built to sit in a pipeline.
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | No error-severity findings, and warnings within `--max-warnings`. |
+| `1` | An error-severity finding, or warnings over `--max-warnings`. |
+| `2` | An I/O or configuration problem — the document was never linted. |
+
+:::tip
+Exit `2` is deliberately distinct from exit `1`. In CI, a `2` means your setup
+is broken; a `1` means the prose is. See [Continuous
+integration](/docs/guides/ci).
+:::
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Linting documents" href="/docs/guides/linting" icon="file-text">
+    File formats, rule selection, output formats.
+  </Card>
+  <Card title="Hard and soft rules" href="/docs/concepts/rules" icon="layers">
+    What runs offline, and what needs a model.
+  </Card>
+</CardGroup>

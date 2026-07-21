@@ -1,0 +1,104 @@
+---
+title: Installation
+description: Install scripts, per-platform archives, building from source, and staying up to date.
+icon: download
+sidebar:
+  order: 3
+---
+
+lawlint is a single native binary with no runtime dependencies. Installing it
+puts one file on your machine and nothing else — no account, no daemon, and no
+documents leaving your disk.
+
+## Install script
+
+<CodeGroup>
+
+```sh macOS / Linux
+curl -fsSL https://lawlint.com/install.sh | sh
+```
+
+```powershell Windows
+irm https://lawlint.com/install.ps1 | iex
+```
+
+</CodeGroup>
+
+The script downloads the archive for your platform, verifies it, and places the
+`lawlint` binary in a user-local bin directory — no `sudo`, nothing installed
+system-wide, and no documents sent anywhere.
+
+If the shell cannot find `lawlint` afterwards, that bin directory is not on your
+`PATH`; the installer prints the line to add.
+
+## Direct downloads
+
+Every archive below is the latest release, served from
+`assets.lawlint.com`. Use these when you'd rather not pipe a script to a shell,
+or when you're provisioning a machine that has no interactive session.
+
+<Downloads />
+
+Unpack the archive and put `lawlint` somewhere on your `PATH`:
+
+```sh
+tar -xzf lawlint-aarch64-apple-darwin.tar.gz
+mv lawlint ~/.local/bin/
+```
+
+:::note[Releases are unsigned]
+The archives are not notarized on macOS and carry no Windows publisher
+certificate, so both systems may warn on first run. Verify what you're running
+by [building from source](#build-from-source) if that matters for your
+environment.
+:::
+
+## Build from source
+
+Useful for development, or for a platform without a published archive. You need
+a Rust toolchain.
+
+```sh
+git clone https://github.com/sethtjf/lawlint
+cd lawlint
+cargo build --release -p lawlint-cli
+```
+
+The binary lands at `target/release/lawlint`.
+
+## Staying current
+
+```sh
+lawlint self-update --check   # report current and latest; download nothing
+lawlint self-update           # install the latest release
+```
+
+lawlint also checks for a newer release at most once a day and mentions one if
+it exists. `--no-update-check` skips that on any command — worth setting in CI.
+
+<TypeTable type={{
+  "--check": { type: "flag", description: "Report current and latest version and whether an update is available. Downloads nothing." },
+  "--force": { type: "flag", description: "Reinstall even when already on the latest version." },
+  "--version": { type: "string", description: "Install a specific version instead of the latest." },
+}} />
+
+## What gets installed where
+
+<Tree>
+  <Tree.Folder name="user-local bin" defaultOpen>
+    <Tree.File name="lawlint" />
+  </Tree.Folder>
+  <Tree.Folder name="~/.config/lawlint" defaultOpen>
+    <Tree.File name="credentials — API keys, mode 0600" />
+  </Tree.Folder>
+  <Tree.Folder name="<your project>/.lawlint" defaultOpen>
+    <Tree.File name="config.json — written by lawlint init" />
+    <Tree.Folder name="rules">
+      <Tree.File name="personal — written by lawlint learn" />
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
+
+Nothing under `.lawlint/` is created until you run [`lawlint
+init`](/docs/guides/ai-setup) or [`lawlint learn`](/docs/guides/learn). API keys
+are never written into the project.

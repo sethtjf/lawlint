@@ -1,0 +1,175 @@
+---
+title: Authoring rules
+description: Rule packages, the Markdown rule format, every frontmatter field, and testing what you write.
+icon: file-pen
+---
+
+Rules are Markdown files with YAML frontmatter — one file per rule, grouped
+into a package.
+
+<Tree>
+  <Tree.Folder name="house-style" defaultOpen>
+    <Tree.File name="style.yaml" />
+    <Tree.Folder name="rules" defaultOpen>
+      <Tree.File name="no-per-our-discussion.md" />
+      <Tree.File name="empty-hedge.md" />
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
+
+Only `.md` files under `rules/` are discovered. Point lawlint at the package
+with `--rule-dir ./house-style`, or list it in `ruleDirs` in
+[configuration](/docs/reference/configuration). Package rules merge over the
+built-ins: same id, replaced rule.
+
+## The manifest
+
+```yaml
+# style.yaml
+name: house-style
+version: 1.0.0
+description: Our firm's writing conventions.
+```
+
+The package name namespaces every rule in it — a rule with `id: no-doublets`
+becomes `house-style/no-doublets`.
+
+## A rule file
+
+```markdown rules/no-per-our-discussion.md
+---
+id: no-per-our-discussion
+engine: phrase
+severity: warning
+intent: style
+description: Flags correspondence filler that adds no information.
+patterns:
+  - pattern: "per our discussion"
+    suggestion: "Name the discussion, or drop the phrase."
+    fix: "as we discussed"
+---
+"Per our discussion" tells the reader nothing they do not already know. Either
+identify the conversation being referred to, or delete the clause.
+```
+
+Frontmatter carries the structured fields; the body is prose. What the body
+*means* depends on the kind of rule — explanatory text for a hard rule, the
+judge's rubric for a soft one.
+
+:::warning[`id` is required and stable]
+There is no filename-derived default. The id appears in every diagnostic, in
+`--rules`/`--disable`, and in the rule's documentation URL — renaming one is a
+breaking change for anyone who has disabled it.
+:::
+
+## Frontmatter fields
+
+### Common to every rule
+
+<TypeTable type={{
+  id: { type: "string", required: true, description: "Bare name; namespaced to <package>/<id>." },
+  engine: { type: '"phrase" | "leading" | "density" | "statistical" | "inferential"', required: true, description: "How the rule is evaluated. Decides whether it is a hard or soft rule." },
+  severity: { type: '"error" | "warning" | "suggestion"', default: "warning", description: "Legacy \"info\" is accepted as an alias for \"suggestion\"." },
+  intent: { type: '"detection" | "style"', default: '"detection"', description: "Style rules lint and fix but never move the human-likeness score." },
+  scope: { type: '"prose" | "text" | "all"', default: '"text"', description: "Which part of the document the rule sees." },
+  description: { type: "string", description: "One line, shown in listings and the rule reference." },
+  rationale: { type: "string", description: "Why the pattern is worth flagging." },
+  message: { type: "string", description: "Default diagnostic message." },
+  docs: { type: "string", default: "https://lawlint.com/rules/<id>", description: "Documentation URL carried on every diagnostic." },
+  examples: { type: "{ bad, good } | { bad, good }[]", description: "Before/after pairs shown with the rule." },
+}} />
+
+### Hard rules
+
+<TypeTable type={{
+  patterns: { type: "string[] | object[]", description: "phrase, leading, and density engines. A bare regex fragment, or an object with pattern, message, suggestion, and fix." },
+  allow_context: { type: "{ pattern, window }", description: "phrase only. Expands the match by `window` bytes each side; if `pattern` matches the expanded slice, the match is suppressed." },
+  threshold: { type: "number", description: "density: matches per 1,000 words. statistical: the flag boundary for `direction`." },
+  metric: { type: "string", description: "statistical only. An unknown metric is a load error, not a skipped rule." },
+  params: { type: "Record<string, number>", description: "statistical only, e.g. { max_words: 45 } or { run_length: 3 }." },
+  direction: { type: '"above" | "below"', description: "statistical document-level metrics only. Which side of `threshold` flags." },
+}} />
+
+A pattern's `fix` string makes the fix **machine-applicable** — it will be
+applied by `--fix`. Omit it and the rule reports a `suggestion` the author has
+to act on. See [Fixes](/docs/guides/fixing#only-what-is-safe).
+
+```yaml
+patterns:
+  - pattern: "\\bnull and void\\b"
+    message: A doublet where one word does the work.
+    suggestion: Use "void".
+    fix: "void"
+```
+
+### Soft rules
+
+<TypeTable type={{
+  granularity: { type: '"sentence" | "paragraph" | "document"', default: '"sentence"', description: "inferential only. What the judge is shown at a time." },
+  rubric: { type: "string", description: "inferential only. The judging criteria — normally written as the Markdown body instead." },
+  flag_examples: { type: "string[]", description: "inferential only. At least three examples that should flag." },
+  pass_examples: { type: "string[]", description: "inferential only. At least three examples that should not." },
+}} />
+
+```markdown rules/empty-hedge.md
+---
+id: empty-hedge
+engine: inferential
+severity: warning
+description: Flags hedges that carry no information about actual uncertainty.
+---
+Flag a sentence when it hedges a claim without saying what is uncertain or why.
+A hedge earns its place only when it tells the reader what the uncertainty is.
+
+## Flag examples
+
+- It could potentially be argued that the clause may be unenforceable.
+- This arguably suggests that there might possibly be an issue.
+- Some might say the provision is perhaps somewhat ambiguous.
+
+## Pass examples
+
+- The clause is likely unenforceable in California, though no court has ruled.
+- We estimate a 60% chance of prevailing on the third claim.
+- Whether the notice was timely depends on when it was received.
+```
+
+Either supply the examples as `## Flag examples` and `## Pass examples`
+sections, or as `flag_examples` / `pass_examples` frontmatter arrays. Each
+needs at least three. The body outside those two sections is the rubric.
+
+:::note
+Constraints worth knowing: soft-rule severity is limited to `warning` or
+`suggestion`; frontmatter fields take precedence over the body; and setting
+both `rubric` and `skill` is an error.
+:::
+
+## Testing a package
+
+```sh
+lawlint rules test ./house-style
+lawlint rules test ./house-style --offline           # skip soft rules entirely
+lawlint rules test ./house-style --judge=anthropic:<model>
+```
+
+Runs each rule against its own examples and reports pass or fail per example —
+so a rule whose pattern is too broad fails on its own pass examples before it
+ever reaches a document.
+
+Inferential rules need a model to evaluate their examples. Without `--judge`
+they are skipped; `--offline` skips them explicitly and never loads a model.
+
+:::tip
+`lawlint rules test` is the right thing to run in CI over a committed house-style
+package — it catches a regex that silently stopped matching after an edit.
+:::
+
+## Listing what is loaded
+
+```sh
+lawlint rules --json
+lawlint --rule-dir ./house-style rules --json
+```
+
+Prints metadata for every loaded rule, including each rule's `tier` and
+`intent`. This is what generates the [rule reference](/docs/rules).

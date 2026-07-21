@@ -1,0 +1,54 @@
+---
+// The per-platform CLI archive table, registered as an MDX component in
+// `components.ts` so `docs/installation.mdx` can drop in `<Downloads />` without
+// an import. The URLs come from src/config/downloads.ts, which is also the
+// single place the release workflow and install scripts read the distribution
+// base from — so changing hosts stays a one-file edit.
+import { downloadUrl } from "@/config/downloads";
+
+const platforms = [
+  {
+    name: "macOS",
+    note: "Apple silicon",
+    asset: "lawlint-aarch64-apple-darwin.tar.gz",
+  },
+  {
+    name: "macOS",
+    note: "Intel",
+    asset: "lawlint-x86_64-apple-darwin.tar.gz",
+  },
+  {
+    name: "Windows",
+    note: "x86_64",
+    asset: "lawlint-x86_64-pc-windows-msvc.zip",
+  },
+  {
+    name: "Linux",
+    note: "x86_64",
+    asset: "lawlint-x86_64-unknown-linux-gnu.tar.gz",
+  },
+];
+---
+
+<table>
+  <thead>
+    <tr>
+      <th>Platform</th>
+      <th>Architecture</th>
+      <th>Archive</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      platforms.map((platform) => (
+        <tr>
+          <td>{platform.name}</td>
+          <td>{platform.note}</td>
+          <td>
+            <a href={downloadUrl(platform.asset)}>{platform.asset}</a>
+          </td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>

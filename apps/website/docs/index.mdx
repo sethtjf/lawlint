@@ -1,0 +1,97 @@
+---
+title: Overview
+description: lawlint flags the patterns that make legal and general prose sound machine-written, and suggests more human, direct alternatives.
+icon: book-open
+sidebar:
+  order: 1
+---
+
+lawlint reads a document and returns a focused list of things worth revising —
+the hedges that hedge nothing, the tricolons, the throat-clearing openers, the
+em dashes doing a comma's job — plus a **human-likeness score** from 0 to 100.
+
+It is a native binary. Linting needs no configuration, no network, and no
+account: the deterministic rules run entirely offline over text you already
+have on disk.
+
+```sh
+lawlint contract.docx
+```
+
+## Start here
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" href="/docs/quickstart" icon="rocket">
+    Install the CLI, lint a document, read the output.
+  </Card>
+  <Card title="Rule reference" href="/docs/rules" icon="list">
+    Every built-in rule, what it catches, and why.
+  </Card>
+  <Card title="CLI reference" href="/docs/reference/cli" icon="terminal">
+    Every command, flag, and exit code.
+  </Card>
+</CardGroup>
+
+Nothing to install yet? The <a href="/playground">playground</a> runs the same
+engine in the browser, compiled to WebAssembly — text typed there never leaves
+the page.
+
+## What it checks
+
+Rules come in two kinds, and the distinction decides whether a check needs a
+model.
+
+<Columns cols={2}>
+  <Column>
+    **Hard rules** are deterministic. Phrase, leading, density, and statistical
+    checks over the text itself — no model, no network, no variance between
+    runs. Every rule that ships enabled by default is a hard rule.
+  </Column>
+  <Column>
+    **Soft rules** are inferential: judgements a regular expression cannot make,
+    evaluated by an optional AI judge from a written rubric. They run only when
+    you ask for them with `--judge`.
+  </Column>
+</Columns>
+
+See [Hard and soft rules](/docs/concepts/rules) for how the two kinds map onto
+the engine's `static`, `statistical`, and `inferential` tiers.
+
+## What the score means
+
+The human-likeness score aggregates only **detection**-intent rules — the
+subset corpus-validated to distinguish AI-generated from authentic human legal
+prose. **Style**-intent rules (the Oxford comma, semicolons, sentence length,
+the Orwell rules) still report findings and still participate in `--fix`, but
+they never move the score.
+
+Because the score is normalized per 1,000 words, it reflects issue *density*
+rather than document length. [Scoring](/docs/concepts/scoring) has the formula.
+
+## Beyond linting
+
+<CardGroup cols={2}>
+  <Card title="Fixes and tracked changes" href="/docs/guides/fixing" icon="wand">
+    `--fix` rewrites what is safe to rewrite. In Word, as native tracked changes
+    with a review comment per fix.
+  </Card>
+  <Card title="The AI judge" href="/docs/guides/judge" icon="scale">
+    Add inferential findings that deterministic rules cannot reach.
+  </Card>
+  <Card title="Learn your voice" href="/docs/guides/learn" icon="graduation-cap">
+    Mine a personal rule package from writing you have already done.
+  </Card>
+  <Card title="Author a rule" href="/docs/guides/authoring-rules" icon="file-pen">
+    Rules are Markdown files with YAML frontmatter. Write your own.
+  </Card>
+</CardGroup>
+
+## Privacy
+
+Linting is local and offline. Nothing is uploaded, and the installers do not
+phone home with your documents.
+
+The optional AI features are the exception, and they are opt-in twice over:
+they do nothing until `lawlint init` configures a model, and — with a hosted
+provider — they send the text being judged to that provider. API keys live in a
+user-level credential file, never in your project.

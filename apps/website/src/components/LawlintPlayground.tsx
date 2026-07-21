@@ -437,7 +437,7 @@ export default function LawlintPlayground() {
           {view === "editor" ? (
             <div
               className={cn(
-                "relative min-h-[28rem] border-b border-border bg-[#f8f4ed] sm:min-h-[34rem]",
+                "relative min-h-[28rem] border-b border-border bg-[var(--lawlint-surface)] sm:min-h-[34rem]",
                 dragging &&
                   "outline outline-2 outline-dashed outline-primary outline-offset-[-7px]",
               )}

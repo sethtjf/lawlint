@@ -1,0 +1,114 @@
+---
+title: CLI reference
+description: Every command, flag, and exit code.
+icon: terminal
+---
+
+```txt
+lawlint [options] <file.txt|file.md|file.docx|->
+lawlint init [options]
+lawlint learn <path> [options]
+lawlint rules [--json]
+lawlint rules test <path> [options]
+lawlint self-update [options]
+```
+
+The file argument defaults to `-` (stdin), so a bare `lawlint` reads a pipe.
+
+## Linting options
+
+<TypeTable type={{
+  "FILE": { type: "path", default: '"-"', description: "File to lint. \"-\" reads stdin." },
+  "--format": { type: '"pretty" | "json" | "prompt"', default: '"pretty"', description: "Human-readable output, machine-readable JSON, or an AI revision brief for the flagged text." },
+  "--rules": { type: "ID,ID", description: "Run only the listed rules. Full ids or bare aliases." },
+  "--disable": { type: "ID,ID", description: "Run every rule except the listed ones." },
+  "--markdown": { type: "flag", description: "Strip fenced code blocks from the input. Enabled automatically for .md files." },
+  "--max-warnings": { type: "N | inf", default: '"inf"', description: "Exit 1 when warnings exceed N." },
+  "--fix": { type: "flag", description: "Apply machine-applicable fixes to FILE in place. For .docx, as native tracked changes with a review comment per fix." },
+  "--diff": { type: "flag", description: "Show what --fix would change, or did change, as a colored diff." },
+  "--judge": { type: "flag | =MODEL", description: "Run the soft-rule AI judge. Bare --judge uses the model from lawlint init; --judge=MODEL overrides it. Requires the = form when passing a model." },
+  "--quiet": { type: "flag", description: "Suppress pretty output while preserving the exit status." },
+  "--rule-dir": { type: "DIR", description: "Additional rule package directory. Repeatable; merged over the built-ins. Available on every command." },
+  "--no-update-check": { type: "flag", description: "Skip the once-a-day check for a newer release. Available on every command." },
+}} />
+
+### Model specs
+
+`--judge=MODEL`, `init --ai`, and `learn --model` share one grammar:
+
+| Spec | Provider |
+| ---- | -------- |
+| `anthropic:<model>` | Anthropic |
+| `openai:<base-url>#<model>` | Any OpenAI-compatible endpoint |
+| `foundry:<deployment>` | Azure AI Foundry |
+| `local:<hf-repo>[#<gguf>]` | Local, via the embedded `mistral.rs` runtime |
+
+`init --ai` additionally accepts the shorthands `qwen` and `gemma`.
+
+## `lawlint init`
+
+Sets up the project: AI-model, judge, Markdown, and custom-rule choices, written
+to `.lawlint/config.json`. API keys go to a user-level credential file, never
+into the project.
+
+<TypeTable type={{
+  "--yes": { type: "flag", description: "Accept the default answer for every prompt (non-interactive)." },
+  "--force": { type: "flag", description: "Overwrite an existing .lawlint/config.json." },
+  "--ai": { type: "MODEL", description: "Model preference, skipping the catalog prompt: qwen, gemma, or a full spec." },
+  "--acknowledge-local": { type: "flag", description: "Acknowledge the local-model constraints non-interactively; writes ai.localAcknowledged. Only meaningful with a local model." },
+}} />
+
+See [Setting up AI features](/docs/guides/ai-setup).
+
+## `lawlint learn <path>`
+
+Mines a personal rule package from your own prior writing: a local statistical
+pass over the full corpus, an AI mining pass over a small sample, and a
+self-check so no generated rule flags your own text.
+
+<TypeTable type={{
+  "PATH": { type: "path", required: true, description: "A file or directory of your writing (.docx, .md, .txt)." },
+  "--out": { type: "DIR", default: ".lawlint/rules/personal", description: "Where to write the generated rule package." },
+  "--model": { type: "MODEL", description: "Mining model, overriding the lawlint init AI preferences." },
+}} />
+
+See [Learning your voice](/docs/guides/learn).
+
+## `lawlint rules`
+
+```sh
+lawlint rules --json
+```
+
+Prints metadata for every loaded rule — id, tier, scope, severity, description,
+intent, rationale, and documentation URL — as JSON. Combine with `--rule-dir` to
+include a package.
+
+### `lawlint rules test <path>`
+
+Runs each Markdown rule's own flag and pass examples and reports the result per
+example.
+
+<TypeTable type={{
+  "FILE_OR_DIR": { type: "path", required: true, description: "A rule file or a rule package directory." },
+  "--judge": { type: "flag | =MODEL", description: "Judge inferential rules' examples. Without it, they are skipped." },
+  "--offline": { type: "flag", description: "Skip inferential examples and never load a judge model. Conflicts with --judge." },
+}} />
+
+See [Authoring rules](/docs/guides/authoring-rules#testing-a-package).
+
+## `lawlint self-update`
+
+<TypeTable type={{
+  "--check": { type: "flag", description: "Report current and latest version and whether an update is available. Downloads nothing." },
+  "--force": { type: "flag", description: "Reinstall even when already on the latest version." },
+  "--version": { type: "X", description: "Install this specific version instead of the latest." },
+}} />
+
+## Exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | No error-severity findings, and warnings within `--max-warnings`. |
+| `1` | An error-severity finding, or warnings over `--max-warnings`. |
+| `2` | An I/O or configuration error — the document was never linted. |

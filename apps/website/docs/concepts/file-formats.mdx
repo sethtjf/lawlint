@@ -1,0 +1,57 @@
+---
+title: File formats
+description: How lawlint reads plain text, Markdown, and Word documents — and what it preserves when it writes them back.
+icon: file-text
+---
+
+The CLI and desktop app lint plain text, Markdown, and Word documents.
+
+| Format | Extensions | Notes |
+| ------ | ---------- | ----- |
+| Plain text | `.txt`, anything else | Linted verbatim. |
+| Markdown | `.md` | Fenced code blocks are skipped automatically. |
+| Word | `.docx` | Text is projected out for linting; `--fix` writes back tracked changes. |
+
+Passing `-` — or no file at all — reads stdin.
+
+## Markdown
+
+For a `.md` file, lawlint strips fenced code blocks before linting, so a code
+sample full of em dashes and `delve` never produces findings.
+
+Piped input has no filename to infer from, so ask for it:
+
+```sh
+cat draft.md | lawlint --markdown
+```
+
+## Word documents
+
+`.docx` files are read into the same text model as everything else. With
+`--fix`, machine-applicable fixes are written back as native Word **tracked
+changes**, each accompanied by a review **comment** naming the rule — so every
+change lands in Word's normal review flow and can be accepted or rejected one
+at a time.
+
+Everything else in the document is preserved byte for byte: styles, numbering,
+headers, embedded images, and any tracked changes already in the file.
+
+:::warning[Fixes that cross runs are skipped]
+Word splits a paragraph into *runs* whenever formatting changes mid-sentence. A
+fix whose span crosses a run boundary — a bolded word in the middle of a
+flagged phrase — is reported and skipped rather than applied. This is a current
+limitation, not a silent failure: the finding still appears in the output, it
+simply is not auto-fixed.
+:::
+
+## Stdin
+
+```sh
+cat memo.txt | lawlint - --format json
+lawlint < memo.txt
+```
+
+Reading stdin is what makes lawlint composable in editors and pipelines — see
+[Continuous integration](/docs/guides/ci). Since there is no file to write
+back to, `--fix` has nothing to modify; use `--format prompt` or `--diff`
+instead.

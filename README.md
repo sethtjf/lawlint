@@ -161,12 +161,28 @@ compiled to WebAssembly.
 - `crates/lawlint-cli` — native CLI.
 - `crates/lawlint-docx` — read `.docx` into the text model and write fixes back as tracked changes + comments.
 - `crates/lawlint-wasm` — browser binding used by the playground.
-- `apps/website` — Astro documentation website with generated rule reference pages.
-- `.github/workflows/ci.yml` — Rust checks plus the Bun/Astro website build.
+- `apps/website` — the website and documentation, built with [Blume](https://useblume.dev).
+- `.github/workflows/ci.yml` — Rust checks plus the Bun/Blume website build.
 - `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
 
-To work on the documentation website locally: `bun install && bun run --cwd
-apps/website dev`.
+To work on the website locally: `bun install && bun run --cwd apps/website dev`
+(needs Node 22.12+). The site is one Blume project:
+
+- `apps/website/docs/` — the documentation, served at `/docs` via Blume's
+  `basePath`. Markdown and MDX.
+- `apps/website/pages/` — custom Astro pages Blume mounts at the site root: the
+  landing page and the playground, plus redirect stubs holding the pre-Blume
+  `/download`, `/changelog`, and `/rules/*` URLs open.
+- `apps/website/blume.config.ts`, `theme.css`, `components.ts` — configuration,
+  design tokens, and layout/MDX component overrides.
+- `apps/website/scripts/` — generated docs pages, both gitignored:
+  `generate-rule-docs.ts` writes the rule reference under `docs/rules/` from
+  `crates/lawlint-core/builtin/rules/`, so a new rule documents itself;
+  `generate-changelog.ts` writes `docs/changelog.mdx` from the repo's
+  `CHANGELOG.md`, so a merged release-please PR publishes itself.
+
+Both run from `bun run --cwd apps/website prepare:content`, which `dev` and
+`build` invoke first.
 
 ## Maintainer releases
 
