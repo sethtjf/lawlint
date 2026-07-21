@@ -301,12 +301,20 @@ pub fn parse_skill_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError
         serde_yaml::from_str(&frontmatter).map_err(|e| map_serde_error(file, e))?;
     let body = lines.collect::<Vec<_>>();
     let (rubric, body_flags, body_passes) = extract_skill_sections(&body);
-    let stem = Path::new(file)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("skill");
+    let path = Path::new(file);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("skill");
+    let fallback_id = if stem.eq_ignore_ascii_case("skill")
+        && path.file_name().and_then(|s| s.to_str()) == Some("SKILL.md")
+    {
+        path.parent()
+            .and_then(Path::file_name)
+            .and_then(|s| s.to_str())
+            .unwrap_or(stem)
+    } else {
+        stem
+    };
     let def = RuleDef {
-        id: fm.name.unwrap_or_else(|| stem.to_string()),
+        id: fm.name.unwrap_or_else(|| fallback_id.to_string()),
         engine: "inferential".to_string(),
         scope: fm.scope,
         severity: fm.severity,
@@ -854,6 +862,16 @@ Flag a hedge when it adds no useful uncertainty.
             .to_string();
         assert!(e.contains("rules/my-rule.md: flag_examples"), "{e}");
         assert!(e.contains("at least 3"), "{e}");
+    }
+
+    #[test]
+    fn skill_file_falls_back_to_parent_directory_for_skill_md() {
+        let def = parse_skill_rule(
+            "rules/empty-hedge/SKILL.md",
+            "---\ndescription: x\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nA rubric.\n",
+        )
+        .unwrap();
+        assert_eq!(def.id, "empty-hedge");
     }
 
     #[test]

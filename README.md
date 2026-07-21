@@ -129,7 +129,8 @@ Flag hedges that add no information about actual uncertainty.
 - It may be true if the contract says so.
 ```
 
-`name` defaults to the file stem. `description`, `severity`, `granularity`,
+`name` defaults to the file stem for `rules/foo.md`, or to the parent directory
+name for `rules/<name>/SKILL.md`. `description`, `severity`, `granularity`,
 `scope`, `intent`, `docs`, `message`, and `rationale` are optional; granularity
 defaults to `sentence`. The `flag_examples` and `pass_examples` arrays may
 instead be supplied in frontmatter. Each list needs at least three examples,

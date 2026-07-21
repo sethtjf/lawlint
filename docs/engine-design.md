@@ -269,7 +269,8 @@ Flag hedges that carry no information about actual uncertainty.
 - It may be true if the contract says so.
 ```
 
-`name` maps to the rule id and falls back to the Markdown file stem.
+`name` maps to the rule id and falls back to the Markdown file stem, except
+that `rules/<name>/SKILL.md` falls back to the parent directory name.
 `description`, `severity`, `granularity`, `scope`, `intent`, `docs`, `message`,
 and `rationale` are optional; granularity defaults to `sentence`. The body
 outside `## Flag examples` and `## Pass examples` is the rubric. Example
