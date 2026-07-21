@@ -6,9 +6,9 @@ disagree, the skeleton files in the repo are the source of truth.
 
 ## 0. Goals & invariants
 
-1. Three tiers: **static** (regex/token), **statistical** (whole-document), **inferential** (LLM judge).
+1. Three tiers: **static** (regex/token), **statistical** (whole-document), **inferential** (LLM judge). In user-facing terminology, static + statistical are **hard rules** (deterministic), while inferential rules are **soft rules** (AI-judged). The tier enum and serialized values remain unchanged.
 2. **A diagnostic from the judge is indistinguishable downstream from a diagnostic from a regex.** No consumer branches on tier.
-3. **Declarative-first**: rules are YAML data loaded at runtime. Built-ins ship as a bundled package using the same loader. Non-engineers author rules without rebuilding. Programmatic `Rule` trait is the escape hatch.
+3. **Declarative-first**: rules are YAML data or Markdown skill files loaded at runtime. Built-ins ship as a bundled package using the same loader. Non-engineers author rules without rebuilding. Programmatic `Rule` trait is the escape hatch.
 4. Spans are **byte offsets into original source**, always. Line/column (UTF-16 columns, 1-based) derived only at finalize.
 5. Rule IDs are namespaced `package/name`, stable forever. Legacy flat ids resolve via alias.
 6. Judge findings that cannot be **grounded** to a source span do not exist.
@@ -40,7 +40,7 @@ crates/lawlint-core/src/
     leading.rs  # sentence-opener engine           [agent B]
     density.rs  # density engine                   [agent C]
     statistical.rs # metric engine                 [agent C]
-  loader.rs     # YAML parse + validation          [agent D]
+  loader.rs     # YAML/Markdown parse + validation  [agent D]
   registry.rs   # RuleSet, packages, aliases       [agent D]
   judge.rs      # tier-3 pipeline (plan/run/ground/cache), Judge trait, MockJudge [agent F]
   dispatch.rs   # single-pass dispatcher, scope mask, suppression [integration]
@@ -205,9 +205,9 @@ Each engine is a struct implementing `Rule`, constructed from a `RuleDef`.
   Extension point: metric enum is non-exhaustive; unknown metric = load error.
 - **inferential** (agent F consumes): no runtime check; carries a `RubricFragment`.
 
-## 6. YAML rule format (`loader.rs`, agent D)
+## 6. Rule formats (`loader.rs`, agent D)
 
-Package = directory: `style.yaml` (`name`, `version`, optional `description`) + `rules/*.yaml`, one rule per file. Built-in package embedded via `include_dir!` from `crates/lawlint-core/builtin/`.
+Package = directory: `style.yaml` (`name`, `version`, optional `description`) + `rules/*.yaml` or `rules/*.md`, one rule per file. Built-in package embedded via `include_dir!` from `crates/lawlint-core/builtin/`. YAML rules can use every engine; Markdown skill files are soft (inferential) rules.
 
 ```yaml
 id: no-em-dash               # full id becomes <package>/<id>
@@ -239,9 +239,49 @@ pass_examples: ["...", "...", "..."]   # inferential: >= 3 required
 
 Derived tier: phrase/leading → static; density/statistical → statistical; inferential → inferential.
 
+### 6.1 Markdown skill-file format
+
+A soft rule may also be authored as `rules/<name>.md` or
+`rules/<name>/SKILL.md`, using Claude Code-style YAML frontmatter:
+
+```markdown
+---
+name: empty-hedge
+description: Flags empty hedges.
+severity: warning
+granularity: sentence
+scope: prose
+intent: detection
+docs: https://lawlint.com/rules/empty-hedge
+message: Avoid empty hedges
+rationale: They weaken otherwise concrete claims.
+---
+Flag hedges that carry no information about actual uncertainty.
+
+## Flag examples
+- Perhaps this is good.
+- It may arguably work.
+- It could possibly pass.
+
+## Pass examples
+- The result may vary with jurisdiction.
+- Perhaps the witness misunderstood the question.
+- It may be true if the contract says so.
+```
+
+`name` maps to the rule id and falls back to the Markdown file stem.
+`description`, `severity`, `granularity`, `scope`, `intent`, `docs`, `message`,
+and `rationale` are optional; granularity defaults to `sentence`. The body
+outside `## Flag examples` and `## Pass examples` is the rubric. Example
+arrays may instead be supplied as `flag_examples` and `pass_examples` in
+frontmatter. Both lists require at least three examples, and soft-rule
+severity may be only `warning` or `suggestion`. Skill files are converted to
+the same validated inferential definition as YAML, so downstream registries,
+judge requests, diagnostics, and serialization cannot distinguish them.
+
 **Validation is a product feature.** Errors must carry file path, field, given value, and valid alternatives in plain English, e.g.
 `builtin/rules/no-em-dash.yaml: severity: "high" is not a severity — use error, warning, or suggestion`.
-Rules: inferential requires rubric + ≥3 flag + ≥3 pass examples; inferential severity > warning is an error; density requires threshold + exactly one pattern; statistical requires a known metric; regexes must compile (report the regex error, never panic); duplicate ids within a package are an error.
+Rules: inferential requires rubric + ≥3 flag + ≥3 pass examples; inferential severity > warning is an error; density requires threshold + exactly one pattern; statistical requires a known metric; regexes must compile (report the regex error, never panic); duplicate ids within a package are an error. These validations apply identically to YAML soft rules and Markdown skill files, with file path, field, and value included in errors.
 
 ### Registry (`registry.rs`, agent D)
 
@@ -259,7 +299,12 @@ impl RuleSet {
 
 Aliases: bare `name` resolves to `pkg/name` when unambiguous (legacy flat ids keep working in `enable`/`disable`/`severity`/`thresholds`/suppression). Ambiguity is a config error, silently preferring nothing.
 
-## 7. Tier-3 pipeline (`judge.rs`, agent F)
+## 7. Soft-rule AI judge / tier-3 pipeline (`judge.rs`, agent F)
+
+Soft rules are a first-class rule kind: they carry a rubric and examples but
+no runtime deterministic check. The optional AI judge evaluates them, grounds
+quotes to source spans, and emits ordinary diagnostics. Consumers may describe
+these as soft-rule findings; the stable serialized tier remains `inferential`.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]

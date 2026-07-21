@@ -1,7 +1,7 @@
-//! YAML rule parsing + validation. [agent D]
+//! YAML and Markdown rule parsing + validation. [agent D]
 //!
 //! Package = directory: `style.yaml` (`name`, `version`, optional
-//! `description`) + `rules/*.yaml`, one rule per file. Built-in package
+//! `description`) + `rules/*.yaml`/`rules/*.md`, one rule per file. Built-in package
 //! embedded via `include_dir!` (see registry.rs).
 //!
 //! Validation is a product feature: errors must carry file path, field, given
@@ -10,6 +10,7 @@
 //! those messages instead of opaque serde errors.
 
 use serde::Deserialize;
+use std::path::Path;
 
 use crate::engines::statistical::{Direction, Metric};
 use crate::error::LoadError;
@@ -93,6 +94,33 @@ pub struct RuleDef {
     /// inferential only; >= 3 required.
     #[serde(default)]
     pub pass_examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkillFrontmatter {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    granularity: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    intent: Option<String>,
+    #[serde(default)]
+    docs: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    rationale: Option<String>,
+    #[serde(default)]
+    flag_examples: Vec<String>,
+    #[serde(default)]
+    pass_examples: Vec<String>,
 }
 
 /// A `patterns:` list item — bare string or detailed object.
@@ -237,6 +265,117 @@ pub fn parse_rule(file: &str, yaml: &str) -> Result<RuleDef, LoadError> {
     let def: RuleDef = serde_yaml::from_str(yaml).map_err(|e| map_serde_error(file, e))?;
     validate_rule(file, &def)?;
     Ok(def)
+}
+
+/// Parse a Claude Code-style skill file as an inferential rule. The YAML
+/// frontmatter supplies metadata and the Markdown body supplies the rubric.
+/// `Flag examples` and `Pass examples` sections are extracted from the body
+/// and omitted from the rubric.
+pub fn parse_skill_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError> {
+    let mut lines = markdown.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return Err(LoadError::invalid_field(
+            file,
+            "frontmatter",
+            "a skill file must start with YAML frontmatter between --- fences",
+        ));
+    }
+    let mut frontmatter = String::new();
+    let mut found_end = false;
+    for line in &mut lines {
+        if line.trim() == "---" {
+            found_end = true;
+            break;
+        }
+        frontmatter.push_str(line);
+        frontmatter.push('\n');
+    }
+    if !found_end {
+        return Err(LoadError::invalid_field(
+            file,
+            "frontmatter",
+            "missing closing --- fence",
+        ));
+    }
+    let fm: SkillFrontmatter =
+        serde_yaml::from_str(&frontmatter).map_err(|e| map_serde_error(file, e))?;
+    let body = lines.collect::<Vec<_>>();
+    let (rubric, body_flags, body_passes) = extract_skill_sections(&body);
+    let stem = Path::new(file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("skill");
+    let def = RuleDef {
+        id: fm.name.unwrap_or_else(|| stem.to_string()),
+        engine: "inferential".to_string(),
+        scope: fm.scope,
+        severity: fm.severity,
+        intent: fm.intent,
+        description: fm.description,
+        rationale: fm.rationale,
+        docs: fm.docs,
+        message: fm.message,
+        examples: Vec::new(),
+        patterns: Vec::new(),
+        allow_context: None,
+        threshold: None,
+        metric: None,
+        params: None,
+        direction: None,
+        granularity: fm.granularity,
+        rubric: Some(rubric),
+        flag_examples: if fm.flag_examples.is_empty() {
+            body_flags
+        } else {
+            fm.flag_examples
+        },
+        pass_examples: if fm.pass_examples.is_empty() {
+            body_passes
+        } else {
+            fm.pass_examples
+        },
+    };
+    validate_rule(file, &def)?;
+    Ok(def)
+}
+
+fn extract_skill_sections(lines: &[&str]) -> (String, Vec<String>, Vec<String>) {
+    let mut rubric = Vec::new();
+    let mut flags = Vec::new();
+    let mut passes = Vec::new();
+    let mut section: Option<&str> = None;
+    for line in lines {
+        if let Some(title) = line.strip_prefix("## ") {
+            let normalized = title.trim().to_ascii_lowercase();
+            section = match normalized.as_str() {
+                "flag examples" => Some("flags"),
+                "pass examples" => Some("passes"),
+                _ => None,
+            };
+            if section.is_none() {
+                rubric.push(*line);
+            }
+            continue;
+        }
+        if let Some(kind) = section {
+            let item = line
+                .trim()
+                .strip_prefix("- ")
+                .or_else(|| line.trim().strip_prefix("* "))
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if let Some(item) = item {
+                match kind {
+                    "flags" => flags.push(item.to_string()),
+                    "passes" => passes.push(item.to_string()),
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            rubric.push(*line);
+        }
+    }
+    (rubric.join("\n").trim().to_string(), flags, passes)
 }
 
 fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
@@ -670,6 +809,63 @@ pass_examples: ["x", "y", "z"]
         assert!(def.rubric.unwrap().contains("Flag hedges"));
         assert_eq!(def.flag_examples.len(), 3);
         assert_eq!(def.pass_examples.len(), 3);
+    }
+
+    #[test]
+    fn skill_file_extracts_frontmatter_and_examples() {
+        let def = parse_skill_rule(
+            "rules/hedging.md",
+            r#"---
+name: empty-hedge
+description: Flags empty hedges.
+severity: warning
+granularity: paragraph
+scope: prose
+---
+# Rubric
+
+Flag a hedge when it adds no useful uncertainty.
+
+## Flag examples
+- Perhaps this is good.
+- It may arguably work.
+- It could possibly pass.
+
+## Pass examples
+- The result may vary with jurisdiction.
+- Perhaps the witness misunderstood the question.
+- It may be true if the contract says so.
+"#,
+        )
+        .unwrap();
+        assert_eq!(def.id, "empty-hedge");
+        assert_eq!(def.engine, "inferential");
+        assert_eq!(def.granularity.as_deref(), Some("paragraph"));
+        assert!(def.rubric.as_deref().unwrap().contains("adds no useful"));
+        assert!(!def.rubric.as_deref().unwrap().contains("Flag examples"));
+        assert_eq!(def.flag_examples.len(), 3);
+        assert_eq!(def.pass_examples.len(), 3);
+    }
+
+    #[test]
+    fn skill_file_falls_back_to_stem_and_reports_missing_examples() {
+        let e = parse_skill_rule("rules/my-rule.md", "---\ndescription: x\n---\nA rubric.\n")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("rules/my-rule.md: flag_examples"), "{e}");
+        assert!(e.contains("at least 3"), "{e}");
+    }
+
+    #[test]
+    fn skill_file_frontmatter_severity_uses_normal_validation() {
+        let e = parse_skill_rule(
+            "rules/my-rule.md",
+            "---\nseverity: error\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nA rubric.\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("rules/my-rule.md: severity"), "{e}");
+        assert!(e.contains("too severe"), "{e}");
     }
 
     // ---- schema flexibility --------------------------------------------

@@ -22,7 +22,7 @@ lawlint contract.docx      # or .txt / .md / "-" for stdin
 You get a list of findings and a human-likeness score. `--fix` applies the
 machine-applicable fixes (for `.docx`, as native Word tracked changes).
 
-**3. Set up AI features** (optional — the tier-3 judge and `lawlint learn`):
+**3. Set up AI features** (optional — the soft-rule AI judge and `lawlint learn`):
 
 ```sh
 lawlint init
@@ -55,7 +55,7 @@ the legacy `lawlint.config.json` — from the current directory upward.
     "features": { "judge": "...", "learn": "..." }, // optional per-feature overrides
     "localAcknowledged": false                       // set by init's local-model consent step
   },
-  "judge": { "enabled": false },  // run the tier-3 judge on every lint
+  "judge": { "enabled": false },  // run the soft-rule AI judge on every lint
   "markdown": false,              // treat stdin as Markdown
   "ruleDirs": [".lawlint/rules"]  // extra rule packages, merged over built-ins
 }
@@ -78,7 +78,7 @@ setup: `lawlint init --yes` (hosted default), or `--ai qwen
 lawlint brief.docx                 # lint; prints findings + human-likeness score
 lawlint --fix brief.docx           # apply fixes (tracked changes + comments in Word)
 lawlint --diff draft.md            # preview what --fix would change
-lawlint --judge draft.md           # add tier-3 AI-judged findings (needs init)
+lawlint --judge draft.md           # add soft-rule AI-judged findings (needs init)
 lawlint --format prompt draft.md   # emit an AI revision brief for your assistant
 lawlint learn ~/my-writing/        # mine a personal rule package from your prose
 lawlint rules --json               # built-in rule metadata
@@ -91,6 +91,51 @@ report findings and participate in `--fix`, but never move the score.
 `lawlint learn` generates rules from *your* writing: a statistical pass over
 the full corpus, an AI mining pass over a small sample, and a self-consistency
 gate so no generated rule flags your own prose.
+
+### Hard rules and soft rules
+
+lawlint has two user-facing rule kinds. **Hard rules** are deterministic and
+run offline: phrase and leading engines are tier `static`, while density and
+statistical engines are tier `statistical`. **Soft rules** are inferential
+rules evaluated by the optional AI judge (tier `inferential`). The serialized
+`Tier::{Static, Statistical, Inferential}` values and rule-package fields stay
+unchanged; hard/soft is the explanatory terminology used in the docs.
+
+### Skill-file rules
+
+Soft rules can be authored as Claude Code-style Markdown skill files in a
+package's `rules/` directory, alongside YAML rules. A file starts with YAML
+frontmatter and uses its Markdown body as the rubric:
+
+```markdown
+---
+name: empty-hedge
+description: Flags hedges that add no useful uncertainty.
+severity: warning
+granularity: sentence
+scope: prose
+intent: detection
+---
+Flag hedges that add no information about actual uncertainty.
+
+## Flag examples
+- Perhaps this is good.
+- It may arguably work.
+- It could possibly pass.
+
+## Pass examples
+- The result may vary with jurisdiction.
+- Perhaps the witness misunderstood the question.
+- It may be true if the contract says so.
+```
+
+`name` defaults to the file stem. `description`, `severity`, `granularity`,
+`scope`, `intent`, `docs`, `message`, and `rationale` are optional; granularity
+defaults to `sentence`. The `flag_examples` and `pass_examples` arrays may
+instead be supplied in frontmatter. Each list needs at least three examples,
+and soft-rule severity is limited to `warning` or `suggestion`. The body
+outside the two example sections is the rubric. `rules/<name>/SKILL.md` is
+also accepted.
 
 ### File formats
 
