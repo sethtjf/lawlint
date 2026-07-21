@@ -726,7 +726,7 @@ fn rules_list(json: bool, cli_dirs: &[PathBuf]) -> Result<i32, String> {
 
 // ---- rules test --------------------------------------------------------
 
-/// Collect the rule YAML files under `path`: a single file, a package dir
+/// Collect rule files under `path`: a single file, a package dir
 /// (`style.yaml` + `rules/`), or a loose directory of rule files.
 fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
@@ -750,16 +750,21 @@ fn collect_rule_files(path: &Path) -> Result<Vec<PathBuf>, String> {
         .filter(|p| {
             matches!(
                 p.extension().and_then(|ext| ext.to_str()),
-                Some("yaml") | Some("yml")
+                Some("yaml") | Some("yml") | Some("md")
             ) && p.file_name().and_then(|name| name.to_str()) != Some("style.yaml")
         })
         .collect();
+    let mut skill_dirs: Vec<PathBuf> = fs::read_dir(&rules_dir)
+        .map_err(|error| format!("failed to read {}: {error}", rules_dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|p| p.is_dir() && p.join("SKILL.md").is_file())
+        .collect();
+    skill_dirs.sort();
+    files.extend(skill_dirs.into_iter().map(|dir| dir.join("SKILL.md")));
     files.sort();
     if files.is_empty() {
-        return Err(format!(
-            "no rule YAML files found in {}",
-            rules_dir.display()
-        ));
+        return Err(format!("no rule files found in {}", rules_dir.display()));
     }
     Ok(files)
 }
@@ -805,7 +810,18 @@ fn single_rule_set(file: &Path, package: &str) -> Result<RuleSet, String> {
         let name = file
             .file_name()
             .ok_or_else(|| format!("{}: not a file", file.display()))?;
-        fs::copy(file, rules_dir.join(name)).map_err(|error| error.to_string())?;
+        let relative = if name == "SKILL.md" {
+            file.parent()
+                .and_then(Path::file_name)
+                .map(|dir| PathBuf::from(dir).join(name))
+                .unwrap_or_else(|| PathBuf::from(name))
+        } else {
+            PathBuf::from(name)
+        };
+        if let Some(parent) = relative.parent() {
+            fs::create_dir_all(rules_dir.join(parent)).map_err(|error| error.to_string())?;
+        }
+        fs::copy(file, rules_dir.join(relative)).map_err(|error| error.to_string())?;
         RuleSet::load_dir(&staging).map_err(|error| error.to_string())
     };
     let result = build();
@@ -959,7 +975,11 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
                 continue;
             }
         };
-        let def = match loader::parse_rule(&display, &text) {
+        let def = match if file.extension().is_some_and(|ext| ext == "md") {
+            loader::parse_skill_rule(&display, &text)
+        } else {
+            loader::parse_rule(&display, &text)
+        } {
             Ok(def) => def,
             Err(error) => {
                 println!("{display}");
@@ -1517,24 +1537,47 @@ mod tests {
         fs::write(rules.join("a.yml"), "x").unwrap();
         fs::write(rules.join("notes.txt"), "x").unwrap();
 
-        // Package dir → rules/*.yaml|yml, sorted.
+        fs::write(rules.join("soft.md"), "x").unwrap();
+        let skill_dir = rules.join("soft-check");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "x").unwrap();
+
+        // Package dir → rule files, sorted.
         let files = collect_rule_files(&base).unwrap();
         assert_eq!(
             files
                 .iter()
-                .map(|p| p.file_name().unwrap().to_str().unwrap())
+                .map(|p| p.strip_prefix(&rules).unwrap().to_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["a.yml", "b.yaml"]
+            vec!["a.yml", "b.yaml", "soft-check/SKILL.md", "soft.md"]
         );
-        // Loose dir (no manifest) → its yaml files, style.yaml excluded.
+        // Loose dir (no manifest) → its rule files, style.yaml excluded.
         let files = collect_rule_files(&rules).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
         // Single file.
         let single = collect_rule_files(&rules.join("b.yaml")).unwrap();
         assert_eq!(single.len(), 1);
         // Missing path → error.
         assert!(collect_rule_files(&base.join("nope")).is_err());
 
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn rules_test_accepts_package_with_only_skill_file() {
+        let base =
+            std::env::temp_dir().join(format!("lawlint-cli-skill-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let rules = base.join("rules");
+        fs::create_dir_all(&rules).unwrap();
+        fs::write(base.join("style.yaml"), "name: firm\nversion: 1.0.0\n").unwrap();
+        fs::write(
+            rules.join("soft.md"),
+            "---\ndescription: Soft check.\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nFlag this pattern.\n",
+        )
+        .unwrap();
+
+        assert_eq!(rules_test(&base, &None, true).unwrap(), 0);
         fs::remove_dir_all(&base).unwrap();
     }
 
