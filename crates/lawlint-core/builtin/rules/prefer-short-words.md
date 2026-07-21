@@ -1,3 +1,4 @@
+---
 id: prefer-short-words
 engine: phrase
 scope: text
@@ -78,3 +79,4 @@ patterns:
     message: "Prefer “help” over “assist”."
     suggestion: "Use “help”."
     fix: "help"
+---

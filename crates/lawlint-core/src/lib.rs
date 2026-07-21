@@ -1,9 +1,10 @@
 //! lawlint-core — rules engine v2.
 //!
 //! Contract: docs/engine-design.md. Three tiers (static, statistical,
-//! inferential); declarative-first YAML rules with a programmatic `Rule`
-//! trait escape hatch; byte-offset spans into the original source; judge
-//! findings must ground to a span or they do not exist; wasm-safe and
+//! inferential); user-facing hard rules (static + statistical) and soft rules
+//! (inferential); declarative-first YAML/Markdown rules with a programmatic
+//! `Rule` trait escape hatch; byte-offset spans into the original source;
+//! judge findings must ground to a span or they do not exist; wasm-safe and
 //! inference-agnostic (judge backends live in `crates/lawlint-judge`).
 
 pub mod config;
@@ -54,12 +55,12 @@ fn built_in_set() -> &'static RuleSet {
 
 // ---- Public API (§8) ---------------------------------------------------
 
-/// Lint with the built-in rule set, tiers 1–2 only.
+/// Lint with the built-in hard-rule set, tiers 1–2 only.
 pub fn lint(text: &str, options: &LintOptions) -> LintResult {
     lint_with(text, options, built_in_set())
 }
 
-/// Lint with an explicit rule set, tiers 1–2 only.
+/// Lint with an explicit rule set, hard rules (tiers 1–2) only.
 pub fn lint_with(text: &str, options: &LintOptions, rules: &RuleSet) -> LintResult {
     let doc = document::parse(text, options.markdown.unwrap_or(false));
     let instances = rules.instantiate(options);
@@ -67,7 +68,7 @@ pub fn lint_with(text: &str, options: &LintOptions, rules: &RuleSet) -> LintResu
     scoring::finalize(text, diagnostics, &doc)
 }
 
-/// Lint including tier 3: plan_judge → run_judge (with cache) → ground →
+/// Lint including soft rules (tier 3): plan_judge → run_judge (with cache) → ground →
 /// merge diagnostics (confidence floor + severity cap applied in scoring).
 pub fn lint_full(
     text: &str,
@@ -878,7 +879,8 @@ mod tests {
              granularity: {granularity}\nrubric: Flag it.\n\
              flag_examples: [a, b, c]\npass_examples: [x, y, z]\n"
         );
-        let rule = loader::parse_rule("r.yaml", &yaml).unwrap();
+        let markdown = format!("---\n{yaml}\n---\n");
+        let rule = loader::parse_rule("r.md", &markdown).unwrap();
         RuleSet::from_parts(&manifest, vec![("r.yaml".to_string(), rule)]).unwrap()
     }
 

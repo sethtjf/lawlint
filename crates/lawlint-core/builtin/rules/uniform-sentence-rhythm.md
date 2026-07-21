@@ -1,3 +1,4 @@
+---
 id: uniform-sentence-rhythm
 engine: statistical
 scope: text
@@ -11,3 +12,4 @@ direction: below
 examples:
   - bad: "The court reviewed the motion for summary judgment. The parties submitted their briefs on the scheduled date. The record contains several disputed factual questions. The standard requires viewing facts in the light most favorable. The court finds that genuine disputes preclude judgment here. The motion is therefore denied without prejudice to renewal."
     good: "The court reviewed the motion. Both parties briefed it extensively, and the record — three depositions, two expert reports, and a chain of emails the parties read in incompatible ways — leaves genuine disputes of material fact. Summary judgment is denied."
+---

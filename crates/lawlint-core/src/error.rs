@@ -2,7 +2,7 @@
 //!
 //! Validation is a product feature: every `LoadError` carries the file path,
 //! the field, the given value, and the valid alternatives in plain English,
-//! e.g. `builtin/rules/no-em-dash.yaml: severity: "high" is not a severity —
+//! e.g. `builtin/rules/no-em-dash.md: severity: "high" is not a severity —
 //! use error, warning, or suggestion`.
 
 use thiserror::Error;
@@ -100,12 +100,12 @@ mod tests {
     #[test]
     fn load_error_display_carries_file_and_field() {
         let e = LoadError::invalid_field(
-            "builtin/rules/no-em-dash.yaml",
+            "builtin/rules/no-em-dash.md",
             "severity",
             "\"high\" is not a severity — use error, warning, or suggestion",
         );
         let s = e.to_string();
-        assert!(s.contains("builtin/rules/no-em-dash.yaml"));
+        assert!(s.contains("builtin/rules/no-em-dash.md"));
         assert!(s.contains("severity"));
         assert!(s.contains("use error, warning, or suggestion"));
     }

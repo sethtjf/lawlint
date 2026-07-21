@@ -1,3 +1,4 @@
+---
 id: no-dead-metaphors
 engine: phrase
 scope: text
@@ -55,3 +56,4 @@ patterns:
   - pattern: '(?i)\bthe ball is in (?:your|their|his|her|its) court\b'
     message: "Avoid the cliché “the ball is in your court”."
     suggestion: "Say who must act next."
+---

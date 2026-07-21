@@ -1,3 +1,4 @@
+---
 id: oxford-comma
 engine: phrase
 scope: text
@@ -13,3 +14,4 @@ patterns:
   - pattern: '(?i)\w+,\s+\w+(?:\s+\w+){0,3}\s+(?:and|or)\s+\w+'
     message: "Use the Oxford comma before the final item in a list."
     suggestion: "Add a comma before the closing “and” or “or”."
+---

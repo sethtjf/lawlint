@@ -13,11 +13,11 @@ const { rule } = Astro.props;
     <DocsNav active="rules" />
     <h1>{rule.id}</h1>
     <p class="intro">{rule.meta.description}</p>
-    <div class="rule-meta"><span>severity</span><strong>{rule.meta.severity ?? "warning"}</strong><span>documentation</span><a href={rule.meta.docsUrl}>{rule.meta.docsUrl}</a></div>
+    <div class="rule-meta"><span>kind</span><strong>{rule.meta.tier === "inferential" ? "soft rule" : "hard rule"}</strong><span>tier</span><strong>{rule.meta.tier}</strong><span>severity</span><strong>{rule.meta.severity ?? "warning"}</strong><span>documentation</span><a href={rule.meta.docsUrl}>{rule.meta.docsUrl}</a></div>
     <h2>What it catches</h2>
-    <p>{rule.meta.rationale ?? `This check looks for ${rule.meta.description.toLowerCase().replace(/^flags /, "")}.`}</p>
+    <p>{rule.meta.explanation ?? rule.meta.rationale ?? `This check looks for ${rule.meta.description.toLowerCase().replace(/^flags /, "")}.`}</p>
     <h2>Guidance</h2>
-    <p>Prefer concrete language, vary your rhythm, and make the claim carry its own weight. The diagnostic includes a suggested alternative where one is useful.</p>
+    <p>{rule.meta.tier === "inferential" ? "This soft rule is evaluated by the optional AI judge from its rubric and examples." : "This hard rule runs deterministically offline."} The diagnostic includes a suggested alternative where one is useful.</p>
     <p class="back"><a href="/rules">← All rules</a></p>
   </article>
 </Layout>

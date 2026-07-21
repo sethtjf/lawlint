@@ -1,3 +1,4 @@
+---
 id: no-em-dash-overuse
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "The court wisely paused."
 patterns:
   - '—'
+---

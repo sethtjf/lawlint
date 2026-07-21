@@ -1,3 +1,4 @@
+---
 id: no-marketing-language
 engine: phrase
 scope: text
@@ -43,3 +44,4 @@ patterns:
     suggestion: "Drop the throat-clearing."
   - pattern: '(?i)\bat the end of the day\b'
     message: "Avoid the filler phrase “at the end of the day”."
+---

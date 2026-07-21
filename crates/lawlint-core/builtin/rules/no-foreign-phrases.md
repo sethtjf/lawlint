@@ -1,3 +1,4 @@
+---
 id: no-foreign-phrases
 engine: phrase
 scope: text
@@ -39,3 +40,4 @@ patterns:
   - pattern: '(?i)\bad hoc\b'
     message: "Prefer “improvised” or “one-off” over “ad hoc”."
     suggestion: "Use “improvised” or “one-off”."
+---

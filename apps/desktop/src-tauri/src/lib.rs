@@ -5,7 +5,7 @@ use lawlint_core::{lint as lint_text, lint_with, LintOptions, LintResult, RuleSe
 /// Command body, separated from the `#[tauri::command]` wrapper for testing.
 ///
 /// `options.ruleDirs` (consumed here, ignored by core `lint()`) merges extra
-/// YAML rule packages on top of the built-ins. Load/merge failures reject the
+/// Markdown rule packages on top of the built-ins. Load/merge failures reject the
 /// invoke promise with a plain-English message; the success JSON shape is
 /// unchanged (a bare `LintResult`).
 fn run_lint(text: &str, options: Option<LintOptions>) -> Result<LintResult, String> {
@@ -155,15 +155,15 @@ mod tests {
         std::fs::create_dir_all(&rules).unwrap();
         std::fs::write(dir.join("style.yaml"), "name: firm\nversion: \"1.0\"\n").unwrap();
         std::fs::write(
-            rules.join("no-foo.yaml"),
+            rules.join("no-foo.md"),
             concat!(
-                "id: no-foo\n",
+                "---\nid: no-foo\n",
                 "engine: phrase\n",
                 "severity: error\n",
                 "description: \"No foo.\"\n",
                 "message: \"Avoid foo\"\n",
                 "patterns:\n",
-                "  - \"(?i)\\\\bfoo\\\\b\"\n",
+                "  - \"(?i)\\\\bfoo\\\\b\"\n---\n",
             ),
         )
         .unwrap();

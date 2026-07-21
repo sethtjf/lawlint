@@ -1,3 +1,4 @@
+---
 id: no-passive-overuse
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "The court denied the motion."
 patterns:
   - '(?i)\b(?:is|are|was|were|be|been|being)\s+\w+(?:ed|en)\b'
+---

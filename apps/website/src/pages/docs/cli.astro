@@ -19,7 +19,7 @@ lawlint rules --json</pre>
       <div><code>--max-warnings n</code><span>Exit 1 when warnings exceed n.</span></div>
       <div><code>--fix</code><span>Apply machine-applicable fixes in place. For <code>.docx</code>, fixes are written as native Word tracked changes with a review comment per fix.</span></div>
       <div><code>--diff</code><span>Show what <code>--fix</code> would change (or changed) as a colored diff.</span></div>
-      <div><code>--judge[=MODEL]</code><span>Run the tier-3 AI judge. Bare <code>--judge</code> uses the model configured by <code>lawlint init</code>; <code>MODEL</code> overrides it (<code>anthropic:&lt;model&gt;</code>, <code>openai:&lt;base-url&gt;#&lt;model&gt;</code>, <code>foundry:&lt;deployment&gt;</code>, <code>local:&lt;hf-repo&gt;</code>).</span></div>
+      <div><code>--judge[=MODEL]</code><span>Run the soft-rule AI judge (the inferential tier). Bare <code>--judge</code> uses the model configured by <code>lawlint init</code>; <code>MODEL</code> overrides it (<code>anthropic:&lt;model&gt;</code>, <code>openai:&lt;base-url&gt;#&lt;model&gt;</code>, <code>foundry:&lt;deployment&gt;</code>, <code>local:&lt;hf-repo&gt;</code>).</span></div>
       <div><code>--rule-dir DIR</code><span>Additional rule package directory (repeatable; merged over built-ins).</span></div>
       <div><code>--quiet</code><span>Suppress pretty output while preserving exit status.</span></div>
       <div><code>init</code><span>Interactive setup: AI model preferences (hosted providers recommended; API keys stored outside the project), judge, Markdown, and custom-rule choices, written to <code>.lawlint/config.json</code>. Supports <code>--yes</code>, <code>--ai MODEL</code>, and <code>--acknowledge-local</code> for non-interactive use.</span></div>
@@ -27,6 +27,10 @@ lawlint rules --json</pre>
       <div><code>rules --json</code><span>Print built-in rule metadata as JSON, including each rule's <code>intent</code> (style or detection).</span></div>
       <div><code>rules test</code><span>Validate rule packages against their flag/pass examples.</span></div>
     </div>
+    <h2>Rule kinds</h2>
+    <p><strong>Hard rules</strong> are deterministic phrase, leading, density, and statistical checks (static and statistical tiers). <strong>Soft rules</strong> are inferential rules evaluated by the optional AI judge. The JSON API keeps the stable <code>tier</code> values <code>static</code>, <code>statistical</code>, and <code>inferential</code>.</p>
+    <h2>Markdown rule files</h2>
+    <p>Rules are Markdown files with YAML frontmatter. Hard-rule bodies may explain what a deterministic check catches; soft-rule bodies provide the AI judge's rubric. Add at least three bullets under both <code>## Flag examples</code> and <code>## Pass examples</code>, or provide <code>flag_examples</code> and <code>pass_examples</code> arrays in frontmatter. The package manifest is still <code>style.yaml</code>, while rule discovery accepts only <code>rules/*.md</code>.</p>
     <p><a href="/docs/sdk">Next: SDK reference →</a></p>
   </article>
 </Layout>

@@ -1,3 +1,4 @@
+---
 id: no-repetitive-openers
 engine: statistical
 scope: text
@@ -9,3 +10,4 @@ params: { run_length: 3 }
 examples:
   - bad: "The court erred. The record shows this plainly. The remedy is reversal."
     good: "The court erred. Its record shows this plainly. Reversal is the remedy."
+---

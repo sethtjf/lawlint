@@ -1,3 +1,4 @@
+---
 id: no-en-dash
 engine: phrase
 scope: text
@@ -19,3 +20,4 @@ patterns:
 # side (no intervening space). A 1-byte window each side of the 3-byte dash
 # reproduces that exactly.
 allow_context: { pattern: '\d–\d', window: 1 }
+---

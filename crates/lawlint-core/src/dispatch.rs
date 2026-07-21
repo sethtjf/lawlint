@@ -371,7 +371,10 @@ mod tests {
         let manifest = parse_manifest("style.yaml", "name: core\nversion: 0.1.0\n").unwrap();
         let parsed = rules
             .iter()
-            .map(|(file, yaml)| ((*file).to_string(), parse_rule(file, yaml).unwrap()))
+            .map(|(file, yaml)| {
+                let markdown = format!("---\n{yaml}\n---\n");
+                ((*file).to_string(), parse_rule(file, &markdown).unwrap())
+            })
             .collect();
         RuleSet::from_parts(&manifest, parsed).unwrap()
     }

@@ -37,6 +37,8 @@ pub struct RuleMeta {
     pub docs_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
     pub examples: Vec<RuleExample>,
 }
 
@@ -178,6 +180,7 @@ mod tests {
                 description: "d".into(),
                 docs_url: "https://lawlint.com/rules/x".into(),
                 rationale: None,
+                explanation: None,
                 examples: vec![],
             },
         };
@@ -200,6 +203,7 @@ mod tests {
             description: "d".into(),
             docs_url: "u".into(),
             rationale: None,
+            explanation: None,
             examples: vec![RuleExample {
                 bad: "b".into(),
                 good: "g".into(),

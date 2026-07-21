@@ -7,7 +7,7 @@ import Layout from "../../layouts/Layout.astro";
   <section class="rules">
     <DocsNav active="rules" />
     <h1>The rulebook.</h1>
-    <p class="intro">Small, opinionated checks for the patterns that make prose feel generated, padded, or needlessly formal.</p>
+    <p class="intro">Small, opinionated hard and soft rules for the patterns that make prose feel generated, padded, or needlessly formal. Hard rules are deterministic; soft rules are evaluated by the AI judge.</p>
     <div class="rule-list">
       {rules.map((rule, index) => <a class="rule-row" href={`/rules/${rule.id}`}><span>{String(index + 1).padStart(2, "0")}</span><strong>{rule.id}</strong><em>{rule.meta.description}</em></a>)}
     </div>

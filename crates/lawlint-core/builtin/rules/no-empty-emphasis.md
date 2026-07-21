@@ -1,3 +1,4 @@
+---
 id: no-empty-emphasis
 engine: density
 scope: text
@@ -11,3 +12,4 @@ examples:
     good: "This raises damages by forty percent."
 patterns:
   - '(?i)\b(?:very|really|significantly|crucially)\b'
+---

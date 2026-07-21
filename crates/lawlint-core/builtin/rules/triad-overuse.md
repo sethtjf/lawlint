@@ -1,3 +1,4 @@
+---
 id: triad-overuse
 engine: statistical
 scope: text
@@ -11,3 +12,4 @@ direction: above
 examples:
   - bad: "The policy is clear, consistent, and fair. It protects employees, customers, and shareholders alike. Compliance requires training, monitoring, and enforcement. Each department must document, review, and certify its procedures. The board will assess progress quarterly, annually, and at each milestone."
     good: "The policy is clear and fair. It protects employees and customers, and compliance requires training backed by real enforcement. Each department documents its procedures; the board assesses progress quarterly."
+---

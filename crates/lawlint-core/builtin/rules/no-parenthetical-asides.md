@@ -1,3 +1,4 @@
+---
 id: no-parenthetical-asides
 engine: density
 scope: text
@@ -18,3 +19,4 @@ examples:
 # the aside itself; the consumed leading whitespace must not enter the span.
 patterns:
   - '(?:^|\s)(\([^)]*\))'
+---
