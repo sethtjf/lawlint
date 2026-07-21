@@ -207,7 +207,7 @@ Each engine is a struct implementing `Rule`, constructed from a `RuleDef`.
 
 ## 6. Rule formats (`loader.rs`, agent D)
 
-Package = directory: `style.yaml` (`name`, `version`, optional `description`) + `rules/*.yaml` or `rules/*.md`, one rule per file. Built-in package embedded via `include_dir!` from `crates/lawlint-core/builtin/`. YAML rules can use every engine; Markdown skill files are soft (inferential) rules.
+Package = directory: `style.yaml` (`name`, `version`, optional `description`) + `rules/*.yaml`, one rule per file. Built-in package embedded via `include_dir!` from `crates/lawlint-core/builtin/`. YAML rules can use every engine; inferential rules may reference Markdown skill files.
 
 ```yaml
 id: no-em-dash               # full id becomes <package>/<id>
@@ -235,18 +235,27 @@ rubric: >-                   # inferential only
   Flag hedges that carry no information about actual uncertainty. ...
 flag_examples: ["...", "...", "..."]   # inferential: >= 3 required
 pass_examples: ["...", "...", "..."]   # inferential: >= 3 required
+skill: ./skills/empty-hedge/SKILL.md   # inferential: alternative rubric source
 ```
 
 Derived tier: phrase/leading → static; density/statistical → statistical; inferential → inferential.
 
-### 6.1 Markdown skill-file format
+### 6.1 Markdown skill-file references
 
-A soft rule may also be authored as `rules/<name>.md` or
-`rules/<name>/SKILL.md`, using Claude Code-style YAML frontmatter:
+Rules remain YAML files. An inferential rule may set `skill` to a Claude
+Code-style Markdown file, resolved relative to the YAML rule:
+
+```yaml
+id: empty-hedge
+engine: inferential
+severity: warning
+skill: ./skills/empty-hedge/SKILL.md
+```
+
+The referenced file uses YAML frontmatter and Markdown body:
 
 ```markdown
 ---
-name: empty-hedge
 description: Flags empty hedges.
 severity: warning
 granularity: sentence
@@ -269,20 +278,20 @@ Flag hedges that carry no information about actual uncertainty.
 - It may be true if the contract says so.
 ```
 
-`name` maps to the rule id and falls back to the Markdown file stem, except
-that `rules/<name>/SKILL.md` falls back to the parent directory name.
 `description`, `severity`, `granularity`, `scope`, `intent`, `docs`, `message`,
 and `rationale` are optional; granularity defaults to `sentence`. The body
 outside `## Flag examples` and `## Pass examples` is the rubric. Example
 arrays may instead be supplied as `flag_examples` and `pass_examples` in
 frontmatter. Both lists require at least three examples, and soft-rule
-severity may be only `warning` or `suggestion`. Skill files are converted to
-the same validated inferential definition as YAML, so downstream registries,
-judge requests, diagnostics, and serialization cannot distinguish them.
+severity may be only `warning` or `suggestion`. Explicit YAML fields take
+precedence over skill frontmatter. Setting both `rubric` and `skill` is an
+error, and `skill` is valid only for inferential rules. The merged result is
+validated as the YAML rule, so downstream registries, judge requests,
+diagnostics, and serialization cannot distinguish the source.
 
 **Validation is a product feature.** Errors must carry file path, field, given value, and valid alternatives in plain English, e.g.
 `builtin/rules/no-em-dash.yaml: severity: "high" is not a severity — use error, warning, or suggestion`.
-Rules: inferential requires rubric + ≥3 flag + ≥3 pass examples; inferential severity > warning is an error; density requires threshold + exactly one pattern; statistical requires a known metric; regexes must compile (report the regex error, never panic); duplicate ids within a package are an error. These validations apply identically to YAML soft rules and Markdown skill files, with file path, field, and value included in errors.
+Rules: inferential requires rubric + ≥3 flag + ≥3 pass examples; inferential severity > warning is an error; density requires threshold + exactly one pattern; statistical requires a known metric; regexes must compile (report the regex error, never panic); duplicate ids within a package are an error. Skill-file merge validation reports the YAML rule path, field, and value.
 
 ### Registry (`registry.rs`, agent D)
 

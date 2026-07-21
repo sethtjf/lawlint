@@ -526,6 +526,7 @@ mod tests {
             rubric: None,
             flag_examples: vec![],
             pass_examples: vec![],
+            skill: None,
         }
     }
 

@@ -101,15 +101,24 @@ rules evaluated by the optional AI judge (tier `inferential`). The serialized
 `Tier::{Static, Statistical, Inferential}` values and rule-package fields stay
 unchanged; hard/soft is the explanatory terminology used in the docs.
 
-### Skill-file rules
+### Skill-file references
 
-Soft rules can be authored as Claude Code-style Markdown skill files in a
-package's `rules/` directory, alongside YAML rules. A file starts with YAML
-frontmatter and uses its Markdown body as the rubric:
+Rules are always authored as YAML files. An inferential soft rule can reference
+a Claude Code-style Markdown skill file with `skill`; the path is resolved
+relative to the YAML rule:
+
+```yaml
+id: empty-hedge
+engine: inferential
+severity: warning
+skill: ./skills/empty-hedge/SKILL.md
+```
+
+The referenced file contains YAML frontmatter and uses its Markdown body as
+the rubric:
 
 ```markdown
 ---
-name: empty-hedge
 description: Flags hedges that add no useful uncertainty.
 severity: warning
 granularity: sentence
@@ -129,14 +138,13 @@ Flag hedges that add no information about actual uncertainty.
 - It may be true if the contract says so.
 ```
 
-`name` defaults to the file stem for `rules/foo.md`, or to the parent directory
-name for `rules/<name>/SKILL.md`. `description`, `severity`, `granularity`,
-`scope`, `intent`, `docs`, `message`, and `rationale` are optional; granularity
-defaults to `sentence`. The `flag_examples` and `pass_examples` arrays may
-instead be supplied in frontmatter. Each list needs at least three examples,
-and soft-rule severity is limited to `warning` or `suggestion`. The body
-outside the two example sections is the rubric. `rules/<name>/SKILL.md` is
-also accepted.
+`description`, `severity`, `granularity`, `scope`, `intent`, `docs`, `message`,
+and `rationale` are optional; granularity defaults to `sentence`. The
+`flag_examples` and `pass_examples` arrays may instead be supplied in
+frontmatter. Each list needs at least three examples, and soft-rule severity
+is limited to `warning` or `suggestion`. The body outside the two example
+sections is the rubric. YAML fields take precedence over frontmatter; do not
+set both `rubric` and `skill`.
 
 ### File formats
 

@@ -1,8 +1,9 @@
-//! YAML and Markdown rule parsing + validation. [agent D]
+//! YAML rule parsing + validation, with optional Markdown skill references. [agent D]
 //!
 //! Package = directory: `style.yaml` (`name`, `version`, optional
-//! `description`) + `rules/*.yaml`/`rules/*.md`, one rule per file. Built-in package
-//! embedded via `include_dir!` (see registry.rs).
+//! `description`) + `rules/*.yaml`, one rule per file. Built-in package
+//! embedded via `include_dir!` (see registry.rs). Inferential YAML rules may
+//! reference a Claude Code-style Markdown skill file.
 //!
 //! Validation is a product feature: errors must carry file path, field, given
 //! value, and valid alternatives in plain English (see `LoadError`).
@@ -94,13 +95,14 @@ pub struct RuleDef {
     /// inferential only; >= 3 required.
     #[serde(default)]
     pub pass_examples: Vec<String>,
+    /// inferential only: path to a Claude Code-style Markdown skill file.
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SkillFrontmatter {
-    #[serde(default)]
-    name: Option<String>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
@@ -121,6 +123,21 @@ struct SkillFrontmatter {
     flag_examples: Vec<String>,
     #[serde(default)]
     pass_examples: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SkillContent {
+    pub(crate) description: Option<String>,
+    pub(crate) severity: Option<String>,
+    pub(crate) granularity: Option<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) intent: Option<String>,
+    pub(crate) docs: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) rationale: Option<String>,
+    pub(crate) rubric: String,
+    pub(crate) flag_examples: Vec<String>,
+    pub(crate) pass_examples: Vec<String>,
 }
 
 /// A `patterns:` list item — bare string or detailed object.
@@ -260,18 +277,98 @@ fn compile_regex(file: &str, field: &str, pattern: &str) -> Result<(), LoadError
         })
 }
 
+pub fn parse_rule_def(file: &str, yaml: &str) -> Result<RuleDef, LoadError> {
+    serde_yaml::from_str(yaml).map_err(|e| map_serde_error(file, e))
+}
+
 /// Parse + validate a single rule file. `file` is used for error context.
 pub fn parse_rule(file: &str, yaml: &str) -> Result<RuleDef, LoadError> {
-    let def: RuleDef = serde_yaml::from_str(yaml).map_err(|e| map_serde_error(file, e))?;
+    let def = parse_rule_def(file, yaml)?;
+    if def.skill.is_some() {
+        return Err(LoadError::invalid_field(
+            file,
+            "skill",
+            "skill references must be loaded from a rule file",
+        ));
+    }
     validate_rule(file, &def)?;
     Ok(def)
 }
 
-/// Parse a Claude Code-style skill file as an inferential rule. The YAML
-/// frontmatter supplies metadata and the Markdown body supplies the rubric.
-/// `Flag examples` and `Pass examples` sections are extracted from the body
-/// and omitted from the rubric.
-pub fn parse_skill_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError> {
+/// Parse a YAML rule file and resolve an optional skill reference relative to
+/// that file's location.
+pub fn parse_rule_file(path: &Path) -> Result<RuleDef, LoadError> {
+    let file = path.display().to_string();
+    let markdown = std::fs::read_to_string(path).map_err(|source| LoadError::Io {
+        path: file.clone(),
+        source,
+    })?;
+    let def = parse_rule_def(&file, &markdown)?;
+    let Some(skill) = def.skill.clone() else {
+        validate_rule(&file, &def)?;
+        return Ok(def);
+    };
+    let skill_path = path.parent().unwrap_or_else(|| Path::new("")).join(skill);
+    let skill_file = skill_path.display().to_string();
+    let skill_markdown = std::fs::read_to_string(&skill_path).map_err(|source| LoadError::Io {
+        path: skill_file.clone(),
+        source,
+    })?;
+    parse_rule_with_skill(&file, &markdown, &skill_file, &skill_markdown)
+}
+
+pub(crate) fn parse_rule_with_skill(
+    file: &str,
+    yaml: &str,
+    skill_file: &str,
+    markdown: &str,
+) -> Result<RuleDef, LoadError> {
+    let mut def = parse_rule_def(file, yaml)?;
+    if def.skill.is_none() {
+        return Err(LoadError::invalid_field(
+            file,
+            "skill",
+            "a skill file can only be merged when the rule declares skill",
+        ));
+    }
+    if def.engine != "inferential" {
+        return Err(LoadError::invalid_field(
+            file,
+            "skill",
+            format!(
+                "skill references only apply to inferential rules — this rule uses the {} engine",
+                def.engine
+            ),
+        ));
+    }
+    if def.rubric.is_some() {
+        return Err(LoadError::invalid_field(
+            file,
+            "rubric",
+            "a rule cannot set both rubric and skill — use the skill file as the rubric source",
+        ));
+    }
+    let skill = parse_skill_content(skill_file, markdown)?;
+    def.description = def.description.or(skill.description);
+    def.severity = def.severity.or(skill.severity);
+    def.granularity = def.granularity.or(skill.granularity);
+    def.scope = def.scope.or(skill.scope);
+    def.intent = def.intent.or(skill.intent);
+    def.docs = def.docs.or(skill.docs);
+    def.message = def.message.or(skill.message);
+    def.rationale = def.rationale.or(skill.rationale);
+    def.rubric = Some(skill.rubric);
+    if def.flag_examples.is_empty() {
+        def.flag_examples = skill.flag_examples;
+    }
+    if def.pass_examples.is_empty() {
+        def.pass_examples = skill.pass_examples;
+    }
+    validate_rule(file, &def)?;
+    Ok(def)
+}
+
+pub(crate) fn parse_skill_content(file: &str, markdown: &str) -> Result<SkillContent, LoadError> {
     let mut lines = markdown.lines();
     if lines.next().map(str::trim) != Some("---") {
         return Err(LoadError::invalid_field(
@@ -301,37 +398,16 @@ pub fn parse_skill_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError
         serde_yaml::from_str(&frontmatter).map_err(|e| map_serde_error(file, e))?;
     let body = lines.collect::<Vec<_>>();
     let (rubric, body_flags, body_passes) = extract_skill_sections(&body);
-    let path = Path::new(file);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("skill");
-    let fallback_id = if stem.eq_ignore_ascii_case("skill")
-        && path.file_name().and_then(|s| s.to_str()) == Some("SKILL.md")
-    {
-        path.parent()
-            .and_then(Path::file_name)
-            .and_then(|s| s.to_str())
-            .unwrap_or(stem)
-    } else {
-        stem
-    };
-    let def = RuleDef {
-        id: fm.name.unwrap_or_else(|| fallback_id.to_string()),
-        engine: "inferential".to_string(),
-        scope: fm.scope,
-        severity: fm.severity,
-        intent: fm.intent,
+    Ok(SkillContent {
         description: fm.description,
-        rationale: fm.rationale,
+        severity: fm.severity,
+        granularity: fm.granularity,
+        scope: fm.scope,
+        intent: fm.intent,
         docs: fm.docs,
         message: fm.message,
-        examples: Vec::new(),
-        patterns: Vec::new(),
-        allow_context: None,
-        threshold: None,
-        metric: None,
-        params: None,
-        direction: None,
-        granularity: fm.granularity,
-        rubric: Some(rubric),
+        rationale: fm.rationale,
+        rubric,
         flag_examples: if fm.flag_examples.is_empty() {
             body_flags
         } else {
@@ -342,9 +418,7 @@ pub fn parse_skill_rule(file: &str, markdown: &str) -> Result<RuleDef, LoadError
         } else {
             fm.pass_examples
         },
-    };
-    validate_rule(file, &def)?;
-    Ok(def)
+    })
 }
 
 fn extract_skill_sections(lines: &[&str]) -> (String, Vec<String>, Vec<String>) {
@@ -821,10 +895,9 @@ pass_examples: ["x", "y", "z"]
 
     #[test]
     fn skill_file_extracts_frontmatter_and_examples() {
-        let def = parse_skill_rule(
+        let skill = parse_skill_content(
             "rules/hedging.md",
             r#"---
-name: empty-hedge
 description: Flags empty hedges.
 severity: warning
 granularity: paragraph
@@ -846,43 +919,53 @@ Flag a hedge when it adds no useful uncertainty.
 "#,
         )
         .unwrap();
-        assert_eq!(def.id, "empty-hedge");
-        assert_eq!(def.engine, "inferential");
-        assert_eq!(def.granularity.as_deref(), Some("paragraph"));
-        assert!(def.rubric.as_deref().unwrap().contains("adds no useful"));
-        assert!(!def.rubric.as_deref().unwrap().contains("Flag examples"));
-        assert_eq!(def.flag_examples.len(), 3);
-        assert_eq!(def.pass_examples.len(), 3);
+        assert_eq!(skill.granularity.as_deref(), Some("paragraph"));
+        assert!(skill.rubric.contains("adds no useful"));
+        assert!(!skill.rubric.contains("Flag examples"));
+        assert_eq!(skill.flag_examples.len(), 3);
+        assert_eq!(skill.pass_examples.len(), 3);
     }
 
     #[test]
-    fn skill_file_falls_back_to_stem_and_reports_missing_examples() {
-        let e = parse_skill_rule("rules/my-rule.md", "---\ndescription: x\n---\nA rubric.\n")
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("rules/my-rule.md: flag_examples"), "{e}");
-        assert!(e.contains("at least 3"), "{e}");
-    }
-
-    #[test]
-    fn skill_file_falls_back_to_parent_directory_for_skill_md() {
-        let def = parse_skill_rule(
-            "rules/empty-hedge/SKILL.md",
-            "---\ndescription: x\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nA rubric.\n",
+    fn yaml_rule_merges_skill_with_yaml_precedence() {
+        let def = parse_rule_with_skill(
+            "rules/my-rule.yaml",
+            "id: my-rule\nengine: inferential\nseverity: warning\nskill: ./my-rule.md\ndescription: YAML description\nflag_examples: [yaml-a, yaml-b, yaml-c]\n",
+            "rules/my-rule.md",
+            "---\ndescription: Skill description\nmessage: Skill message\nflag_examples: [skill-a, skill-b, skill-c]\npass_examples: [x, y, z]\n---\nSkill rubric.\n",
         )
         .unwrap();
-        assert_eq!(def.id, "empty-hedge");
+        assert_eq!(def.description.as_deref(), Some("YAML description"));
+        assert_eq!(def.message.as_deref(), Some("Skill message"));
+        assert_eq!(def.rubric.as_deref(), Some("Skill rubric."));
+        assert_eq!(def.flag_examples, ["yaml-a", "yaml-b", "yaml-c"]);
+        assert_eq!(def.pass_examples, ["x", "y", "z"]);
     }
 
     #[test]
-    fn skill_file_frontmatter_severity_uses_normal_validation() {
-        let e = parse_skill_rule(
+    fn yaml_rule_rejects_rubric_and_skill_together() {
+        let e = parse_rule_with_skill(
+            "rules/my-rule.yaml",
+            "id: my-rule\nengine: inferential\nrubric: YAML rubric\nskill: ./my-rule.md\n",
+            "rules/my-rule.md",
+            "---\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nSkill rubric.\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("rules/my-rule.yaml: rubric"), "{e}");
+    }
+
+    #[test]
+    fn yaml_rule_skill_validation_uses_yaml_file_context() {
+        let e = parse_rule_with_skill(
+            "rules/my-rule.yaml",
+            "id: my-rule\nengine: inferential\nskill: ./my-rule.md\n",
             "rules/my-rule.md",
             "---\nseverity: error\nflag_examples: [a, b, c]\npass_examples: [x, y, z]\n---\nA rubric.\n",
         )
         .unwrap_err()
         .to_string();
-        assert!(e.contains("rules/my-rule.md: severity"), "{e}");
+        assert!(e.contains("rules/my-rule.yaml: severity"), "{e}");
         assert!(e.contains("too severe"), "{e}");
     }
 
