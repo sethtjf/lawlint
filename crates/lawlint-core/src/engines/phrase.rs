@@ -6,14 +6,43 @@
 //! bytes each side (clamped to char boundaries); if the pattern matches the
 //! expanded slice, skip. A `fix` string on an item makes a MachineApplicable
 //! single-edit Fix.
+//!
+//! `fix` is either a literal replacement, or — if it contains a `$` — an
+//! expansion string in `regex`'s own `Captures::expand` grammar: `$1`/`${1}`
+//! (numbered, `0` = whole match), `$name`/`${name}` (named groups), `$$` for
+//! a literal `$`. Groups the pattern can never define are a load error (see
+//! `loader::validate_fix_capture_refs`), checked both at load time and again
+//! defensively in `from_def`, so the two validators can never disagree.
+//! `match_case` is applied to a plain literal fix (including one that's
+//! ref-free after `$$`-unescaping — that text is still author-literal), but
+//! *not* to an expansion that actually pulled in a capture group: the
+//! captured text already carries the source's own casing per group, and
+//! re-casing the assembled result (e.g. uppercasing its first character
+//! because the *whole match* happened to start uppercase) would corrupt
+//! text that a reordering fix legitimately moved around.
 
 use regex::Regex;
 
 use crate::document::Block;
 use crate::error::LoadError;
-use crate::loader::{PatternDef, RuleDef};
+use crate::loader::{self, PatternDef, RuleDef};
 use crate::rule::{Ctx, Interests, Report, Rule, RuleMeta};
 use crate::types::{Applicability, Edit, Fix, TextRange};
+
+/// A compiled `fix:` replacement. `Literal` never touches `$`-parsing and
+/// stays on the plain `find_iter` path (byte-identical to pre-capture-group
+/// behavior); `Expand` is only used for a fix string that actually contains
+/// `$`, and switches that item to `captures_iter`.
+#[derive(Debug)]
+enum FixSpec {
+    Literal(String),
+    Expand {
+        replacement: String,
+        /// True when the replacement contains a real capture reference (not
+        /// just a `$$` escape) — determines whether `match_case` applies.
+        has_refs: bool,
+    },
+}
 
 /// One compiled `patterns:` item.
 #[derive(Debug)]
@@ -22,8 +51,8 @@ struct PhraseItem {
     /// Per-item message override; falls back to the rule's default message.
     message: Option<String>,
     suggestion: Option<String>,
-    /// Replacement string → MachineApplicable single-edit Fix.
-    fix: Option<String>,
+    /// `fix:` compiled into a literal or capture-expansion spec.
+    fix: Option<FixSpec>,
 }
 
 #[derive(Debug)]
@@ -42,26 +71,63 @@ impl PhraseEngine {
     pub fn from_def(meta: RuleMeta, def: &RuleDef, file: &str) -> Result<Self, LoadError> {
         let mut items = Vec::with_capacity(def.patterns.len());
         for (i, p) in def.patterns.iter().enumerate() {
-            let (pattern, message, suggestion, fix) = match p {
-                PatternDef::Bare(s) => (s.as_str(), None, None, None),
+            let (pattern, message, suggestion, fix, fix_template) = match p {
+                PatternDef::Bare(s) => (s.as_str(), None, None, None, None),
                 PatternDef::Detailed {
                     pattern,
                     message,
                     suggestion,
                     fix,
+                    fix_template,
                 } => (
                     pattern.as_str(),
                     message.clone(),
                     suggestion.clone(),
                     fix.clone(),
+                    fix_template.clone(),
                 ),
             };
+            let field = format!("patterns[{i}]");
             let regex = Regex::new(pattern).map_err(|e| LoadError::InvalidRegex {
                 file: file.to_string(),
-                field: format!("patterns[{i}]"),
+                field: field.clone(),
                 pattern: pattern.to_string(),
                 message: e.to_string(),
             })?;
+            // `fix` is verbatim; `fixTemplate` interpolates capture groups.
+            // Which one the author wrote decides how it is treated — never the
+            // content of the string, so a literal `$1` can never be silently
+            // reinterpreted as a reference.
+            let fix = match (fix, fix_template) {
+                (Some(_), Some(_)) => {
+                    return Err(LoadError::invalid_field(
+                        file,
+                        format!("{field}.fixTemplate"),
+                        "a pattern may set `fix` (literal) or `fixTemplate` \
+                         (capture-group interpolation), not both",
+                    ))
+                }
+                (Some(replacement), None) => Some(FixSpec::Literal(replacement)),
+                (None, Some(template)) => {
+                    // Defensive re-validation: the loader already checks this
+                    // at load time, but `from_def` is also reachable directly
+                    // (tests, a future non-Markdown rule source), so it must
+                    // reject bad refs rather than let expansion silently
+                    // produce empty text.
+                    loader::validate_fix_capture_refs(
+                        file,
+                        &format!("{field}.fixTemplate"),
+                        &template,
+                        &regex,
+                    )?;
+                    let has_refs = !loader::scan_capture_refs(&template).is_empty();
+                    Some(FixSpec::Expand {
+                        replacement: template,
+                        has_refs,
+                    })
+                }
+                (None, None) => None,
+            };
             items.push(PhraseItem {
                 regex,
                 message,
@@ -139,6 +205,18 @@ impl PhraseEngine {
         }
         (lo, hi)
     }
+
+    /// True if `allow_context` is set and matches the window around
+    /// `[start, end)` — i.e. this match should be skipped.
+    fn allow_context_skips(&self, source: &str, start: usize, end: usize) -> bool {
+        match &self.allow_context {
+            Some((allow_re, window)) => {
+                let (lo, hi) = Self::expand_window(source, start, end, *window);
+                allow_re.is_match(&source[lo..hi])
+            }
+            None => false,
+        }
+    }
 }
 
 impl Rule for PhraseEngine {
@@ -157,22 +235,73 @@ impl Rule for PhraseEngine {
         let source = ctx.source;
         let text = b.range.slice(source);
         for item in &self.items {
+            if let Some(FixSpec::Expand {
+                replacement,
+                has_refs,
+            }) = &item.fix
+            {
+                // Capture-bearing fix: needs the capture groups per match,
+                // so this item runs on `captures_iter` instead of the
+                // cheaper `find_iter` the other two branches use.
+                let mut buf = String::new();
+                for caps in item.regex.captures_iter(text) {
+                    let m = caps.get(0).expect("group 0 always matches");
+                    if m.start() == m.end() {
+                        continue; // never report empty matches
+                    }
+                    let start = b.range.start + m.start();
+                    let end = b.range.start + m.end();
+                    if self.allow_context_skips(source, start, end) {
+                        continue;
+                    }
+                    let span = TextRange { start, end };
+                    buf.clear();
+                    caps.expand(replacement, &mut buf);
+                    // Only re-case a ref-free (pure `$$`-escape) expansion:
+                    // see the module doc comment for why a real capture ref
+                    // must not be re-cased.
+                    let replacement_text = if *has_refs {
+                        buf.clone()
+                    } else {
+                        Self::match_case(span.slice(source), &buf)
+                    };
+                    ctx.report(Report {
+                        span,
+                        message: item
+                            .message
+                            .clone()
+                            .unwrap_or_else(|| self.default_message.clone()),
+                        suggestion: item.suggestion.clone(),
+                        weight: None,
+                        fix: Some(Fix {
+                            edits: vec![Edit {
+                                range: span,
+                                replacement: replacement_text,
+                            }],
+                            applicability: Applicability::MachineApplicable,
+                        }),
+                    });
+                }
+                continue;
+            }
+
+            let literal = match &item.fix {
+                Some(FixSpec::Literal(s)) => Some(s.as_str()),
+                Some(FixSpec::Expand { .. }) => unreachable!("handled above"),
+                None => None,
+            };
             for m in item.regex.find_iter(text) {
                 if m.start() == m.end() {
                     continue; // never report empty matches
                 }
                 let start = b.range.start + m.start();
                 let end = b.range.start + m.end();
-
-                if let Some((allow_re, window)) = &self.allow_context {
-                    let (lo, hi) = Self::expand_window(source, start, end, *window);
-                    if allow_re.is_match(&source[lo..hi]) {
-                        continue;
-                    }
+                if self.allow_context_skips(source, start, end) {
+                    continue;
                 }
 
                 let span = TextRange { start, end };
-                let fix = item.fix.as_ref().map(|replacement| Fix {
+                let fix = literal.map(|replacement| Fix {
                     edits: vec![Edit {
                         range: span,
                         replacement: Self::match_case(span.slice(source), replacement),
@@ -454,6 +583,139 @@ patterns:
             reports[0].fix.as_ref().unwrap().edits[0].replacement,
             "examine"
         );
+    }
+
+    #[test]
+    fn capture_expansion_reorders_captured_groups() {
+        let source = "cats and dogs.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)(\\w+) and (\\w+)", fixTemplate: "${2} and ${1}" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(reports.len(), 1);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "dogs and cats"
+        );
+    }
+
+    #[test]
+    fn match_case_is_skipped_when_fix_has_capture_refs() {
+        // The whole match starts uppercase ("Cats"), which would normally
+        // make match_case capitalize the replacement's first character. But
+        // this fix reorders a lowercase-captured word ("dogs") to the
+        // front; blindly re-casing the assembled text would wrongly
+        // capitalize "dogs" into "Dogs". The correct output preserves each
+        // captured group's own source casing untouched.
+        let source = "Cats and dogs.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)(\\w+) and (\\w+)", fixTemplate: "${2} and ${1}" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "dogs and Cats"
+        );
+    }
+
+    #[test]
+    fn literal_dollar_escape_still_gets_match_case() {
+        // No real capture group reference here — "$$" is purely an escape
+        // for a literal '$' — so the expanded text is still author-literal
+        // and match_case must keep applying to it, exactly like a plain
+        // Literal fix.
+        let source = "Late fee applies.";
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(?i)\\blate fee\\b", fixTemplate: "$$100 fee" }
+"#);
+        let mut e = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let b = block(0, source.len());
+        let reports = run(&mut e, source, &b);
+        assert_eq!(
+            reports[0].fix.as_ref().unwrap().edits[0].replacement,
+            "$100 fee"
+        );
+    }
+
+    #[test]
+    fn unknown_capture_group_in_fix_is_a_load_error() {
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(\\w+) fee", fixTemplate: "${2}" }
+"#);
+        let err = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap_err();
+        match err {
+            LoadError::InvalidField { file, field, .. } => {
+                assert_eq!(file, "t.yaml");
+                assert_eq!(field, "patterns[0].fixTemplate");
+            }
+            other => panic!("expected InvalidField, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capture_template_can_insert_into_the_middle_of_a_match() {
+        // The capability oxford-comma will eventually want: an Oxford comma is
+        // an *insertion*, which a literal whole-match replacement cannot
+        // express. Proven here on a scoped rule rather than on oxford-comma
+        // itself — see `oxford_comma_stays_advice_only_until_it_can_tell_a
+        // _list_from_a_doublet`.
+        let d = def(r#"
+id: t
+engine: phrase
+patterns:
+  - { pattern: "(\\w+, \\w+) (and|or) (\\w+)", fixTemplate: "${1}, ${2} ${3}" }
+"#);
+        let mut engine = PhraseEngine::from_def(meta(), &d, "t.yaml").unwrap();
+        let source = "The parties are Alice, Bob and Carol.";
+        let b = block(0, source.len());
+        let reports = run(&mut engine, source, &b);
+        assert_eq!(reports.len(), 1);
+        let fix = reports[0].fix.as_ref().expect("template yields a fix");
+        assert_eq!(fix.edits[0].replacement, "Alice, Bob, and Carol");
+    }
+
+    #[test]
+    fn oxford_comma_stays_advice_only_until_it_can_tell_a_list_from_a_doublet() {
+        // Regression guard, not a limitation to paper over. The rule's pattern
+        // walks up to three words past a comma to find `and`/`or`, so in
+        // "Pursuant to the aforementioned terms, the parties shall cease and
+        // desist" it matches the legal doublet "cease and desist" and would
+        // rewrite it to "cease, and desist" — corrupting the text of a legal
+        // document. Detection is still useful; automatic repair is not safe
+        // until the pattern can distinguish a real list. Give this rule a
+        // `fixTemplate` only together with a pattern that passes this test.
+        let source = "Pursuant to the aforementioned terms, the parties shall \
+                      cease and desist from any and all action.";
+        let opts = crate::LintOptions {
+            enable: Some(vec!["oxford-comma".into()]),
+            ..Default::default()
+        };
+        let result = crate::lint(source, &opts);
+        assert!(
+            !result.diagnostics.is_empty(),
+            "the false positive itself is pre-existing and still detected"
+        );
+        assert!(
+            result.diagnostics.iter().all(|d| d.fix.is_none()),
+            "oxford-comma must not carry an auto-fix while it matches doublets"
+        );
+        assert_eq!(crate::apply_fixes(source, &result.diagnostics), source);
     }
 
     #[test]

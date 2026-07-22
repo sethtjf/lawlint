@@ -112,9 +112,25 @@ pub enum PatternDef {
         message: Option<String>,
         #[serde(default)]
         suggestion: Option<String>,
-        /// Replacement string → MachineApplicable single-edit Fix.
+        /// Literal replacement string → MachineApplicable single-edit Fix.
+        /// Taken verbatim: `$` has no special meaning here, so a rule written
+        /// before capture expansion existed (`fix: "$500 fee"`) keeps working
+        /// exactly as it did. Use `fixTemplate` to reference capture groups.
         #[serde(default)]
         fix: Option<String>,
+        /// Replacement *template* → MachineApplicable single-edit Fix, with
+        /// the pattern's own capture groups interpolated: `$1`/`${1}`
+        /// (numbered, `0` = whole match), `$name`/`${name}` (named), and `$$`
+        /// for a literal `$`. Same grammar as `regex`'s `Captures::expand`.
+        /// A reference to a group the pattern can never define is a load
+        /// error, not a silent empty expansion.
+        ///
+        /// Separate from `fix` on purpose. Deciding which one a replacement is
+        /// by scanning it for `$` would silently reinterpret an existing
+        /// rule's literal `$1` as a capture reference — same input, different
+        /// output, no error. The author says which they meant.
+        #[serde(default, rename = "fixTemplate", alias = "fix_template")]
+        fix_template: Option<String>,
     },
 }
 
@@ -125,6 +141,138 @@ impl PatternDef {
             PatternDef::Detailed { pattern, .. } => pattern,
         }
     }
+
+    pub fn fix(&self) -> Option<&str> {
+        match self {
+            PatternDef::Bare(_) => None,
+            PatternDef::Detailed { fix, .. } => fix.as_deref(),
+        }
+    }
+
+    pub fn fix_template(&self) -> Option<&str> {
+        match self {
+            PatternDef::Bare(_) => None,
+            PatternDef::Detailed { fix_template, .. } => fix_template.as_deref(),
+        }
+    }
+}
+
+/// A `$...` capture reference found in a `fix:` replacement string, as
+/// produced by `scan_capture_refs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CaptureRef {
+    Number(usize),
+    Named(String),
+}
+
+/// Byte-oriented scanner for `$...` references in a `fix:` replacement,
+/// mirroring `regex_automata::util::interpolate`'s private parser exactly
+/// (unbraced = longest run of `[0-9A-Za-z_]` after `$`; braced `${...}` up
+/// to the first `}`, and if unterminated the `${` is literal text and
+/// scanning resumes right after the `$`; `$$` is a literal `$` and yields no
+/// reference; a bare `$` with nothing valid after it is also literal). This
+/// must agree with `Captures::expand`'s actual behavior at lint time, since
+/// it is what load-time validation checks against. All delimiter bytes
+/// (`$`, `{`, `}`, alnum, `_`) are ASCII, so slicing on their byte offsets
+/// is always a char boundary even when the replacement has multibyte text
+/// elsewhere.
+pub(crate) fn scan_capture_refs(replacement: &str) -> Vec<CaptureRef> {
+    fn is_cap_letter(b: u8) -> bool {
+        matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_')
+    }
+
+    let bytes = replacement.as_bytes();
+    let mut refs = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        if bytes.get(i + 1) == Some(&b'$') {
+            i += 2; // literal '$', no reference
+            continue;
+        }
+        if bytes.get(i + 1) == Some(&b'{') {
+            let start = i + 2;
+            let mut j = start;
+            while j < bytes.len() && bytes[j] != b'}' {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                i += 1; // unterminated brace: '$' is literal, rescan from '{'
+                continue;
+            }
+            let name = &replacement[start..j];
+            refs.push(match name.parse::<usize>() {
+                Ok(n) => CaptureRef::Number(n),
+                Err(_) => CaptureRef::Named(name.to_string()),
+            });
+            i = j + 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut j = start;
+        while j < bytes.len() && is_cap_letter(bytes[j]) {
+            j += 1;
+        }
+        if j == start {
+            i += 1; // bare '$' with nothing valid after: literal
+            continue;
+        }
+        let name = &replacement[start..j];
+        refs.push(match name.parse::<usize>() {
+            Ok(n) => CaptureRef::Number(n),
+            Err(_) => CaptureRef::Named(name.to_string()),
+        });
+        i = j;
+    }
+    refs
+}
+
+/// Every `$...` reference in `fix` must name a capture group `regex` can
+/// actually define — `Number(n)` needs `n < regex.captures_len()` (which
+/// includes group 0, the whole match); `Named(name)` needs `name` among
+/// `regex.capture_names()`. A group that exists but simply didn't
+/// participate in a *given* match (e.g. one side of an alternation) is not
+/// an error here — only a reference the pattern can never satisfy is.
+pub(crate) fn validate_fix_capture_refs(
+    file: &str,
+    field: &str,
+    fix: &str,
+    regex: &regex::Regex,
+) -> Result<(), LoadError> {
+    for cap_ref in scan_capture_refs(fix) {
+        match cap_ref {
+            CaptureRef::Number(n) => {
+                if n >= regex.captures_len() {
+                    return Err(LoadError::invalid_field(
+                        file,
+                        field,
+                        format!(
+                            "fix references capture group ${n}, but the pattern only defines \
+                             groups 0..{} (0 is the whole match)",
+                            regex.captures_len() - 1
+                        ),
+                    ));
+                }
+            }
+            CaptureRef::Named(name) => {
+                if !regex.capture_names().any(|n| n == Some(name.as_str())) {
+                    let known: Vec<&str> = regex.capture_names().flatten().collect();
+                    return Err(LoadError::invalid_field(
+                        file,
+                        field,
+                        format!(
+                            "fix references named capture group \"{name}\", which the pattern \
+                             does not define — known named groups: {known:?}"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `allow_context: { pattern, window }` (phrase only): expand match by
@@ -445,7 +593,30 @@ fn validate_rule(file: &str, def: &RuleDef) -> Result<(), LoadError> {
                 ));
             }
             for (i, p) in def.patterns.iter().enumerate() {
-                compile_regex(file, &format!("patterns[{i}]"), p.pattern())?;
+                let field = format!("patterns[{i}]");
+                let regex =
+                    regex::Regex::new(p.pattern()).map_err(|e| LoadError::InvalidRegex {
+                        file: file.to_string(),
+                        field: field.clone(),
+                        pattern: p.pattern().to_string(),
+                        message: e.to_string(),
+                    })?;
+                if p.fix().is_some() && p.fix_template().is_some() {
+                    return Err(LoadError::invalid_field(
+                        file,
+                        format!("{field}.fixTemplate"),
+                        "a pattern may set `fix` (literal) or `fixTemplate` \
+                         (capture-group interpolation), not both",
+                    ));
+                }
+                if let Some(template) = p.fix_template() {
+                    validate_fix_capture_refs(
+                        file,
+                        &format!("{field}.fixTemplate"),
+                        template,
+                        &regex,
+                    )?;
+                }
             }
             if let Some(ac) = &def.allow_context {
                 compile_regex(file, "allow_context.pattern", &ac.pattern)?;
@@ -716,7 +887,9 @@ allow_context: { pattern: '\d\s?–\s?\d', window: 8 }
                 message,
                 suggestion,
                 fix,
+                fix_template,
             } => {
+                assert_eq!(fix_template.as_deref(), None);
                 assert_eq!(pattern, "(?i)\\bdelve\\b");
                 assert_eq!(message.as_deref(), Some("No delving"));
                 assert_eq!(suggestion.as_deref(), Some("examine"));
@@ -975,6 +1148,52 @@ patterns: ["—"]
             "rules/test.md: allow_context: allow_context only applies to phrase rules — \
              this rule uses the leading engine"
         );
+    }
+
+    #[test]
+    fn fix_referencing_unknown_numbered_group_is_load_error() {
+        // Pattern has one group (0 is the whole match, 1 is "(\\w+)"), so
+        // `$2` can never be satisfied.
+        let e = err(r#"id: x
+engine: phrase
+patterns:
+  - { pattern: "(\\w+) fee", fixTemplate: "${1} and ${2}" }
+"#);
+        assert!(e.contains("patterns[0].fix"), "{e}");
+        assert!(e.contains("$2"), "{e}");
+    }
+
+    #[test]
+    fn fix_referencing_unknown_named_group_is_load_error() {
+        let e = err(r#"id: x
+engine: phrase
+patterns:
+  - { pattern: "(?P<amount>\\w+) fee", fixTemplate: "${nope}" }
+"#);
+        assert!(e.contains("patterns[0].fix"), "{e}");
+        assert!(e.contains("nope"), "{e}");
+    }
+
+    #[test]
+    fn fix_with_valid_numbered_and_named_refs_loads() {
+        let def = ok(r#"id: x
+engine: phrase
+patterns:
+  - { pattern: "(?P<amount>\\w+) fee", fixTemplate: "${0}: ${1} / ${amount}" }
+"#);
+        assert_eq!(def.patterns.len(), 1);
+    }
+
+    #[test]
+    fn fix_with_only_dollar_escape_loads_even_with_zero_groups() {
+        // No capture groups at all in the pattern; "$$" is a literal '$'
+        // escape, not a reference, so this must not be a load error.
+        let def = ok(r#"id: x
+engine: phrase
+patterns:
+  - { pattern: "late fee", fixTemplate: "$$5 fee" }
+"#);
+        assert_eq!(def.patterns.len(), 1);
     }
 
     #[test]
