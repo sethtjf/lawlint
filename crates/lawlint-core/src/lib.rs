@@ -31,8 +31,9 @@ pub use document::{parse, Block, BlockKind, Document, Sentence, Token, TokenKind
 pub use error::{JudgeError, LoadError};
 // Host-driven tier-3 (wasm): plan/run/ground are public.
 pub use judge::{
-    default_quote_ground, plan_judge, run_judge, Granularity, Judge, JudgeCache, JudgeFinding,
-    JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment, PROMPT_VERSION,
+    default_quote_ground, plan_judge, plan_judge_with, run_judge, Granularity, Judge, JudgeCache,
+    JudgeFinding, JudgePlan, JudgeRequest, JudgeStats, MemoryCache, MockJudge, RubricFragment,
+    PROMPT_VERSION,
 };
 pub use loader::{AllowContextDef, PackageManifest, PatternDef, RuleDef};
 pub use prompt::{remediation_prompt, PromptSource};
@@ -66,6 +67,24 @@ pub fn lint_with(text: &str, options: &LintOptions, rules: &RuleSet) -> LintResu
     let instances = rules.instantiate(options);
     let diagnostics = dispatch::run(text, &doc, instances, options, rules);
     scoring::finalize(text, diagnostics, &doc)
+}
+
+/// The request-shaping profile a caller configured, else the conservative
+/// default. Callers that know which backend they built (the CLI does) fill
+/// these in from the model profile before linting; core never infers them
+/// from a model name.
+fn judge_plan(options: &LintOptions) -> JudgePlan {
+    let mut plan = JudgePlan::default();
+    let Some(judge) = options.judge.as_ref() else {
+        return plan;
+    };
+    if let Some(context_chars) = judge.context_chars {
+        plan = JudgePlan::for_context(context_chars);
+    }
+    if let Some(per_rule) = judge.per_rule {
+        plan.per_rule = per_rule;
+    }
+    plan
 }
 
 /// Lint including soft rules (tier 3): plan_judge → run_judge (with cache) → ground →
@@ -107,7 +126,7 @@ pub fn lint_full_with_progress(
     let mut diagnostics = dispatch::run(text, &doc, instances, options, rules);
 
     let refs: Vec<&RubricFragment> = fragments.iter().map(|(_, _, f)| f).collect();
-    let reqs = plan_judge(&doc, text, &refs);
+    let reqs = plan_judge_with(&doc, text, &refs, &judge_plan(options));
     let (grounded, stats) = judge::run_judge_with_progress(judge, cache, &reqs, text, on_progress);
 
     let suppressions = dispatch::Suppressions::new(text, rules);

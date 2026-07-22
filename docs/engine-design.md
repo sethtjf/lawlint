@@ -319,21 +319,30 @@ pub struct JudgeStats {
 pub trait Judge: Send + Sync {
     fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError>;
     fn model_id(&self) -> &str;
+    fn max_concurrency(&self) -> usize { 1 }   // requests this backend serves at once
 }
+
+/// How requests are cut for a backend. Everything model-shaped lives here
+/// rather than in constants; core never maps a model name to a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JudgePlan { pub context_chars: usize, pub per_rule: bool }
 pub trait JudgeCache: Send + Sync {
     fn get(&self, key: &str) -> Option<Vec<JudgeFinding>>;
     fn put(&self, key: &str, findings: &[JudgeFinding]);
 }
-pub const PROMPT_VERSION: &str = "1";
+pub const PROMPT_VERSION: &str = "3";
 
 pub fn plan_judge(doc: &Document, source: &str, rules: &[&RubricFragment]) -> Vec<JudgeRequest>;
+pub fn plan_judge_with<'a>(doc: &Document, source: &str, rules: &[&'a RubricFragment],
+                           plan: &JudgePlan) -> Vec<JudgeRequest>;
 pub fn run_judge(judge: &dyn Judge, cache: Option<&dyn JudgeCache>, reqs: &[JudgeRequest],
                  source: &str) -> (Vec<(JudgeRequest, JudgeFinding, TextRange)>, JudgeStats);
 ```
 
-- **Chunking**: merge consecutive prose blocks up to ~1200 chars per chunk; one request per chunk carrying ALL sentence+paragraph-granularity rubrics (one call per chunk, not per rule). Document-granularity rubrics get one whole-document request.
-- **Prompt**: rubrics with flag/pass examples + chunk text + instruction to return a JSON array of findings with verbatim `quote`s, matching the `JudgeFinding` schema exactly. Full cache key = `sha256(cache_key_base + model_id)`.
-- **Run**: on malformed JSON, retry once; then fail the chunk closed (zero findings) and count `chunks_failed`.
+- **Chunking**: merge consecutive prose blocks into units of up to `plan.context_chars`. Document-granularity rubrics always get one whole-source request.
+- **Request granularity**: `plan.per_rule` selects one request per rule per unit (each rule judged alone, its own cache entry) or one request per unit carrying every rubric. The profile comes from the backend — `lawlint_judge::plan_for_model` — so core stays inference-agnostic; `JudgePlan::default()` is the conservative small-model shape (1200 chars, bundled) and is what an unconfigured caller gets.
+- **Prompt**: constant preamble + unit text + rubrics with flag/pass examples + instruction to return a JSON array of findings with verbatim `quote`s, matching the `JudgeFinding` schema exactly. **The text precedes the rubrics on purpose**: per-rule requests over one unit then share a byte-identical prefix, which providers bill at a discount (measured 72% of input cached across four concurrent rule requests). Reordering forfeits that and makes `per_rule` expensive. Full cache key = `sha256(cache_key_base + model_id)`.
+- **Run**: requests are fetched up to `judge.max_concurrency()` at a time; findings and stats are folded in **request order** regardless, so output never depends on how fetches interleaved. On malformed JSON, retry once; then fail the chunk closed (zero findings), count `chunks_failed`, and record `first_failure`. Fetching is the only concurrent stage — grounding and stats stay single-threaded. wasm has no threads and always runs the serial path (invariant 7).
 - **Grounding** (`default_quote_ground`): (1) exact substring match of `quote` within the chunk; (2) fuzzy: best same-length char window by `strsim::normalized_levenshtein`, floor **0.9**; (3) discard + increment `hallucinated[rule]`. A finding that cannot be grounded does not exist.
 - Findings whose rule isn't in the request's rule list are discarded (counted hallucinated). Confidence clamped to [0,1].
 - `MemoryCache` provided in core; disk cache is the CLI's concern.

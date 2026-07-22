@@ -263,6 +263,10 @@ fn layer_options(mut base: LintOptions, over: LintOptions) -> LintOptions {
             enabled: over_judge.enabled.or(base_judge.enabled),
             model: over_judge.model.or(base_judge.model),
             floor: over_judge.floor.or(base_judge.floor),
+            max_tokens: over_judge.max_tokens.or(base_judge.max_tokens),
+            concurrency: over_judge.concurrency.or(base_judge.concurrency),
+            context_chars: over_judge.context_chars.or(base_judge.context_chars),
+            per_rule: over_judge.per_rule.or(base_judge.per_rule),
         }),
         (base_judge, over_judge) => over_judge.or(base_judge),
     };
@@ -476,14 +480,31 @@ pub(crate) fn local_notice(spec: &str, config: &LintOptions) -> Option<String> {
 /// Build the judge + disk cache. A cache failure is not fatal (judge runs
 /// uncached); a judge build failure is reported to the caller, who falls
 /// back to tiers 1-2.
+/// `options` with the backend's request-shaping profile filled in wherever the
+/// user left it unset. An explicit `judge.contextChars` / `judge.perRule`
+/// always wins — the profile is a default, not an override.
+fn with_judge_plan(options: &LintOptions, model: &str) -> LintOptions {
+    let profile = lawlint_judge::plan_for_model(model);
+    let mut options = options.clone();
+    let judge = options.judge.get_or_insert_with(JudgeOptions::default);
+    judge.context_chars.get_or_insert(profile.context_chars);
+    judge.per_rule.get_or_insert(profile.per_rule);
+    options
+}
+
 fn build_judge(
     model: String,
     floor: Option<f32>,
+    max_tokens: Option<usize>,
+    concurrency: Option<usize>,
 ) -> Result<(Box<dyn Judge>, Option<DiskCache>), String> {
     let options = JudgeOptions {
         enabled: Some(true),
         model: Some(model),
         floor,
+        max_tokens,
+        concurrency,
+        ..JudgeOptions::default()
     };
     let judge = lawlint_judge::create_judge(&options).map_err(|error| error.to_string())?;
     let cache = match DiskCache::new() {
@@ -517,7 +538,12 @@ pub(crate) fn lint_text_with_progress(
         return lint_with(text, options, rules);
     };
     let floor = options.judge.as_ref().and_then(|judge| judge.floor);
-    match build_judge(model, floor) {
+    let max_tokens = options.judge.as_ref().and_then(|judge| judge.max_tokens);
+    let concurrency = options.judge.as_ref().and_then(|judge| judge.concurrency);
+    // Request shaping is a property of the backend, so it is resolved here —
+    // where the model spec is known — and handed to core as plain numbers.
+    let options = &with_judge_plan(options, &model);
+    match build_judge(model, floor, max_tokens, concurrency) {
         Ok((judge, cache)) => {
             let result = lawlint_core::lint_full_with_progress(
                 text,
@@ -534,6 +560,9 @@ pub(crate) fn lint_text_with_progress(
                         "lawlint: warning: judge failed on {} of {} chunks; those chunks used tiers 1-2 only",
                         stats.chunks_failed, stats.chunks
                     );
+                    if let Some(reason) = &stats.first_failure {
+                        eprintln!("lawlint: warning: first failure: {reason}");
+                    }
                 }
             }
             result
@@ -1676,10 +1705,16 @@ fn judge_example_outcome(result: &LintResult, full_id: &str, expect_flag: bool) 
     }
     if let Some(stats) = &result.judge {
         if stats.chunks_failed > 0 {
-            return ExampleOutcome::Skip(format!(
-                "judge failed on {} of {} chunks",
-                stats.chunks_failed, stats.chunks
-            ));
+            return ExampleOutcome::Skip(match &stats.first_failure {
+                Some(reason) => format!(
+                    "judge failed on {} of {} chunks: {reason}",
+                    stats.chunks_failed, stats.chunks
+                ),
+                None => format!(
+                    "judge failed on {} of {} chunks",
+                    stats.chunks_failed, stats.chunks
+                ),
+            });
         }
     }
     if expect_flag {
@@ -1732,6 +1767,13 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
         ..LintOptions::default()
     };
     let floor = options.judge.as_ref().and_then(|judge| judge.floor);
+    let max_tokens = options.judge.as_ref().and_then(|judge| judge.max_tokens);
+    let concurrency = options.judge.as_ref().and_then(|judge| judge.concurrency);
+    // Rule examples are single sentences, so the plan never splits them; the
+    // per-rule/bundled choice still follows the backend.
+    let options = judge_model
+        .as_deref()
+        .map_or_else(|| options.clone(), |model| with_judge_plan(&options, model));
 
     for file in &files {
         let display = file.display().to_string();
@@ -1780,15 +1822,18 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
                 continue;
             }
             if judge_state.is_none() {
-                judge_state = Some(match build_judge(judge_model.clone().unwrap(), floor) {
-                    Ok(built) => Some(built),
-                    Err(error) => {
-                        eprintln!(
+                judge_state = Some(
+                    match build_judge(judge_model.clone().unwrap(), floor, max_tokens, concurrency)
+                    {
+                        Ok(built) => Some(built),
+                        Err(error) => {
+                            eprintln!(
                             "lawlint: warning: judge unavailable ({error}); skipping inferential examples"
                         );
-                        None
-                    }
-                });
+                            None
+                        }
+                    },
+                );
             }
             let Some(Some((judge, cache))) = judge_state.as_ref() else {
                 for index in 0..def.flag_examples.len() {
@@ -2011,6 +2056,8 @@ mod tests {
                 enabled: Some(true),
                 model: Some("anthropic:m".into()),
                 floor: None,
+                max_tokens: None,
+                ..JudgeOptions::default()
             });
         });
         assert_eq!(judge_spec(&None, &config), Ok(Some("anthropic:m".into())));
@@ -2026,6 +2073,8 @@ mod tests {
                 enabled: Some(true),
                 model: None,
                 floor: None,
+                max_tokens: None,
+                ..JudgeOptions::default()
             });
         });
         let err = judge_spec(&None, &enabled_no_model).unwrap_err();
@@ -2036,6 +2085,8 @@ mod tests {
                 enabled: None,
                 model: Some("anthropic:m".into()),
                 floor: None,
+                max_tokens: None,
+                ..JudgeOptions::default()
             });
         });
         assert_eq!(judge_spec(&None, &disabled), Ok(None));
@@ -2085,6 +2136,8 @@ mod tests {
                 enabled: Some(true),
                 model: None,
                 floor: None,
+                max_tokens: None,
+                ..JudgeOptions::default()
             });
             o.ai = Some(AiOptions {
                 model: Some("foundry:gpt-5.5".into()),
@@ -2124,6 +2177,8 @@ mod tests {
                 enabled: Some(true),
                 model: Some("local:legacy".into()),
                 floor: None,
+                max_tokens: None,
+                ..JudgeOptions::default()
             });
             o.ai = prefs.ai.clone();
         });

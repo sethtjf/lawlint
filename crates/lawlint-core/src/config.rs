@@ -60,6 +60,23 @@ pub struct JudgeOptions {
     pub enabled: Option<bool>,
     pub model: Option<String>,
     pub floor: Option<f32>,
+    /// Cap on tokens the backend may generate per chunk. Reasoning models
+    /// spend this budget on hidden thinking before emitting the findings
+    /// array, so a cap sized for the array alone truncates them to empty
+    /// output and fails every chunk closed. `None` uses the backend default.
+    pub max_tokens: Option<usize>,
+    /// How many judge requests may be in flight at once. `None` uses the
+    /// backend default; local in-process models ignore it and stay at 1.
+    pub concurrency: Option<usize>,
+    /// Max chars of document text per judge request. Larger units mean fewer
+    /// requests and more context per call, at the cost of coarser cache
+    /// invalidation — an edit anywhere in a unit re-runs that whole unit.
+    /// `None` uses the model profile's budget.
+    pub context_chars: Option<usize>,
+    /// One request per rule (`true`) instead of one request per unit carrying
+    /// every rubric. Per-rule requests give each rule the model's full
+    /// attention and their own cache entry; `None` uses the model profile.
+    pub per_rule: Option<bool>,
 }
 
 #[cfg(test)]

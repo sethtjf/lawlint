@@ -18,9 +18,13 @@ use crate::error::JudgeError;
 use crate::types::{RuleId, Severity, TextRange};
 
 /// Bump when the prompt template changes; part of every cache key.
-pub const PROMPT_VERSION: &str = "2";
+/// 3: text moved above the rubrics so per-rule requests share a cacheable
+/// prefix.
+pub const PROMPT_VERSION: &str = "3";
 
-/// Target chunk size (chars) when merging consecutive prose blocks.
+/// Default chars of document text per request when no profile says otherwise.
+/// Sized for the smallest supported backend; [`JudgePlan::for_context`] raises
+/// it for models that can hold more.
 const TARGET_CHUNK_CHARS: usize = 1200;
 
 /// Minimum `normalized_levenshtein` similarity for fuzzy grounding.
@@ -81,11 +85,25 @@ pub struct JudgeStats {
     pub grounded: usize,
     /// Discarded (ungroundable / unknown-rule) findings, per rule.
     pub hallucinated: std::collections::HashMap<String, usize>,
+    /// Why the first failed chunk failed. Chunks fail closed and the run
+    /// continues, so without this the user sees a count with no cause — and
+    /// the causes (a truncated reasoning model, a bad key, a 404 deployment)
+    /// need very different fixes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_failure: Option<String>,
 }
 
 pub trait Judge: Send + Sync {
     fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError>;
     fn model_id(&self) -> &str;
+
+    /// How many requests this judge can serve at once. The default of 1 keeps
+    /// every existing backend sequential; a backend opts in only if it can
+    /// genuinely serve concurrent calls (a hosted API with a client per
+    /// worker can, a single in-process local model cannot).
+    fn max_concurrency(&self) -> usize {
+        1
+    }
 }
 
 pub trait JudgeCache: Send + Sync {
@@ -134,15 +152,25 @@ fn granularity_name(g: Granularity) -> &'static str {
     }
 }
 
-/// Small deterministic prompt template: rubrics with flag/pass examples, the
-/// chunk text, and a strict instruction to emit a JSON array matching the
-/// `JudgeFinding` schema with verbatim quotes.
+/// Small deterministic prompt template: the text under review, the rubrics
+/// with flag/pass examples, and a strict instruction to emit a JSON array
+/// matching the `JudgeFinding` schema with verbatim quotes.
+///
+/// **Field order is load-bearing.** The constant preamble and the unit text
+/// come first, the rule-specific rubric last, so every per-rule request over
+/// the same unit shares a byte-identical prefix. Providers bill a cached
+/// prefix at a discount, which is what keeps one-request-per-rule affordable:
+/// the marginal cost of rule N+1 is its rubric, not another copy of the
+/// document. Moving the rubric above the text silently forfeits that.
 fn build_prompt(chunk_text: &str, rubrics: &[&RubricFragment]) -> String {
     let mut p = String::new();
     p.push_str(
         "You are a strict legal-writing reviewer. Evaluate the text below against \
-         each rule. Only report real violations.\n\n",
+         each rule that follows it. Only report real violations.\n\n",
     );
+    p.push_str("Text to evaluate:\n<<<\n");
+    p.push_str(chunk_text);
+    p.push_str("\n>>>\n\n");
     for r in rubrics {
         let _ = writeln!(
             p,
@@ -162,9 +190,6 @@ fn build_prompt(chunk_text: &str, rubrics: &[&RubricFragment]) -> String {
         }
         p.push('\n');
     }
-    p.push_str("Text to evaluate:\n<<<\n");
-    p.push_str(chunk_text);
-    p.push_str("\n>>>\n\n");
     // The explicit clean-chunk example and the "never describe a pass" line
     // target a small-model failure mode: emitting the pass verdict as a
     // finding object ("The text does not flag any empty hedge") instead of
@@ -200,14 +225,57 @@ fn build_request(range: TextRange, text: String, rubrics: &[&RubricFragment]) ->
 
 // ---- Planning ----------------------------------------------------------
 
+/// How requests are cut for a given backend.
+///
+/// This is the knob that lets one pipeline serve a 1.5B local model and a
+/// frontier hosted model well. Everything model-shaped lives here rather than
+/// in constants, so a better model is a config change, not a rewrite; core
+/// itself stays inference-agnostic and never maps model names to profiles
+/// (that belongs to `lawlint-judge`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JudgePlan {
+    /// Max chars of document text per request.
+    pub context_chars: usize,
+    /// One request per rule instead of one per unit carrying every rubric.
+    ///
+    /// Per-rule requests give each rule the model's undivided attention and
+    /// its own cache entry, so adding a rule no longer invalidates the others.
+    /// They cost one request per rule per unit, which prompt-prefix caching
+    /// makes cheap — see [`build_prompt`] on why the text comes first.
+    pub per_rule: bool,
+}
+
+impl Default for JudgePlan {
+    /// The conservative profile: small units, rubrics bundled. Correct for the
+    /// weakest supported backend, which is what an unconfigured caller gets.
+    fn default() -> Self {
+        JudgePlan {
+            context_chars: TARGET_CHUNK_CHARS,
+            per_rule: false,
+        }
+    }
+}
+
+impl JudgePlan {
+    /// A profile for a backend that can hold `context_chars` of document text
+    /// per request. Anything above the conservative default is taken to be a
+    /// model worth addressing one rule at a time.
+    pub fn for_context(context_chars: usize) -> Self {
+        JudgePlan {
+            context_chars: context_chars.max(1),
+            per_rule: context_chars > TARGET_CHUNK_CHARS,
+        }
+    }
+}
+
 /// Merge runs of consecutive prose blocks (paragraphs + list items) into
-/// chunks of up to ~`TARGET_CHUNK_CHARS` chars. Non-prose blocks (headings,
+/// chunks of up to ~`context_chars` chars. Non-prose blocks (headings,
 /// block quotes, code) break a run and are never included. So does any
 /// non-whitespace source between two blocks: markdown constructs that emit no
 /// `Block` at all (HTML blocks, thematic breaks, tables) must neither be
 /// merged into a chunk's text nor bridge two runs. A single oversized block
 /// becomes its own chunk (blocks are never split).
-fn chunk_prose_blocks(doc: &Document, source: &str) -> Vec<TextRange> {
+fn chunk_prose_blocks(doc: &Document, source: &str, context_chars: usize) -> Vec<TextRange> {
     let mut chunks = Vec::new();
     let mut current: Option<TextRange> = None;
     let mut current_chars = 0usize;
@@ -230,9 +298,7 @@ fn chunk_prose_blocks(doc: &Document, source: &str) -> Vec<TextRange> {
                 .is_some_and(|gap| gap.chars().all(char::is_whitespace))
         };
         match current {
-            Some(ref mut r)
-                if current_chars + block_chars <= TARGET_CHUNK_CHARS && gap_is_blank(r) =>
-            {
+            Some(ref mut r) if current_chars + block_chars <= context_chars && gap_is_blank(r) => {
                 r.end = block.range.end;
                 current_chars += block_chars;
             }
@@ -253,10 +319,26 @@ fn chunk_prose_blocks(doc: &Document, source: &str) -> Vec<TextRange> {
     chunks
 }
 
-/// Plan tier-3 requests: merge consecutive prose blocks up to ~1200 chars per
-/// chunk, one request per chunk carrying ALL sentence+paragraph-granularity
-/// rubrics; document-granularity rubrics get one whole-document request.
+/// [`plan_judge_with`] under the conservative [`JudgePlan::default`].
 pub fn plan_judge(doc: &Document, source: &str, rules: &[&RubricFragment]) -> Vec<JudgeRequest> {
+    plan_judge_with(doc, source, rules, &JudgePlan::default())
+}
+
+/// Plan tier-3 requests under `plan`: merge consecutive prose blocks into
+/// units of up to `plan.context_chars`, then emit either one request per unit
+/// carrying every sentence/paragraph rubric, or — when `plan.per_rule` —
+/// one request per rule per unit. Document-granularity rubrics always see the
+/// whole source, since that is the point of the granularity.
+///
+/// Requests come back in a deterministic order (units in document order,
+/// rules in rule order within each unit) so a plan is reproducible and its
+/// findings land in a stable sequence.
+pub fn plan_judge_with<'a>(
+    doc: &Document,
+    source: &str,
+    rules: &[&'a RubricFragment],
+    plan: &JudgePlan,
+) -> Vec<JudgeRequest> {
     let chunk_rubrics: Vec<&RubricFragment> = rules
         .iter()
         .copied()
@@ -273,14 +355,25 @@ pub fn plan_judge(doc: &Document, source: &str, rules: &[&RubricFragment]) -> Ve
         .filter(|r| r.granularity == Granularity::Document)
         .collect();
 
+    // One request per rubric, or one carrying them all.
+    let split = |rubrics: &[&'a RubricFragment]| -> Vec<Vec<&'a RubricFragment>> {
+        if plan.per_rule {
+            rubrics.iter().map(|r| vec![*r]).collect()
+        } else {
+            vec![rubrics.to_vec()]
+        }
+    };
+
     let mut reqs = Vec::new();
     if !chunk_rubrics.is_empty() {
-        for range in chunk_prose_blocks(doc, source) {
+        for range in chunk_prose_blocks(doc, source, plan.context_chars) {
             let text = range.slice(source);
             if text.trim().is_empty() {
                 continue;
             }
-            reqs.push(build_request(range, text.to_string(), &chunk_rubrics));
+            for group in split(&chunk_rubrics) {
+                reqs.push(build_request(range, text.to_string(), &group));
+            }
         }
     }
     if !doc_rubrics.is_empty() && !source.trim().is_empty() {
@@ -288,7 +381,9 @@ pub fn plan_judge(doc: &Document, source: &str, rules: &[&RubricFragment]) -> Ve
             start: 0,
             end: source.len(),
         };
-        reqs.push(build_request(range, source.to_string(), &doc_rubrics));
+        for group in split(&doc_rubrics) {
+            reqs.push(build_request(range, source.to_string(), &group));
+        }
     }
     reqs
 }
@@ -308,10 +403,115 @@ pub fn run_judge(
     run_judge_with_progress(judge, cache, reqs, source, &mut |_, _| {})
 }
 
+/// What one request produced: cached or fetched findings, or the error that
+/// failed the chunk closed. Fetching is the only concurrent stage; grounding
+/// and stats stay on one thread, so results must be carried out of that stage
+/// rather than folded into `JudgeStats` as they arrive.
+enum Fetched {
+    Cached(Vec<JudgeFinding>),
+    Fresh(Vec<JudgeFinding>),
+    Failed(String),
+}
+
+/// Cache lookup, else evaluate with one retry, else fail closed. Pure with
+/// respect to `JudgeStats` — the caller folds the outcome in request order so
+/// a parallel fetch cannot reorder stats or findings.
+fn fetch_one(judge: &dyn Judge, cache: Option<&dyn JudgeCache>, req: &JudgeRequest) -> Fetched {
+    let key = full_cache_key(&req.cache_key_base, judge.model_id());
+    if let Some(hit) = cache.and_then(|c| c.get(&key)) {
+        return Fetched::Cached(hit);
+    }
+    match judge.evaluate(req).or_else(|_| judge.evaluate(req)) {
+        Ok(findings) => {
+            if let Some(c) = cache {
+                c.put(&key, &findings);
+            }
+            Fetched::Fresh(findings)
+        }
+        Err(error) => Fetched::Failed(error.to_string()),
+    }
+}
+
+/// Fetch every request sequentially, reporting progress as each completes.
+fn fetch_serial(
+    judge: &dyn Judge,
+    cache: Option<&dyn JudgeCache>,
+    reqs: &[JudgeRequest],
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> Vec<Fetched> {
+    let total = reqs.len();
+    let mut out = Vec::with_capacity(total);
+    for (index, req) in reqs.iter().enumerate() {
+        out.push(fetch_one(judge, cache, req));
+        on_progress(index + 1, total);
+    }
+    out
+}
+
+/// Fetch up to `workers` requests at a time, preserving request order in the
+/// returned slots.
+///
+/// Progress is reported from the calling thread over a channel rather than
+/// from the workers, so `on_progress` needs no `Send` bound and front-ends
+/// keep drawing from the thread they already own. Scoped threads let the
+/// workers borrow `judge`/`cache`/`reqs` directly (all `Sync`), so nothing
+/// here clones a request or a client.
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_parallel(
+    judge: &dyn Judge,
+    cache: Option<&dyn JudgeCache>,
+    reqs: &[JudgeRequest],
+    workers: usize,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> Vec<Fetched> {
+    let total = reqs.len();
+    let slots: Vec<Mutex<Option<Fetched>>> = (0..total).map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let (next, slots) = (&next, &slots);
+            scope.spawn(move || loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(req) = reqs.get(index) else { break };
+                let fetched = fetch_one(judge, cache, req);
+                *slots[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(fetched);
+                // A closed receiver just means nobody is drawing progress.
+                let _ = tx.send(());
+            });
+        }
+        // Drop this thread's sender so the drain below ends when the last
+        // worker exits, then report each completion as it lands.
+        drop(tx);
+        let mut done = 0;
+        while rx.recv().is_ok() {
+            done += 1;
+            on_progress(done, total);
+        }
+    });
+
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                // A worker that panicked leaves its slot empty; fail that
+                // chunk closed rather than losing every other result.
+                .unwrap_or_else(|| Fetched::Failed("judge worker panicked".to_string()))
+        })
+        .collect()
+}
+
 /// [`run_judge`], reporting `(completed, total)` after each chunk so a caller
-/// can drive a progress indicator. The judge is a per-chunk network round trip
-/// and this loop is sequential, so without this a multi-section document looks
-/// like a hung process.
+/// can drive a progress indicator. Each request is a network round trip, so
+/// without this a multi-section document looks like a hung process.
+///
+/// Requests run up to [`Judge::max_concurrency`] at a time. Findings and stats
+/// are folded in request order regardless, so the diagnostics a document
+/// produces never depend on how the fetches interleaved — a linter that
+/// reordered its own output under concurrency would be unusable in CI.
 pub fn run_judge_with_progress(
     judge: &dyn Judge,
     cache: Option<&dyn JudgeCache>,
@@ -326,30 +526,34 @@ pub fn run_judge_with_progress(
     };
     let total = reqs.len();
     on_progress(0, total);
-    for (index, req) in reqs.iter().enumerate() {
+
+    let workers = judge.max_concurrency().clamp(1, total.max(1));
+    #[cfg(not(target_arch = "wasm32"))]
+    let fetched = if workers > 1 {
+        fetch_parallel(judge, cache, reqs, workers, on_progress)
+    } else {
+        fetch_serial(judge, cache, reqs, on_progress)
+    };
+    // wasm has no threads; core must stay wasm-safe (design invariant 7).
+    #[cfg(target_arch = "wasm32")]
+    let fetched = fetch_serial(judge, cache, reqs, on_progress);
+
+    for (req, fetched) in reqs.iter().zip(fetched) {
         debug_assert!(
             req.chunk_range.start <= req.chunk_range.end && req.chunk_range.end <= source.len(),
             "chunk_range must index the original source"
         );
-        let key = full_cache_key(&req.cache_key_base, judge.model_id());
-        let findings = match cache.and_then(|c| c.get(&key)) {
-            Some(hit) => {
+        let findings = match fetched {
+            Fetched::Cached(findings) => {
                 stats.cache_hits += 1;
-                hit
+                findings
             }
-            None => match judge.evaluate(req).or_else(|_| judge.evaluate(req)) {
-                Ok(findings) => {
-                    if let Some(c) = cache {
-                        c.put(&key, &findings);
-                    }
-                    findings
-                }
-                Err(_) => {
-                    stats.chunks_failed += 1;
-                    on_progress(index + 1, total);
-                    continue;
-                }
-            },
+            Fetched::Fresh(findings) => findings,
+            Fetched::Failed(error) => {
+                stats.chunks_failed += 1;
+                stats.first_failure.get_or_insert(error);
+                continue;
+            }
         };
         for mut finding in findings {
             // Findings naming rules not in this request do not exist.
@@ -372,7 +576,6 @@ pub fn run_judge_with_progress(
                 }
             }
         }
-        on_progress(index + 1, total);
     }
     (out, stats)
 }
@@ -724,7 +927,9 @@ mod tests {
     #[test]
     fn prompt_version_is_stable() {
         // "2": clean-chunk [] example + verdict-discipline instruction (#39).
-        assert_eq!(PROMPT_VERSION, "2");
+        // "3": text hoisted above the rubrics so per-rule requests over one
+        //      unit share a cacheable prompt prefix.
+        assert_eq!(PROMPT_VERSION, "3");
     }
 
     #[test]
@@ -1068,7 +1273,270 @@ mod tests {
         assert!(p.contains("the entire correct response is:\n[]"));
     }
 
+    /// Prompt-prefix caching is what makes one-request-per-rule affordable,
+    /// and it only works if everything before the rubric is byte-identical
+    /// across a unit's rules. Guard the ordering, not just the contents.
+    #[test]
+    fn plan_per_rule_prompts_share_a_prefix_through_the_document() {
+        let source = "It could perhaps be argued that the claim fails.";
+        let doc = para_doc(source);
+        let rules = [
+            frag("core/empty-hedge", Granularity::Sentence),
+            frag("core/padded-elaboration", Granularity::Paragraph),
+        ];
+        let refs: Vec<&RubricFragment> = rules.iter().collect();
+        let plan = JudgePlan {
+            context_chars: 24_000,
+            per_rule: true,
+        };
+        let reqs = plan_judge_with(&doc, source, &refs, &plan);
+
+        assert_eq!(reqs.len(), 2, "one request per rule over one unit");
+        assert_eq!(reqs[0].rules, vec![RuleId("core/empty-hedge".into())]);
+        assert_eq!(
+            reqs[1].rules,
+            vec![RuleId("core/padded-elaboration".into())]
+        );
+
+        // The shared prefix must run through the end of the document block.
+        let shared = common_prefix(&reqs[0].prompt, &reqs[1].prompt);
+        assert!(
+            shared.contains(source) && shared.contains(">>>"),
+            "prefix stops before the document ends: {shared:?}"
+        );
+        // …and must end before either rubric, or they would not differ.
+        assert!(!shared.contains("core/empty-hedge"));
+    }
+
+    fn common_prefix<'a>(a: &'a str, b: &str) -> &'a str {
+        let len = a
+            .char_indices()
+            .zip(b.chars())
+            .take_while(|((_, x), y)| x == y)
+            .map(|((i, x), _)| i + x.len_utf8())
+            .last()
+            .unwrap_or(0);
+        &a[..len]
+    }
+
+    #[test]
+    fn plan_bundles_rubrics_when_not_per_rule() {
+        let source = "It could perhaps be argued that the claim fails.";
+        let doc = para_doc(source);
+        let rules = [
+            frag("core/empty-hedge", Granularity::Sentence),
+            frag("core/padded-elaboration", Granularity::Paragraph),
+        ];
+        let refs: Vec<&RubricFragment> = rules.iter().collect();
+        let reqs = plan_judge_with(&doc, source, &refs, &JudgePlan::default());
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].rules.len(), 2);
+    }
+
+    /// A bigger context budget must actually collapse units — this is the
+    /// whole point of the profile.
+    #[test]
+    fn plan_context_budget_controls_unit_count() {
+        let para = "x".repeat(500);
+        let source = format!("{para}\n\n{para}\n\n{para}");
+        let doc = para_doc(&source);
+        let rules = [frag("core/empty-hedge", Granularity::Sentence)];
+        let refs: Vec<&RubricFragment> = rules.iter().collect();
+
+        let small = plan_judge_with(&doc, &source, &refs, &JudgePlan::default());
+        assert_eq!(small.len(), 2, "1200-char units split three paragraphs");
+
+        let large = plan_judge_with(
+            &doc,
+            &source,
+            &refs,
+            &JudgePlan {
+                context_chars: 24_000,
+                per_rule: false,
+            },
+        );
+        assert_eq!(large.len(), 1, "one unit holds the whole document");
+        assert_eq!(large[0].chunk_text, source);
+    }
+
+    #[test]
+    fn plan_per_rule_cache_keys_are_independent_per_rule() {
+        let source = "It could perhaps be argued that the claim fails.";
+        let doc = para_doc(source);
+        let hedge = frag("core/empty-hedge", Granularity::Sentence);
+        let padded = frag("core/padded-elaboration", Granularity::Paragraph);
+        let plan = JudgePlan {
+            context_chars: 24_000,
+            per_rule: true,
+        };
+
+        let both: Vec<&RubricFragment> = vec![&hedge, &padded];
+        let one: Vec<&RubricFragment> = vec![&hedge];
+        let with_both = plan_judge_with(&doc, source, &both, &plan);
+        let with_one = plan_judge_with(&doc, source, &one, &plan);
+
+        // Adding a second rule must not disturb the first rule's cache entry.
+        assert_eq!(with_both[0].cache_key_base, with_one[0].cache_key_base);
+        assert_ne!(with_both[0].cache_key_base, with_both[1].cache_key_base);
+    }
+
+    #[test]
+    fn judge_plan_for_context_enables_per_rule_only_above_the_default() {
+        assert!(!JudgePlan::for_context(800).per_rule);
+        assert!(!JudgePlan::for_context(TARGET_CHUNK_CHARS).per_rule);
+        assert!(JudgePlan::for_context(24_000).per_rule);
+        assert_eq!(JudgePlan::for_context(24_000).context_chars, 24_000);
+        // A zero budget would make chunking loop forever on empty units.
+        assert_eq!(JudgePlan::for_context(0).context_chars, 1);
+    }
+
     // ---- Execution -----------------------------------------------------
+
+    /// A judge that serves several requests at once and finishes them out of
+    /// order: later requests return fastest, so any code that folds results
+    /// as they land (rather than in request order) will visibly reorder.
+    struct ConcurrentJudge {
+        workers: usize,
+        delay: std::time::Duration,
+        peak: AtomicUsize,
+        in_flight: AtomicUsize,
+    }
+
+    impl ConcurrentJudge {
+        fn new(workers: usize, delay_ms: u64) -> Self {
+            ConcurrentJudge {
+                workers,
+                delay: std::time::Duration::from_millis(delay_ms),
+                peak: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl Judge for ConcurrentJudge {
+        fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            // Invert the delay so request 0 is slowest: completion order ends
+            // up the reverse of request order.
+            let index: u64 = req.chunk_text.trim_start_matches('p').parse().unwrap_or(0);
+            std::thread::sleep(self.delay * (4 - index.min(3)) as u32);
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            Ok(vec![finding("core/empty-hedge", &req.chunk_text, 0.9)])
+        }
+        fn model_id(&self) -> &str {
+            "concurrent"
+        }
+        fn max_concurrency(&self) -> usize {
+            self.workers
+        }
+    }
+
+    /// `count` single-chunk requests over one synthetic source, each chunk
+    /// labelled `p<i>` so completion order is observable in the output.
+    fn indexed_reqs(count: usize) -> (Vec<JudgeRequest>, String) {
+        let mut source = String::new();
+        let mut reqs = Vec::new();
+        for i in 0..count {
+            let text = format!("p{i}");
+            let start = source.len();
+            source.push_str(&text);
+            let mut r = req(&text, &["core/empty-hedge"]);
+            r.chunk_range = TextRange {
+                start,
+                end: source.len(),
+            };
+            reqs.push(r);
+        }
+        (reqs, source)
+    }
+
+    /// The linter contract: concurrency may not change what a document
+    /// reports or in what order. Findings come back in request order even
+    /// though the requests complete in reverse.
+    #[test]
+    fn run_parallel_preserves_request_order() {
+        let (reqs, source) = indexed_reqs(4);
+        let judge = ConcurrentJudge::new(4, 15);
+        let (out, stats) = run_judge(&judge, None, &reqs, &source);
+
+        let order: Vec<&str> = out.iter().map(|(_, f, _)| f.quote.as_str()).collect();
+        assert_eq!(order, vec!["p0", "p1", "p2", "p3"]);
+        assert_eq!(stats.chunks, 4);
+        assert_eq!(stats.chunks_failed, 0);
+        assert_eq!(stats.grounded, 4);
+    }
+
+    /// …and the parallel and serial paths must agree exactly, or the plan a
+    /// user gets would depend on their backend's pool size.
+    #[test]
+    fn run_parallel_matches_serial_output() {
+        let (reqs, source) = indexed_reqs(4);
+        let (parallel, pstats) = run_judge(&ConcurrentJudge::new(4, 5), None, &reqs, &source);
+        let (serial, sstats) = run_judge(&ConcurrentJudge::new(1, 5), None, &reqs, &source);
+
+        let quotes = |v: &[(JudgeRequest, JudgeFinding, TextRange)]| {
+            v.iter()
+                .map(|(_, f, s)| (f.quote.clone(), *s))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(quotes(&parallel), quotes(&serial));
+        assert_eq!(pstats.grounded, sstats.grounded);
+        assert_eq!(pstats.chunks_failed, sstats.chunks_failed);
+    }
+
+    #[test]
+    fn run_parallel_actually_overlaps_requests() {
+        let (reqs, source) = indexed_reqs(4);
+        let judge = ConcurrentJudge::new(4, 40);
+        let started = std::time::Instant::now();
+        run_judge(&judge, None, &reqs, &source);
+        let elapsed = started.elapsed();
+
+        // Serial would be (4+3+2+1)*40ms = 400ms; overlapped is bounded by the
+        // slowest single request (160ms). Assert well inside that gap.
+        assert!(
+            elapsed < std::time::Duration::from_millis(320),
+            "requests did not overlap: {elapsed:?}"
+        );
+        assert!(
+            judge.peak.load(Ordering::SeqCst) > 1,
+            "never had two requests in flight"
+        );
+    }
+
+    /// A pool bigger than the work must not spawn idle workers or hang the
+    /// progress drain.
+    #[test]
+    fn run_parallel_handles_fewer_requests_than_workers() {
+        let (reqs, source) = indexed_reqs(1);
+        let mut seen = Vec::new();
+        let (out, stats) = run_judge_with_progress(
+            &ConcurrentJudge::new(8, 1),
+            None,
+            &reqs,
+            &source,
+            &mut |done, total| seen.push((done, total)),
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(stats.chunks, 1);
+        assert_eq!(seen, vec![(0, 1), (1, 1)]);
+    }
+
+    #[test]
+    fn run_parallel_reports_progress_for_every_request() {
+        let (reqs, source) = indexed_reqs(4);
+        let mut seen = Vec::new();
+        run_judge_with_progress(
+            &ConcurrentJudge::new(4, 5),
+            None,
+            &reqs,
+            &source,
+            &mut |done, total| seen.push((done, total)),
+        );
+        // Monotonic 0..=4, one callback per completion plus the initial 0.
+        assert_eq!(seen, vec![(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]);
+    }
 
     #[test]
     fn run_retries_once_then_succeeds() {
