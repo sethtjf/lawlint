@@ -29,7 +29,11 @@ const API_VERSION: &str = "2024-05-01-preview";
 /// ~3.8k generated tokens. Only tokens actually generated are billed, so the
 /// headroom costs nothing for non-reasoning deployments. Override per project
 /// with `judge.maxTokens`.
-const CHAT_MAX_TOKENS: usize = 16384;
+///
+/// Shares one source of truth with [`crate::default_max_tokens_for`], which is
+/// what the CLI sends for every hosted backend — this is the floor for callers
+/// that build a `FoundryClient` directly.
+const CHAT_MAX_TOKENS: usize = crate::DEFAULT_HOSTED_MAX_TOKENS;
 
 #[derive(Debug)]
 pub struct FoundryClient {

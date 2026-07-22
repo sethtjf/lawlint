@@ -480,31 +480,36 @@ pub(crate) fn local_notice(spec: &str, config: &LintOptions) -> Option<String> {
 /// Build the judge + disk cache. A cache failure is not fatal (judge runs
 /// uncached); a judge build failure is reported to the caller, who falls
 /// back to tiers 1-2.
-/// `options` with the backend's request-shaping profile filled in wherever the
-/// user left it unset. An explicit `judge.contextChars` / `judge.perRule`
-/// always wins — the profile is a default, not an override.
-fn with_judge_plan(options: &LintOptions, model: &str) -> LintOptions {
+/// `options` with the backend's profile filled in wherever the user left it
+/// unset — request shaping and the generation budget both. An explicit config
+/// value always wins; the profile is a default, not an override.
+///
+/// The budget is resolved here rather than left to each backend's own
+/// fallback: only `FoundryClient` defaults high enough for a reasoning model,
+/// so an `anthropic:`/`openai:` thinking model would otherwise inherit ax's
+/// default and truncate to empty output.
+fn with_backend_defaults(options: &LintOptions, model: &str) -> LintOptions {
     let profile = lawlint_judge::plan_for_model(model);
     let mut options = options.clone();
     let judge = options.judge.get_or_insert_with(JudgeOptions::default);
     judge.context_chars.get_or_insert(profile.context_chars);
     judge.per_rule.get_or_insert(profile.per_rule);
+    if judge.max_tokens.is_none() {
+        judge.max_tokens = lawlint_judge::default_max_tokens_for(model);
+    }
     options
 }
 
+/// Build the judge for `model` under already-resolved `judge` options (see
+/// [`with_backend_defaults`]).
 fn build_judge(
     model: String,
-    floor: Option<f32>,
-    max_tokens: Option<usize>,
-    concurrency: Option<usize>,
+    judge: &JudgeOptions,
 ) -> Result<(Box<dyn Judge>, Option<DiskCache>), String> {
     let options = JudgeOptions {
         enabled: Some(true),
         model: Some(model),
-        floor,
-        max_tokens,
-        concurrency,
-        ..JudgeOptions::default()
+        ..judge.clone()
     };
     let judge = lawlint_judge::create_judge(&options).map_err(|error| error.to_string())?;
     let cache = match DiskCache::new() {
@@ -537,13 +542,11 @@ pub(crate) fn lint_text_with_progress(
     let Some(model) = judge else {
         return lint_with(text, options, rules);
     };
-    let floor = options.judge.as_ref().and_then(|judge| judge.floor);
-    let max_tokens = options.judge.as_ref().and_then(|judge| judge.max_tokens);
-    let concurrency = options.judge.as_ref().and_then(|judge| judge.concurrency);
-    // Request shaping is a property of the backend, so it is resolved here —
-    // where the model spec is known — and handed to core as plain numbers.
-    let options = &with_judge_plan(options, &model);
-    match build_judge(model, floor, max_tokens, concurrency) {
+    // Backend defaults are resolved here — the only place the model spec is
+    // known — then handed to core as plain numbers and to the judge as options.
+    let options = &with_backend_defaults(options, &model);
+    let judge_options = options.judge.clone().unwrap_or_default();
+    match build_judge(model, &judge_options) {
         Ok((judge, cache)) => {
             let result = lawlint_core::lint_full_with_progress(
                 text,
@@ -1766,14 +1769,13 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
         judge: config.judge.clone(),
         ..LintOptions::default()
     };
-    let floor = options.judge.as_ref().and_then(|judge| judge.floor);
-    let max_tokens = options.judge.as_ref().and_then(|judge| judge.max_tokens);
-    let concurrency = options.judge.as_ref().and_then(|judge| judge.concurrency);
     // Rule examples are single sentences, so the plan never splits them; the
-    // per-rule/bundled choice still follows the backend.
-    let options = judge_model
-        .as_deref()
-        .map_or_else(|| options.clone(), |model| with_judge_plan(&options, model));
+    // per-rule/bundled choice and the token budget still follow the backend.
+    let options = judge_model.as_deref().map_or_else(
+        || options.clone(),
+        |model| with_backend_defaults(&options, model),
+    );
+    let judge_options = options.judge.clone().unwrap_or_default();
 
     for file in &files {
         let display = file.display().to_string();
@@ -1823,8 +1825,7 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
             }
             if judge_state.is_none() {
                 judge_state = Some(
-                    match build_judge(judge_model.clone().unwrap(), floor, max_tokens, concurrency)
-                    {
+                    match build_judge(judge_model.clone().unwrap(), &judge_options) {
                         Ok(built) => Some(built),
                         Err(error) => {
                             eprintln!(

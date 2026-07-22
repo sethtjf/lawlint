@@ -542,6 +542,31 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
     )
 }
 
+/// Default generation budget per request for a hosted backend.
+///
+/// Sized for reasoning deployments: on OpenAI-compatible routes this budget
+/// also covers hidden reasoning tokens, and a thinking model that exhausts it
+/// returns empty content and fails every chunk closed. Only tokens actually
+/// generated are billed, so the headroom is free for non-reasoning models.
+pub const DEFAULT_HOSTED_MAX_TOKENS: usize = 16_384;
+
+/// The generation budget to send for a model spec when the user configured
+/// none.
+///
+/// This has to be resolved per spec rather than left to each backend's own
+/// fallback: `FoundryClient` defaults to [`DEFAULT_HOSTED_MAX_TOKENS`], but
+/// the stock ax Anthropic and OpenAI-compatible clients inherit ax's default,
+/// so a reasoning model reached through those routes would truncate exactly
+/// the way Foundry did. `local:` returns `None` — [`MistralRsClient`]'s
+/// smaller cap suits a small instruct model that does not think first.
+pub fn default_max_tokens_for(model: &str) -> Option<usize> {
+    if model == "local" || model.starts_with("local:") {
+        None
+    } else {
+        Some(DEFAULT_HOSTED_MAX_TOKENS)
+    }
+}
+
 /// Document chars per request for a hosted backend. Deliberately far below
 /// any modern context window: the limit on unit size is not what the model can
 /// read but how much re-linting an edit should invalidate, since a unit is the
@@ -742,6 +767,28 @@ mod tests {
         assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(2)), 2);
         // 0 workers would mean no requests ever run.
         assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(0)), 1);
+    }
+
+    /// Every hosted route must get a reasoning-sized budget, not just Foundry.
+    /// The stock ax Anthropic/OpenAI clients have their own (smaller) default,
+    /// so leaving this to the backend would let a thinking model reached
+    /// through those routes truncate to empty output the way Foundry did.
+    #[test]
+    fn hosted_backends_all_get_a_reasoning_sized_budget() {
+        for model in [
+            "foundry:gpt-5.5",
+            "anthropic:claude-sonnet-5",
+            "openai:http://localhost:8080/v1#qwen",
+        ] {
+            assert_eq!(
+                default_max_tokens_for(model),
+                Some(DEFAULT_HOSTED_MAX_TOKENS),
+                "{model}"
+            );
+        }
+        // A small local instruct model does not think first; its own cap fits.
+        assert_eq!(default_max_tokens_for("local"), None);
+        assert_eq!(default_max_tokens_for("local:foo/bar"), None);
     }
 
     #[test]

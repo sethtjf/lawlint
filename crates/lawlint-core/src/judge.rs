@@ -476,7 +476,18 @@ fn fetch_parallel(
             scope.spawn(move || loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(req) = reqs.get(index) else { break };
-                let fetched = fetch_one(judge, cache, req);
+                // The panic must be caught *here*, inside the worker.
+                // `thread::scope` re-panics on join if any worker unwound, so
+                // letting a panic escape would tear down the whole run —
+                // exactly the opposite of failing one chunk closed. `Judge` is
+                // a public trait with third-party implementations, so a
+                // panicking backend is a real case, not a theoretical one.
+                let fetched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fetch_one(judge, cache, req)
+                }))
+                .unwrap_or_else(|_| {
+                    Fetched::Failed("judge panicked while evaluating this chunk".to_string())
+                });
                 *slots[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(fetched);
                 // A closed receiver just means nobody is drawing progress.
                 let _ = tx.send(());
@@ -497,9 +508,11 @@ fn fetch_parallel(
         .map(|slot| {
             slot.into_inner()
                 .unwrap_or_else(|e| e.into_inner())
-                // A worker that panicked leaves its slot empty; fail that
-                // chunk closed rather than losing every other result.
-                .unwrap_or_else(|| Fetched::Failed("judge worker panicked".to_string()))
+                // Unreachable in practice: the worker catches its own panics
+                // and always fills its slot. Kept so an unclaimed slot fails
+                // one chunk closed instead of silently shifting every later
+                // finding onto the wrong request.
+                .unwrap_or_else(|| Fetched::Failed("judge worker did not report".to_string()))
         })
         .collect()
 }
@@ -1525,6 +1538,41 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(stats.chunks, 1);
         assert_eq!(seen, vec![(0, 1), (1, 1)]);
+    }
+
+    /// A panicking backend must fail its own chunk and leave the rest of the
+    /// run intact. `thread::scope` re-panics on join, so without an explicit
+    /// `catch_unwind` inside the worker this takes down the whole lint —
+    /// losing every other section's findings.
+    #[test]
+    fn run_parallel_survives_a_panicking_judge() {
+        struct PanickingJudge;
+        impl Judge for PanickingJudge {
+            fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError> {
+                assert!(req.chunk_text != "p1", "backend exploded");
+                Ok(vec![finding("core/empty-hedge", &req.chunk_text, 0.9)])
+            }
+            fn model_id(&self) -> &str {
+                "panicky"
+            }
+            fn max_concurrency(&self) -> usize {
+                4
+            }
+        }
+
+        let (reqs, source) = indexed_reqs(4);
+        // The panic message itself is expected on stderr; the run continues.
+        let (out, stats) = run_judge(&PanickingJudge, None, &reqs, &source);
+
+        assert_eq!(stats.chunks_failed, 1);
+        assert_eq!(stats.grounded, 3);
+        assert!(stats
+            .first_failure
+            .as_deref()
+            .is_some_and(|reason| reason.contains("panicked")));
+        // The surviving chunks keep their own findings, in request order.
+        let quotes: Vec<&str> = out.iter().map(|(_, f, _)| f.quote.as_str()).collect();
+        assert_eq!(quotes, vec!["p0", "p2", "p3"]);
     }
 
     #[test]
