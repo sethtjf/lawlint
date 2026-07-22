@@ -623,6 +623,35 @@ fn docx_fix_writes_tracked_changes_not_plain_text() {
     );
 }
 
+/// Regression: `--fix` wrote the file only when it produced at least one
+/// tracked change, so a document whose findings were all comment-only was
+/// silently left untouched while the CLI still reported the comments as
+/// applied. That is the common case — most rules carry advice, not a
+/// machine-applicable replacement — and it is invisible without opening the
+/// document, which is how it survived.
+///
+/// `no-ai-cliches` fires on the fixture and carries no fix, so restricting to
+/// it forces `applied == 0, annotated > 0`.
+#[test]
+fn docx_fix_writes_comment_only_findings() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("brief.docx");
+    fs::write(&file, DOCX_FIXTURE).unwrap();
+    cmd(&dir)
+        .args([file.to_str().unwrap(), "--fix", "--rules", "no-ai-cliches"])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("0 tracked changes"))
+        .stderr(predicate::str::contains("comment"));
+
+    let after = fs::read(&file).unwrap();
+    assert_eq!(&after[..2], b"PK", "output is still a .docx (zip)");
+    assert_ne!(
+        after, DOCX_FIXTURE,
+        "a comment-only run must still write the document"
+    );
+}
+
 // ---- --diff ------------------------------------------------------------
 
 #[test]
