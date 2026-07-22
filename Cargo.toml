@@ -13,7 +13,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT"
-version = "0.8.0" # x-release-please-version
+version = "0.9.0" # x-release-please-version
 
 [workspace.dependencies]
 regex = "1.11"
