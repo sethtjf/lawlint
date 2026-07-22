@@ -56,6 +56,40 @@ Frontmatter carries the structured fields; the body is prose. What the body
 *means* depends on the kind of rule — explanatory text for a hard rule, the
 judge's rubric for a soft one.
 
+### `fix` vs `fixTemplate`
+
+`fix` is a **literal** replacement for the whole match. `$` has no special
+meaning in it, so `fix: "$500 fee"` inserts exactly that.
+
+`fixTemplate` is a replacement **template** that interpolates the pattern's own
+capture groups — `$1`/`${1}` numbered (`0` is the whole match), `$name`/`${name}`
+named, and `$$` for a literal `$`. Use it when the repair is an *insertion* or a
+reorder rather than a swap, which a whole-match replacement cannot express:
+
+```yaml
+patterns:
+  - pattern: '(\w+, \w+) (and|or) (\w+)'
+    fixTemplate: '${1}, ${2} ${3}'   # Alice, Bob and Carol -> Alice, Bob, and Carol
+```
+
+A pattern may set one or the other, never both. Referencing a group the pattern
+cannot define is a load error, not a silent empty expansion.
+
+Two behavioural differences worth knowing. `fix` adapts its casing to the
+matched text; `fixTemplate` does not, because the captured groups already carry
+the source's own casing and re-casing the assembled string would corrupt it. And
+the choice of field — never the content of the string — decides how a
+replacement is treated, so a literal `$1` can never be silently reinterpreted as
+a capture reference.
+
+:::warning[An auto-fix rewrites the document]
+A `fix`/`fixTemplate` makes the finding *machine-applicable*: `--fix` will apply
+it without asking. Only add one when the repair is correct for every string the
+pattern matches. A pattern that is merely a good *detector* can still be a bad
+*rewriter* — lawlint's own `oxford-comma` matches legal doublets like "cease and
+desist", so it deliberately ships as advice only.
+:::
+
 :::warning[`id` is required and stable]
 There is no filename-derived default. The id appears in every diagnostic, in
 `--rules`/`--disable`, and in the rule's documentation URL — renaming one is a

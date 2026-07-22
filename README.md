@@ -19,8 +19,9 @@ curl -fsSL https://lawlint.com/install.sh | sh
 lawlint contract.docx      # or .txt / .md / "-" for stdin
 ```
 
-You get a list of findings and a human-likeness score. `--fix` applies the
-machine-applicable fixes (for `.docx`, as native Word tracked changes).
+You get a summary of which rules ran, what they found, and a human-likeness
+score; `--list` prints the findings themselves. `--fix` applies the fixes (for
+`.docx`, as native Word tracked changes).
 
 **3. Set up AI features** (optional — the soft-rule AI judge and `lawlint learn`):
 
@@ -30,9 +31,13 @@ lawlint init
 
 The walkthrough asks which AI model lawlint should use. Hosted providers
 (Anthropic — recommended, OpenAI, Azure Foundry) need an API key, which is
-stored in a user-level credential file — never in your project. AI features
-are off until a model is configured; they error with guidance rather than
-downloading anything silently.
+stored in a user-level credential file — never in your project.
+
+Once a model and its key are configured, **the soft rules run on every lint**,
+including from directories that contain no project config. Nothing is
+downloaded silently: a `local:` model still waits for the explicit
+acknowledgment `init` asks for, and with no model configured the soft rules are
+skipped and the summary says so. `--no-ai` turns them off for a run.
 
 The [download page](https://lawlint.com/download) also has the unsigned desktop
 app for macOS and Windows, plus direct CLI archives for every supported
@@ -45,7 +50,18 @@ lawlint-cli`.
 `lawlint init` walks through AI-model, judge, Markdown, and custom-rule
 choices and writes `.lawlint/config.json` (plus an optional starter rules
 package in `.lawlint/rules/`). The CLI discovers `.lawlint/config.json` — or
-the legacy `lawlint.config.json` — from the current directory upward.
+the legacy `lawlint.config.json` — from the current directory upward, then
+falls back to a user-level `~/.lawlint/config.json` (`$LAWLINT_HOME`
+honoured), beside the credential store — the same `.lawlint` name at both
+scopes. That fallback is what makes lawlint work on documents that live
+outside any project — a matter folder, a downloaded attachment. A project
+config **layers over** the user-level one field by field, so a repo that pins
+only `ruleDirs` still inherits your AI model rather than silently disabling the
+soft rules.
+
+Releases before 0.8 kept these under `~/.config/lawlint/`. That path is still
+read, and the next `lawlint init` moves both files to `~/.lawlint/` and tells
+you it did.
 
 ```jsonc
 // .lawlint/config.json (all fields optional, camelCase)
@@ -55,7 +71,8 @@ the legacy `lawlint.config.json` — from the current directory upward.
     "features": { "judge": "...", "learn": "..." }, // optional per-feature overrides
     "localAcknowledged": false                       // set by init's local-model consent step
   },
-  "judge": { "enabled": false },  // run the soft-rule AI judge on every lint
+  "judge": { "enabled": true },   // force the soft rules on/off; omit to let
+                                  // them run whenever credentials allow
   "markdown": false,              // treat stdin as Markdown
   "ruleDirs": [".lawlint/rules"]  // extra rule packages, merged over built-ins
 }
@@ -63,7 +80,7 @@ the legacy `lawlint.config.json` — from the current directory upward.
 
 **Hosted vs local models.** Hosted providers are the recommended path: better
 quality, no downloads. API keys go to a user-level credential file
-(`~/.config/lawlint/credentials`, `0600`), or set `ANTHROPIC_API_KEY` /
+(`~/.lawlint/credentials`, `0600`), or set `ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY` / `AZURE_FOUNDRY_API_KEY` in the environment (env wins).
 Local models (Qwen 2.5, Gemma — via the embedded mistral.rs runtime) remain
 available as an explicit advanced choice: they involve multi-GB downloads,
@@ -75,14 +92,34 @@ setup: `lawlint init --yes` (hosted default), or `--ai qwen
 ## Everyday commands
 
 ```sh
-lawlint brief.docx                 # lint; prints findings + human-likeness score
+lawlint brief.docx                 # lint; prints a coverage summary + score
+lawlint --list brief.docx          # …plus every finding, in document order
+lawlint --coverage brief.docx      # which rules did not run, and why
 lawlint --fix brief.docx           # apply fixes (tracked changes + comments in Word)
 lawlint --diff draft.md            # preview what --fix would change
-lawlint --judge draft.md           # add soft-rule AI-judged findings (needs init)
+lawlint --no-ai brief.docx         # hard rules only, even when AI is configured
 lawlint --format prompt draft.md   # emit an AI revision brief for your assistant
 lawlint learn ~/my-writing/        # mine a personal rule package from your prose
 lawlint rules --json               # built-in rule metadata
 ```
+
+A bare lint prints what ran rather than a wall of findings:
+
+```
+  brief.docx   1,980 words · 100 sentences
+
+  Static rules   15 run        14 findings
+  Statistical    11 run         5 findings
+  AI rules        2 run        16 findings
+
+  Human-likeness  82/100
+
+  35 findings · --list to see them · --fix to apply 16
+```
+
+When the soft rules cannot run, the summary says so and the score declares its
+basis — a `97/100 (static rules only)` is never mistaken for the `82/100` the
+same document scores with every tier running.
 
 The human-likeness score (0–100) aggregates only `detection`-intent rules —
 the ones corpus-validated to distinguish AI from human legal prose. `style`
@@ -97,7 +134,8 @@ gate so no generated rule flags your own prose.
 lawlint has two user-facing rule kinds. **Hard rules** are deterministic and
 run offline: phrase and leading engines are tier `static`, while density and
 statistical engines are tier `statistical`. **Soft rules** are inferential
-rules evaluated by the optional AI judge (tier `inferential`). The serialized
+rules evaluated by the AI judge (tier `inferential`), which runs whenever a
+model and its credentials are configured. The serialized
 `Tier::{Static, Statistical, Inferential}` values and rule-package fields stay
 unchanged; hard/soft is the explanatory terminology used in the docs.
 
@@ -134,11 +172,16 @@ set both `rubric` and `skill`.
 
 The CLI and desktop app lint plain text, Markdown (`.md`), and Word documents
 (`.docx`). For `.docx`, text is projected out of the document for linting; with
-`--fix`, machine-applicable fixes are written back as native Word **tracked
-changes** with a review **comment** per fix, so every change can be accepted or
-rejected in Word. All other parts of the document are preserved byte-for-byte.
-Fixes whose span crosses multiple runs are reported and skipped rather than
-applied (not yet supported).
+`--fix`, fixes are written back as native Word **tracked changes** with a
+review **comment** per fix, so every change can be accepted or rejected in
+Word. All other parts of the document are preserved byte-for-byte. Fixes whose
+span crosses multiple runs, or that overlap a fix already applied, are reported
+and skipped rather than applied.
+
+Because a tracked change *is* a proposal, `.docx` fixes include the soft rules'
+suggested rewrites alongside the mechanical ones. Plain text has no
+accept/reject layer, so there `--fix` stays mechanical-only and the rewrites
+need `--fix --unsafe`.
 
 ## Rust SDK
 
