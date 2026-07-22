@@ -324,6 +324,46 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 // ---- Backend selection -------------------------------------------------
 
+/// Why a model spec cannot run right now. `None` from [`credentials_ready`]
+/// means it can.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotReady {
+    /// A hosted backend whose key is in neither the environment nor the
+    /// credential store. Carries the variable name(s) to name in the message.
+    MissingKey(&'static str),
+}
+
+/// Whether `model` has the credentials it needs, without building a client or
+/// touching the network. This is what lets the CLI run AI rules automatically
+/// when they *can* run and skip them quietly when they cannot, instead of
+/// erroring at call time.
+///
+/// `local:` specs need no credentials and are always "ready" here — the CLI
+/// gates those separately on the local-constraints acknowledgment, since
+/// readiness is not the same as wanting a multi-GB download.
+pub fn credentials_ready(model: &str) -> Result<(), NotReady> {
+    let need = |name: &'static str| {
+        if credentials::lookup(name).is_some() {
+            Ok(())
+        } else {
+            Err(NotReady::MissingKey(name))
+        }
+    };
+    if model.starts_with("anthropic:") {
+        return need("ANTHROPIC_API_KEY");
+    }
+    if model.starts_with("foundry:") {
+        // The endpoint is the one that has no sensible default; check it first
+        // so the message names the thing the user is most likely missing.
+        need("AZURE_FOUNDRY_ENDPOINT")?;
+        return need("AZURE_FOUNDRY_API_KEY");
+    }
+    // `openai:` covers self-hosted OpenAI-compatible servers, which routinely
+    // need no key at all (create_client falls back to "unused"), so an absent
+    // OPENAI_API_KEY is not a reason to skip. `local:` needs nothing.
+    Ok(())
+}
+
 /// Build the raw ax client (plus its canonical model id) for a model spec —
 /// the shared backend factory behind [`create_judge`] and any other AI
 /// feature that speaks through the ax boundary (e.g. `lawlint learn`):

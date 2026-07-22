@@ -13,7 +13,7 @@
 //! acknowledgment persists as `ai.localAcknowledged` and
 //! `--acknowledge-local` is the non-interactive equivalent. The selection
 //! lands in the config's `ai` section; hosted API keys go to the
-//! user-level credential store (`~/.config/lawlint/credentials`, 0600) —
+//! user-level credential store (`~/.lawlint/credentials`, 0600) —
 //! never into the project config, which gets committed.
 //!
 //! Prompts read stdin line by line; an empty line or EOF accepts the shown
@@ -807,11 +807,40 @@ pub(crate) struct Applied {
 /// user-level file. Front-end-agnostic — legacy-file removal and the on-screen
 /// summary stay with each caller. Both the line walkthrough and the ratatui
 /// wizard funnel through here so they write identical config.
+/// Everything `init` may touch *outside* the project directory.
+///
+/// `Default` is inert — no explicit credential path, no migration — so a
+/// caller that says nothing changes nothing outside the project. Only the real
+/// entry points fill it in. The inverse (discovering `$HOME` internally) let a
+/// unit test move a developer's own credential file once already.
+#[derive(Default)]
+pub(crate) struct UserScope<'a> {
+    /// Write credentials here instead of the resolved default.
+    pub credentials: Option<&'a Path>,
+    /// `(legacy, current)` directories for the one-time 0.8 migration.
+    pub dirs: Option<(&'a Path, &'a Path)>,
+}
+
+/// The real user-level directories, `(legacy, current)`, resolved from the
+/// environment. Only the interactive entry points call this: everything else
+/// takes the directories as arguments so it cannot touch a developer's home.
+/// `None` when `$LAWLINT_CREDENTIALS` pins the file somewhere explicit, or no
+/// home directory can be determined — in both cases there is nothing to
+/// migrate.
+pub(crate) fn real_user_dirs() -> Option<(PathBuf, PathBuf)> {
+    if std::env::var_os("LAWLINT_CREDENTIALS").is_some() {
+        return None;
+    }
+    let legacy = lawlint_judge::credentials::legacy_config_home()?;
+    let current = lawlint_judge::credentials::config_home()?;
+    Some((legacy, current))
+}
+
 pub(crate) fn apply_answers(
     directory: &Path,
     base: &Value,
     answers: &Answers,
-    credentials_path: Option<&Path>,
+    scope: &UserScope<'_>,
 ) -> Result<Applied, String> {
     let lawlint_dir = directory.join(".lawlint");
     let config_path = lawlint_dir.join("config.json");
@@ -832,14 +861,14 @@ pub(crate) fn apply_answers(
     // report exactly where the key went.
     let credential_message = match &answers.ai {
         Some(selection) if !selection.keys.is_empty() => {
-            let path = match credentials_path {
+            let (path, moved_from) = match scope.credentials {
                 Some(path) => {
                     lawlint_judge::credentials::store_at(path, &selection.keys)?;
-                    path.to_path_buf()
+                    (path.to_path_buf(), None)
                 }
                 None => lawlint_judge::credentials::store(&selection.keys)?,
             };
-            Some(format!(
+            let mut message = format!(
                 "Stored {} in {} (outside your project, owner-only permissions).",
                 selection
                     .keys
@@ -848,10 +877,44 @@ pub(crate) fn apply_answers(
                     .collect::<Vec<_>>()
                     .join(", "),
                 path.display()
-            ))
+            );
+            // Relocating a file of API keys is not something to do quietly.
+            if let Some(from) = moved_from {
+                message.push_str(&format!(
+                    "\nMoved your existing credentials here from {}.",
+                    from.display()
+                ));
+            }
+            Some(message)
         }
         _ => None,
     };
+
+    // `init` is the one user-initiated setup moment, so it is where pre-0.8
+    // user-level files get tidied into ~/.lawlint. Everywhere else the legacy
+    // path stays readable rather than being moved out from under a running
+    // command. Runs whether or not a key was entered this time: someone
+    // upgrading and re-running init should end up migrated either way.
+    //
+    // `user_dirs` is None for every caller but the real CLI entry point, so a
+    // test that forgets to isolate cannot move files in the developer's home.
+    let mut credential_message = credential_message;
+    if let Some((legacy_dir, new_dir)) = scope.dirs {
+        let moved: Vec<String> = ["credentials", "config.json"]
+            .into_iter()
+            .filter_map(|name| {
+                lawlint_judge::credentials::migrate_between(legacy_dir, new_dir, name)
+                    .map(|(from, to)| format!("Moved {} to {}.", from.display(), to.display()))
+            })
+            .collect();
+        if !moved.is_empty() {
+            let note = moved.join("\n");
+            credential_message = Some(match credential_message {
+                Some(existing) => format!("{existing}\n{note}"),
+                None => note,
+            });
+        }
+    }
 
     Ok(Applied {
         created,
@@ -865,7 +928,7 @@ fn run_init<R: BufRead, W: Write>(
     force: bool,
     ai_flag: Option<&str>,
     acknowledge_local: bool,
-    credentials_path: Option<&Path>,
+    scope: &UserScope<'_>,
     prompter: &mut Prompter<R, W>,
 ) -> Result<i32, String> {
     let ai_override = ai_flag.map(parse_ai_flag).transpose()?;
@@ -927,7 +990,7 @@ fn run_init<R: BufRead, W: Write>(
         }
     }
 
-    let applied = apply_answers(directory, &base, &answers, credentials_path)?;
+    let applied = apply_answers(directory, &base, &answers, scope)?;
     if let Some(message) = &applied.credential_message {
         prompter.say(message)?;
     }
@@ -984,13 +1047,18 @@ pub fn init_command(
         input: stdin.lock(),
         output: stdout.lock(),
     };
+    let dirs = real_user_dirs();
+    let scope = UserScope {
+        credentials: None,
+        dirs: dirs.as_ref().map(|(a, b)| (a.as_path(), b.as_path())),
+    };
     run_init(
         &directory,
         yes,
         force,
         ai,
         acknowledge_local,
-        None,
+        &scope,
         &mut prompter,
     )
 }
@@ -1421,7 +1489,16 @@ mod tests {
 
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, false, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                true,
+                false,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let written = fs::read_to_string(dir.join(".lawlint/config.json")).unwrap();
@@ -1436,12 +1513,20 @@ mod tests {
 
         // Existing config: refuse without --force, overwrite with it.
         let mut p = prompter("");
-        assert!(run_init(&dir, true, false, None, false, None, &mut p)
-            .unwrap_err()
-            .contains("--force"));
+        assert!(run_init(
+            &dir,
+            true,
+            false,
+            None,
+            false,
+            &UserScope::default(),
+            &mut p
+        )
+        .unwrap_err()
+        .contains("--force"));
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, false, None, &mut p).unwrap(),
+            run_init(&dir, true, true, None, false, &UserScope::default(), &mut p).unwrap(),
             0
         );
 
@@ -1456,7 +1541,16 @@ mod tests {
 
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, false, Some("gemma"), false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                true,
+                false,
+                Some("gemma"),
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let config: Value =
@@ -1472,7 +1566,16 @@ mod tests {
 
         // An invalid value errors before any file is touched.
         let mut p = prompter("");
-        assert!(run_init(&dir, true, true, Some("nope"), false, None, &mut p).is_err());
+        assert!(run_init(
+            &dir,
+            true,
+            true,
+            Some("nope"),
+            false,
+            &UserScope::default(),
+            &mut p
+        )
+        .is_err());
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1487,7 +1590,16 @@ mod tests {
         // model with the acknowledgment persisted.
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, false, Some("qwen"), true, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                true,
+                false,
+                Some("qwen"),
+                true,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let config: Value =
@@ -1503,7 +1615,7 @@ mod tests {
         // acknowledgment to the base config's local model.
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, true, None, &mut p).unwrap(),
+            run_init(&dir, true, true, None, true, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1523,7 +1635,7 @@ mod tests {
                 true,
                 Some("anthropic:claude-x"),
                 true,
-                None,
+                &UserScope::default(),
                 &mut p
             )
             .unwrap(),
@@ -1543,7 +1655,7 @@ mod tests {
         .unwrap();
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, true, None, &mut p).unwrap(),
+            run_init(&dir, true, true, None, true, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1565,7 +1677,19 @@ mod tests {
         // then judge no / markdown no / rules no.
         let mut p = prompter("1\n\nsk-ant-secret\n\n\n\n");
         assert_eq!(
-            run_init(&dir, false, false, None, false, Some(&credentials), &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                false,
+                None,
+                false,
+                &UserScope {
+                    credentials: Some(&credentials),
+                    ..Default::default()
+                },
+                &mut p
+            )
+            .unwrap(),
             0
         );
 
@@ -1605,7 +1729,16 @@ mod tests {
         // markdown) except the final rules-package prompt.
         let mut p = prompter("\n\n\n\n\ny\n");
         assert_eq!(
-            run_init(&dir, false, false, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                false,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let manifest_path = dir.join(RULES_DIR).join("style.yaml");
@@ -1620,7 +1753,16 @@ mod tests {
         fs::write(&manifest_path, "name: edited\nversion: 9.9.9\n").unwrap();
         let mut p = prompter("\n\n\n\n\ny\n");
         assert_eq!(
-            run_init(&dir, false, true, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                true,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         assert!(fs::read_to_string(&manifest_path)
@@ -1646,7 +1788,7 @@ mod tests {
         // --yes: everything preserved verbatim.
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, false, None, &mut p).unwrap(),
+            run_init(&dir, true, true, None, false, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1661,7 +1803,16 @@ mod tests {
         // with its 0.8 floor).
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, false, true, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                true,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let config: Value =
@@ -1685,7 +1836,16 @@ mod tests {
 
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, false, false, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                false,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         assert_eq!(
@@ -1713,7 +1873,16 @@ mod tests {
         // --yes: settings carried over verbatim, legacy file kept.
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, false, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                true,
+                false,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         let config: Value =
@@ -1727,7 +1896,16 @@ mod tests {
         // the legacy file (confirm defaults to yes).
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, false, true, None, false, None, &mut p).unwrap(),
+            run_init(
+                &dir,
+                false,
+                true,
+                None,
+                false,
+                &UserScope::default(),
+                &mut p
+            )
+            .unwrap(),
             0
         );
         assert!(!dir.join("lawlint.config.json").exists());

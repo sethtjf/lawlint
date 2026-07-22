@@ -91,7 +91,16 @@ pub fn run_setup(context: SetupContext) -> Result<SetupOutcome, String> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).map_err(|error| error.to_string())?;
 
-    let wizard = Wizard::new(directory, seed, ai_override, acknowledge_local, first_run);
+    // The real wizard launch is a user-initiated setup, so it is allowed to
+    // migrate pre-0.8 user-level files.
+    let wizard = Wizard::new(
+        directory,
+        seed,
+        ai_override,
+        acknowledge_local,
+        first_run,
+        init::real_user_dirs(),
+    );
     wizard.run(&mut terminal)
 }
 
@@ -147,6 +156,12 @@ struct Wizard {
     seed: Seed,
     first_run: bool,
     acknowledge_local: bool,
+    /// Pre-0.8 and current user-level directories, for the one-time migration.
+    /// `None` — the default, and what every test gets — means `finish()` makes
+    /// no change outside `directory`. Resolving `$HOME` inside `finish()`
+    /// instead would let a wizard unit test move the developer's own
+    /// credentials, which is exactly what happened once.
+    user_dirs: Option<(PathBuf, PathBuf)>,
 
     // Seed-derived defaults (computed once, mirroring init::ask).
     base_model: String,
@@ -192,6 +207,7 @@ impl Wizard {
         ai_override: Option<AiSelection>,
         acknowledge_local: bool,
         first_run: bool,
+        user_dirs: Option<(PathBuf, PathBuf)>,
     ) -> Self {
         let base = &seed.base;
         let base_judge = base.get("judge");
@@ -229,6 +245,7 @@ impl Wizard {
             seed,
             first_run,
             acknowledge_local,
+            user_dirs,
             base_model,
             ack_default,
             base_judge_enabled,
@@ -595,7 +612,16 @@ impl Wizard {
             markdown: self.markdown,
             scaffold_rules: self.scaffold_rules,
         };
-        let applied = init::apply_answers(&self.directory, &self.seed.base, &answers, None)?;
+        let dirs = self.user_dirs.clone();
+        let applied = init::apply_answers(
+            &self.directory,
+            &self.seed.base,
+            &answers,
+            &init::UserScope {
+                credentials: None,
+                dirs: dirs.as_ref().map(|(a, b)| (a.as_path(), b.as_path())),
+            },
+        )?;
 
         self.push_blank();
         if let Some(message) = &applied.credential_message {
@@ -1077,7 +1103,7 @@ mod tests {
             legacy_path: PathBuf::from("lawlint.config.json"),
             source: SeedSource::Fresh,
         };
-        Wizard::new(PathBuf::from("."), seed, None, false, first_run)
+        Wizard::new(PathBuf::from("."), seed, None, false, first_run, None)
     }
 
     /// Flatten the transcript to plain text for substring assertions.
@@ -1275,6 +1301,7 @@ mod tests {
             Some(AiSelection::keyless("foundry:d")),
             false,
             false,
+            None,
         );
         assert_eq!(w.stage, Stage::JudgeEnabled);
         assert_eq!(w.ai, Some(AiSelection::keyless("foundry:d")));
@@ -1294,7 +1321,7 @@ mod tests {
             legacy_path: dir.join("lawlint.config.json"),
             source: SeedSource::Fresh,
         };
-        let mut w = Wizard::new(dir.clone(), seed, None, false, false);
+        let mut w = Wizard::new(dir.clone(), seed, None, false, false, None);
         // Hosted Anthropic default, judge off, markdown off, no scaffold.
         w.submit_menu(0).unwrap();
         type_and_submit(&mut w, "");
