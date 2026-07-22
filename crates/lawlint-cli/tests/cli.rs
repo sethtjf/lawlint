@@ -412,34 +412,35 @@ fn init_yes_writes_config_and_refuses_to_overwrite() {
 }
 
 #[test]
-fn init_ai_flag_writes_preference_without_prompting_or_downloading() {
+fn init_ai_flag_writes_preference_without_prompting() {
     let dir = TempDir::new().unwrap();
     cmd(&dir)
-        .args(["init", "--yes", "--ai", "gemma"])
+        .args(["init", "--yes", "--ai", "foundry:gpt-5.5"])
         .assert()
         .code(0);
     let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
-    assert!(config.contains("\"model\": \"local:google/gemma-4-E4B-it\""));
+    assert!(config.contains("\"model\": \"foundry:gpt-5.5\""));
     // Invalid values are a config error (exit 2) with guidance.
     cmd(&dir)
         .args(["init", "--yes", "--force", "--ai", "gpt4"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("qwen, gemma"));
+        .stderr(predicate::str::contains("anthropic:<model>"));
 }
 
 #[test]
-fn init_acknowledge_local_persists_the_acknowledgment() {
-    // The non-interactive local opt-in (#50): --ai + --acknowledge-local
-    // writes both the model and ai.localAcknowledged.
+fn init_rejects_removed_local_specs_with_migration_guidance() {
+    // `--ai qwen`/`local:` used to work. Someone hitting this has a config or
+    // a script to migrate, so the error names the replacement that keeps text
+    // on their machine rather than just refusing.
     let dir = TempDir::new().unwrap();
-    cmd(&dir)
-        .args(["init", "--yes", "--ai", "qwen", "--acknowledge-local"])
-        .assert()
-        .code(0);
-    let config = fs::read_to_string(dir.path().join(".lawlint/config.json")).unwrap();
-    assert!(config.contains("\"model\": \"local\""), "{config}");
-    assert!(config.contains("\"localAcknowledged\": true"), "{config}");
+    for stale in ["qwen", "gemma", "local", "local:me/tiny-GGUF"] {
+        cmd(&dir)
+            .args(["init", "--yes", "--force", "--ai", stale])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("openai:http://localhost:11434/v1"));
+    }
 }
 
 #[test]
@@ -1034,16 +1035,15 @@ fn judge_without_config_errors_with_init_guidance() {
 }
 
 #[test]
-fn local_config_surfaces_constraints_notice_until_acknowledged() {
-    // #50: explicit local specs keep working, with a one-line constraints
-    // notice while unacknowledged. `rules test --judge` resolves the spec
-    // up front but never builds a judge for non-inferential rules, so no
-    // model is downloaded or loaded here.
+fn a_stale_local_config_surfaces_migration_guidance() {
+    // A config written before 0.9 still parses — a stale field is not a
+    // reason to refuse to lint — but the removed backend cannot run, so the
+    // run says so and names the replacement.
     let dir = TempDir::new().unwrap();
     write(
         &dir,
         "lawlint.config.json",
-        r#"{"ai": {"model": "local:me/tiny-GGUF"}}"#,
+        r#"{"ai": {"model": "local:me/tiny-GGUF", "localAcknowledged": true}}"#,
     );
     write(&dir, "pkg/style.yaml", "name: firm\nversion: 1.0.0\n");
     write(
@@ -1060,20 +1060,7 @@ fn local_config_surfaces_constraints_notice_until_acknowledged() {
     cmd(&dir)
         .args(["rules", "test", "pkg", "--judge"])
         .assert()
-        .code(0)
-        .stderr(predicate::str::contains("docs/eval-corpus.md"))
-        .stderr(predicate::str::contains("lawlint init"));
-    // Once acknowledged (ai.localAcknowledged), the notice goes quiet.
-    write(
-        &dir,
-        "lawlint.config.json",
-        r#"{"ai": {"model": "local:me/tiny-GGUF", "localAcknowledged": true}}"#,
-    );
-    cmd(&dir)
-        .args(["rules", "test", "pkg", "--judge"])
-        .assert()
-        .code(0)
-        .stderr(predicate::str::contains("docs/eval-corpus.md").not());
+        .stderr(predicate::str::contains("openai:http://localhost:11434/v1"));
 }
 
 #[test]

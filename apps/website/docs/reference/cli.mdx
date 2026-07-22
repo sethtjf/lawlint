@@ -41,7 +41,6 @@ The file argument defaults to `-` (stdin), so a bare `lawlint` reads a pipe.
 | `anthropic:<model>` | Anthropic |
 | `openai:<base-url>#<model>` | Any OpenAI-compatible endpoint |
 | `foundry:<deployment>` | Azure AI Foundry |
-| `local:<hf-repo>[#<gguf>]` | Local, via the embedded `mistral.rs` runtime |
 
 `init --ai` additionally accepts the shorthands `qwen` and `gemma`.
 
@@ -55,7 +54,6 @@ into the project.
   "--yes": { type: "flag", description: "Accept the default answer for every prompt (non-interactive)." },
   "--force": { type: "flag", description: "Overwrite an existing .lawlint/config.json." },
   "--ai": { type: "MODEL", description: "Model preference, skipping the catalog prompt: qwen, gemma, or a full spec." },
-  "--acknowledge-local": { type: "flag", description: "Acknowledge the local-model constraints non-interactively; writes ai.localAcknowledged. Only meaningful with a local model." },
 }} />
 
 See [Setting up AI features](/docs/guides/ai-setup).

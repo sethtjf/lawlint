@@ -31,7 +31,6 @@ the same specs as `init`:
 | `anthropic:<model>` | Anthropic |
 | `openai:<base-url>#<model>` | Any OpenAI-compatible endpoint |
 | `foundry:<deployment>` | Azure AI Foundry |
-| `local:<hf-repo>[#<gguf>]` | Local, via the embedded `mistral.rs` runtime |
 
 :::note
 `--judge` uses `=` rather than a space: `--judge=anthropic:...`, not
@@ -48,16 +47,19 @@ The document is cut into sections, and each soft rule is judged against them.
 How that is batched follows the backend, so the defaults track the model rather
 than a fixed constant:
 
-| | Hosted (`anthropic:`, `openai:`, `foundry:`) | `local:` |
-| --- | --- | --- |
-| Text per request | 24,000 chars — most documents in one | 1,200 chars |
-| Requests | One per rule | One per section, all rubrics together |
-| In flight at once | 4 | 1 |
+| Setting | Default |
+| --- | --- |
+| Text per request | 24,000 chars — most documents in one |
+| Requests | One per rule |
+| In flight at once | 4 |
 
-Hosted models get the whole document per rule, so a rule can see across
-sections. Local models keep small sections with the rubrics bundled, because a
-1.5B model degrades on long context and a second in-process copy would mean a
-second multi-GB model load.
+Each rule sees the whole document, so a rule can reason across sections. Every
+rule request over one document shares a cacheable prompt prefix, which is what
+keeps one-request-per-rule affordable.
+
+If you are pointing lawlint at a small self-hosted model, lower
+`contextChars` and set `perRule: false` — a small model does better on short
+sections with the rubrics bundled.
 
 Every one of those is overridable — see
 [`judge` configuration](/docs/reference/configuration#judge). The one to know

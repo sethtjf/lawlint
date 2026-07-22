@@ -2,34 +2,35 @@
 //!
 //! **ax (`axllm`) is the AI interface for ALL backends.** The judge is one
 //! [`AxJudge`] whose prompt/JSON-contract layer is backend-independent;
-//! backends are [`axllm::AxAIClient`] implementations:
+//! backends are [`axllm::AxAIClient`] implementations, and every one of them
+//! is an HTTP client:
 //!
-//! - [`MistralRsClient`] (`local:` specs, explicit opt-in — see #50; there
-//!   is no default backend): in-process mistral.rs inference — a
-//!   small quantized instruct GGUF (Qwen2.5-1.5B-Instruct by default) or a
-//!   safetensors repo quantized in situ (the Gemma 4 series runs this way),
-//!   lazily downloaded into the standard HF hub cache. CPU, with Metal on
-//!   macOS.
-//! - Cloud backends (feature `cloud`): stock ax clients (Anthropic,
-//!   OpenAI-compatible with a custom base URL).
+//! - Stock ax clients for Anthropic and any OpenAI-compatible endpoint.
+//! - [`FoundryClient`] for Azure AI Foundry.
+//!
+//! **There is no in-process inference.** lawlint used to embed a mistral.rs
+//! runtime behind `local:` specs; it was removed because the models small
+//! enough to embed cannot do this job — on lawlint's own eval the default
+//! scored F1 0.111 on `empty-hedge` and 0.000 on `padded-elaboration`, failing
+//! 38 of 330 chunks outright (docs/eval-corpus.md). Running privately is still
+//! supported and now works better: point `openai:<base-url>#<model>` at a local
+//! OpenAI-compatible server such as Ollama or vLLM, which can serve a far
+//! larger model than lawlint could reasonably bundle. That path needs no API
+//! key — see [`credentials_ready`].
 //!
 //! `AxJudge` speaks OpenAI chat-completions-shaped payloads through
 //! `AxAIClient::chat` and hand-rolls the `JudgeFinding[]` JSON parse from
 //! `JudgeRequest.prompt` (core owns the canonical prompt and cache keys; ax's
 //! signature layer would substitute its own prompt, so it is not used here —
-//! see the crate README note in the repo docs). ax v23's `chat` is blocking;
-//! the local client bridges to mistral.rs' async SDK with a runtime it owns.
+//! see the crate README note in the repo docs). ax v23's `chat` is blocking,
+//! which is why every backend here is a blocking HTTP client.
 
 mod cache;
 pub mod credentials;
-#[cfg(feature = "cloud")]
 mod foundry;
-mod mistralrs_client;
 
 pub use cache::DiskCache;
-#[cfg(feature = "cloud")]
 pub use foundry::FoundryClient;
-pub use mistralrs_client::MistralRsClient;
 
 // Re-export the ax boundary so consumers can supply custom backends.
 pub use axllm::{AxAIClient, AxError, AxResult};
@@ -37,23 +38,19 @@ pub use axllm::{AxAIClient, AxError, AxResult};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Mutex;
 
-use anyhow::bail;
-#[cfg(feature = "cloud")]
-use anyhow::Context;
+use anyhow::{bail, Context};
 use lawlint_core::{Judge, JudgeError, JudgeFinding, JudgeOptions, JudgePlan, JudgeRequest};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Default local model repo (small quantized instruct GGUF).
-pub const DEFAULT_LOCAL_REPO: &str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF";
-
-/// Gemma catalog repo (Google's Gemma 4 E4B instruct model, safetensors —
-/// mistral.rs auto-detects it as multimodal and quantizes it in situ to
-/// Q4K at load; the repo is not gated). Gemma GGUFs are a different story:
-/// mistral.rs' GGUF loader has no gemma architecture, so
-/// [`MistralRsClient`] rejects them up front with a pointer here. The repo
-/// id stays config-editable (`local:<repo>`).
-pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-4-E4B-it";
+/// What to tell someone whose config still names the removed local backend.
+/// Their intent was almost certainly privacy, so the message leads with the
+/// replacement that preserves it rather than with the removal.
+const LOCAL_REMOVED: &str = "in-process local models were removed in 0.9: the models small enough \
+     to embed could not judge these rules (docs/eval-corpus.md). To keep text \
+     on your machine, run an OpenAI-compatible server such as Ollama and use \
+     \"openai:http://localhost:11434/v1#<model>\" — no API key needed. \
+     Otherwise pick a hosted spec: \"anthropic:<model>\" or \"foundry:<deployment>\"";
 
 // ---- AxJudge -----------------------------------------------------------
 
@@ -71,8 +68,7 @@ pub struct AxJudge {
     // One client per concurrent worker. A single client behind one mutex
     // would serialize every request no matter how many workers core spawns,
     // which is exactly the bottleneck this pool exists to remove. Backends
-    // that must not be duplicated (an in-process local model) get a pool of
-    // one and stay sequential.
+    // that cannot be duplicated would get a pool of one and stay sequential.
     clients: Vec<Mutex<Box<dyn AxAIClient + Send>>>,
     /// Round-robin starting point, so concurrent callers don't all contend on
     /// the first client before finding a free one.
@@ -115,7 +111,7 @@ impl AxJudge {
 
     /// The OpenAI chat-completions-shaped request sent to the backend.
     /// `model` is intentionally omitted: ax clients default to their
-    /// configured model, and `MistralRsClient` has exactly one model.
+    /// configured model.
     /// `max_completion_tokens` is emitted only when configured, so backends
     /// keep their own defaults otherwise.
     fn chat_request(&self, req: &JudgeRequest) -> Value {
@@ -202,8 +198,8 @@ impl Judge for AxJudge {
 }
 
 /// Extract assistant text from a chat response. Accepts both the OpenAI
-/// chat-completions shape (`choices[0].message.content` — `MistralRsClient`,
-/// any OpenAI-compatible passthrough) and ax's normalized internal shape
+/// chat-completions shape (`choices[0].message.content` — any
+/// OpenAI-compatible passthrough) and ax's normalized internal shape
 /// (`results[0].content` — stock ax clients). Public so other AI features
 /// speaking through the ax boundary (e.g. `lawlint learn`) parse responses
 /// the same way the judge does.
@@ -254,7 +250,7 @@ fn value_as_text(node: &Value) -> Option<String> {
 
 // ---- Findings parse ----------------------------------------------------
 
-/// Lenient finding shape: small local models sometimes omit optional fields.
+/// Lenient finding shape: smaller models sometimes omit optional fields.
 /// `rule` and `quote` are required (a finding without them is useless —
 /// grounding needs the quote, routing needs the rule); missing `explanation`
 /// defaults empty, missing `confidence` defaults to 0.5 (below core's default
@@ -331,7 +327,7 @@ pub fn parse_findings_with_stats(content: &str) -> Result<ParsedFindings, JudgeE
     Err(JudgeError::MalformedResponse(truncate(content, 300)))
 }
 
-/// Verdict-polarity guard (#39): small local models sometimes emit their
+/// Verdict-polarity guard (#39): smaller models sometimes emit their
 /// *pass* verdict as a finding object ("The text does not flag any empty
 /// hedge") instead of returning `[]`; such findings quote real text with high
 /// confidence, so core's confidence floor and grounding both pass them.
@@ -427,9 +423,9 @@ pub enum NotReady {
 /// when they *can* run and skip them quietly when they cannot, instead of
 /// erroring at call time.
 ///
-/// `local:` specs need no credentials and are always "ready" here — the CLI
-/// gates those separately on the local-constraints acknowledgment, since
-/// readiness is not the same as wanting a multi-GB download.
+/// A self-hosted `openai:` endpoint needs no credentials and is always
+/// "ready" here, which is what lets the private path run with no setup beyond
+/// the server itself.
 pub fn credentials_ready(model: &str) -> Result<(), NotReady> {
     let need = |name: &'static str| {
         if credentials::lookup(name).is_some() {
@@ -448,8 +444,8 @@ pub fn credentials_ready(model: &str) -> Result<(), NotReady> {
         return need("AZURE_FOUNDRY_API_KEY");
     }
     // `openai:` covers self-hosted OpenAI-compatible servers, which routinely
-    // need no key at all (create_client falls back to "unused"), so an absent
-    // OPENAI_API_KEY is not a reason to skip. `local:` needs nothing.
+    // need no key at all — create_client falls back to "unused" — so an absent
+    // OPENAI_API_KEY is not a reason to skip.
     Ok(())
 }
 
@@ -457,39 +453,26 @@ pub fn credentials_ready(model: &str) -> Result<(), NotReady> {
 /// the shared backend factory behind [`create_judge`] and any other AI
 /// feature that speaks through the ax boundary (e.g. `lawlint learn`):
 ///
-/// - `"local"` / `"local:<hf-repo>"` (optionally `#<gguf-file>`):
-///   in-process [`MistralRsClient`] (lazy model download on first chat).
-/// - `"anthropic:<model>"` (feature `cloud`): stock ax Anthropic client;
-///   requires `ANTHROPIC_API_KEY` (environment or credential store).
-/// - `"openai:<base-url>#<model>"` (feature `cloud`): stock ax
-///   OpenAI-compatible client (covers any local OpenAI-compatible server);
-///   uses `OPENAI_API_KEY` when set.
-/// - `"foundry:<deployment>"` (feature `cloud`): [`FoundryClient`]; requires
+/// - `"anthropic:<model>"`: stock ax Anthropic client; requires
+///   `ANTHROPIC_API_KEY` (environment or credential store).
+/// - `"openai:<base-url>#<model>"`: stock ax OpenAI-compatible client. Covers
+///   both api.openai.com and any self-hosted server — Ollama, vLLM,
+///   llama.cpp — which is how lawlint runs without text leaving the machine.
+///   Uses `OPENAI_API_KEY` when set, and works without one.
+/// - `"foundry:<deployment>"`: [`FoundryClient`]; requires
 ///   `AZURE_FOUNDRY_ENDPOINT` + `AZURE_FOUNDRY_API_KEY`.
+///
+/// A `local:` spec is rejected with migration guidance rather than an
+/// "unknown model" error: it used to work, so someone hitting it has a config
+/// to fix, not a typo.
 ///
 /// Hosted-provider keys resolve environment-first, then the user-level
 /// credential store written by `lawlint init` ([`credentials`]).
 pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>, String)> {
     if model == "local" || model.starts_with("local:") {
-        let spec = model.strip_prefix("local:").unwrap_or("");
-        let (repo, file) = match spec.split_once('#') {
-            Some((repo, file)) => (repo, Some(file.to_string())),
-            None => (spec, None),
-        };
-        let repo = if repo.is_empty() {
-            DEFAULT_LOCAL_REPO
-        } else {
-            repo
-        };
-        let model_id = match &file {
-            Some(f) => format!("local:{repo}#{f}"),
-            None => format!("local:{repo}"),
-        };
-        let client = MistralRsClient::new(repo, file);
-        return Ok((Box::new(client), model_id));
+        bail!("{LOCAL_REMOVED}");
     }
 
-    #[cfg(feature = "cloud")]
     if let Some(anthropic_model) = model.strip_prefix("anthropic:") {
         let key = credentials::lookup("ANTHROPIC_API_KEY").context(
             "ANTHROPIC_API_KEY must be set (or stored via `lawlint init`) for \
@@ -503,7 +486,6 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
         return Ok((Box::new(client), model.to_string()));
     }
 
-    #[cfg(feature = "cloud")]
     if let Some(spec) = model.strip_prefix("openai:") {
         let (base_url, openai_model) = spec.rsplit_once('#').with_context(|| {
             format!("openai model {model:?} must be \"openai:<base-url>#<model>\"")
@@ -515,7 +497,6 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
         return Ok((Box::new(client), model.to_string()));
     }
 
-    #[cfg(feature = "cloud")]
     if let Some(deployment) = model.strip_prefix("foundry:") {
         if deployment.is_empty() {
             bail!("foundry model must be \"foundry:<deployment>\"");
@@ -525,20 +506,9 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
         return Ok((Box::new(client), model.to_string()));
     }
 
-    #[cfg(not(feature = "cloud"))]
-    if model.starts_with("anthropic:")
-        || model.starts_with("openai:")
-        || model.starts_with("foundry:")
-    {
-        bail!(
-            "model {model:?} needs the `cloud` feature — \
-             rebuild lawlint-judge with `--features cloud`"
-        );
-    }
-
     bail!(
-        "unknown model {model:?} — use \"local[:<hf-repo>[#<gguf-file>]]\", \
-         \"anthropic:<model>\", \"openai:<base-url>#<model>\", or \"foundry:<deployment>\""
+        "unknown model {model:?} — use \"anthropic:<model>\", \
+         \"openai:<base-url>#<model>\", or \"foundry:<deployment>\""
     )
 }
 
@@ -550,82 +520,53 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
 /// generated are billed, so the headroom is free for non-reasoning models.
 pub const DEFAULT_HOSTED_MAX_TOKENS: usize = 16_384;
 
-/// The generation budget to send for a model spec when the user configured
-/// none.
+/// Document chars per request. Deliberately far below any modern context
+/// window: the limit on unit size is not what the model can read but how much
+/// re-linting an edit should invalidate, since a unit is the cache granule.
+/// ~24k chars is roughly a 4,000-word document — one request for most briefs
+/// and memos, a handful for a long one.
+pub const DEFAULT_CONTEXT_CHARS: usize = 24_000;
+
+/// Default concurrent requests. Judge requests are network-bound, not
+/// CPU-bound, so this tracks provider rate limits rather than core count; 4
+/// keeps a document's requests overlapping without looking like a burst.
+/// Override with `judge.concurrency`.
+pub const DEFAULT_CONCURRENCY: usize = 4;
+
+/// The default request-shaping profile: large units, one request per rule.
 ///
-/// This has to be resolved per spec rather than left to each backend's own
-/// fallback: `FoundryClient` defaults to [`DEFAULT_HOSTED_MAX_TOKENS`], but
-/// the stock ax Anthropic and OpenAI-compatible clients inherit ax's default,
-/// so a reasoning model reached through those routes would truncate exactly
-/// the way Foundry did. `local:` returns `None` — [`MistralRsClient`]'s
-/// smaller cap suits a small instruct model that does not think first.
-pub fn default_max_tokens_for(model: &str) -> Option<usize> {
-    if model == "local" || model.starts_with("local:") {
-        None
-    } else {
-        Some(DEFAULT_HOSTED_MAX_TOKENS)
-    }
+/// Every backend is now a remote endpoint, so there is nothing to branch on.
+/// A small self-hosted model behind `openai:` may prefer the conservative
+/// shape — smaller units, rubrics bundled — which is what
+/// `judge.contextChars` and `judge.perRule` are for.
+pub fn default_plan() -> JudgePlan {
+    JudgePlan::for_context(DEFAULT_CONTEXT_CHARS)
 }
 
-/// Document chars per request for a hosted backend. Deliberately far below
-/// any modern context window: the limit on unit size is not what the model can
-/// read but how much re-linting an edit should invalidate, since a unit is the
-/// cache granule. ~24k chars is roughly a 4,000-word document — one request
-/// for most briefs and memos, a handful for a long one.
-pub const CLOUD_CONTEXT_CHARS: usize = 24_000;
-
-/// The request-shaping profile for a model spec.
-///
-/// Hosted backends get large units and one request per rule. `local:` keeps
-/// the conservative default: a 1.5B model degrades on long context and needs
-/// the rubrics bundled to stay within one short generation, which is exactly
-/// what [`lawlint_core::JudgePlan::default`] encodes.
-pub fn plan_for_model(model: &str) -> JudgePlan {
-    if model == "local" || model.starts_with("local:") {
-        JudgePlan::default()
-    } else {
-        JudgePlan::for_context(CLOUD_CONTEXT_CHARS)
-    }
-}
-
-/// Default concurrent requests for a hosted backend. Judge requests are
-/// network-bound, not CPU-bound, so this tracks provider rate limits rather
-/// than core count; 4 keeps a document's requests overlapping without looking
-/// like a burst. Override with `judge.concurrency`.
-pub const DEFAULT_CLOUD_CONCURRENCY: usize = 4;
-
-/// How many clients a spec's backend can run at once.
-///
-/// `local:` is pinned to 1: every [`MistralRsClient`] owns its own in-process
-/// model, so a pool of N would mean N multi-GB loads competing for the same
-/// GPU/CPU — slower than sequential, and enough memory pressure to fail
-/// outright. Hosted backends are just HTTP and pool freely.
-pub fn max_concurrency_for(model: &str, configured: Option<usize>) -> usize {
-    if model == "local" || model.starts_with("local:") {
-        return 1;
-    }
-    configured.unwrap_or(DEFAULT_CLOUD_CONCURRENCY).max(1)
+/// How many clients to pool, honoring a configured override.
+pub fn concurrency(configured: Option<usize>) -> usize {
+    configured.unwrap_or(DEFAULT_CONCURRENCY).max(1)
 }
 
 /// Create a judge from `JudgeOptions.model`. See [`create_client`] for the
-/// spec grammar. There is no default backend (#50): `model: None` means the
-/// user never configured one, and silently downloading a multi-GB local
-/// model would be the wrong surprise — it errors with `lawlint init`
-/// guidance instead. Explicit specs (including `local:`) always work.
+/// spec grammar. There is no default backend: `model: None` means the user
+/// never configured one, and guessing a provider they may not have a key for
+/// would be the wrong surprise — it errors with `lawlint init` guidance
+/// instead.
 ///
-/// Builds one client per concurrent worker ([`max_concurrency_for`]); clients
-/// are independent, so this costs a little setup and no network traffic.
+/// Builds one client per concurrent worker ([`concurrency`]); clients are
+/// independent, so this costs a little setup and no network traffic.
 pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
     let Some(model) = options.model.as_deref() else {
         bail!(
-            "no AI model is configured — run `lawlint init` to choose one \
-             (hosted providers recommended), or pass an explicit spec such as \
-             \"anthropic:<model>\" or \"local:<hf-repo>\""
+            "no AI model is configured — run `lawlint init` to choose one, \
+             or pass an explicit spec such as \"anthropic:<model>\" or \
+             \"openai:http://localhost:11434/v1#<model>\""
         );
     };
     let (client, model_id) = create_client(model)?;
     let mut clients = vec![client];
-    for _ in 1..max_concurrency_for(model, options.concurrency) {
+    for _ in 1..concurrency(options.concurrency) {
         clients.push(create_client(model)?.0);
     }
     Ok(Box::new(
@@ -756,50 +697,46 @@ mod tests {
     }
 
     #[test]
-    fn local_specs_never_pool_but_hosted_specs_do() {
-        // An in-process model must not be duplicated regardless of config.
-        assert_eq!(max_concurrency_for("local", Some(8)), 1);
-        assert_eq!(max_concurrency_for("local:foo/bar", None), 1);
-        assert_eq!(
-            max_concurrency_for("foundry:gpt-5.5", None),
-            DEFAULT_CLOUD_CONCURRENCY
-        );
-        assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(2)), 2);
+    fn concurrency_honors_the_override_and_never_reaches_zero() {
+        assert_eq!(concurrency(None), DEFAULT_CONCURRENCY);
+        assert_eq!(concurrency(Some(2)), 2);
         // 0 workers would mean no requests ever run.
-        assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(0)), 1);
+        assert_eq!(concurrency(Some(0)), 1);
     }
 
-    /// Every hosted route must get a reasoning-sized budget, not just Foundry.
-    /// The stock ax Anthropic/OpenAI clients have their own (smaller) default,
-    /// so leaving this to the backend would let a thinking model reached
-    /// through those routes truncate to empty output the way Foundry did.
     #[test]
-    fn hosted_backends_all_get_a_reasoning_sized_budget() {
-        for model in [
-            "foundry:gpt-5.5",
-            "anthropic:claude-sonnet-5",
-            "openai:http://localhost:8080/v1#qwen",
-        ] {
-            assert_eq!(
-                default_max_tokens_for(model),
-                Some(DEFAULT_HOSTED_MAX_TOKENS),
-                "{model}"
-            );
+    fn default_plan_is_large_units_one_request_per_rule() {
+        let plan = default_plan();
+        assert!(plan.per_rule);
+        assert_eq!(plan.context_chars, DEFAULT_CONTEXT_CHARS);
+    }
+
+    /// A `local:` spec used to work, so someone hitting it has a config to
+    /// migrate. The error has to name the replacement that preserves what they
+    /// were after — keeping the text on their machine — not just refuse.
+    #[test]
+    fn local_specs_fail_with_migration_guidance() {
+        for model in ["local", "local:Qwen/Qwen2.5-1.5B-Instruct-GGUF"] {
+            let Err(err) = create_client(model) else {
+                panic!("{model} should no longer build a client");
+            };
+            let err = err.to_string();
+            assert!(err.contains("openai:http://localhost:11434/v1"), "{err}");
+            assert!(err.contains("no API key"), "{err}");
+            // Not the generic "unknown model" path.
+            assert!(!err.contains("unknown model"), "{err}");
         }
-        // A small local instruct model does not think first; its own cap fits.
-        assert_eq!(default_max_tokens_for("local"), None);
-        assert_eq!(default_max_tokens_for("local:foo/bar"), None);
     }
 
     #[test]
-    fn plan_profile_follows_the_backend() {
-        let local = plan_for_model("local:foo/bar");
-        assert_eq!(local, JudgePlan::default());
-        assert!(!local.per_rule);
-
-        let hosted = plan_for_model("foundry:gpt-5.5");
-        assert!(hosted.per_rule);
-        assert_eq!(hosted.context_chars, CLOUD_CONTEXT_CHARS);
+    fn unknown_specs_still_get_the_generic_error() {
+        let Err(err) = create_client("bogus:whatever") else {
+            panic!("expected an error for an unknown scheme");
+        };
+        let err = err.to_string();
+        assert!(err.contains("unknown model"), "{err}");
+        // The removed backend must not be advertised as an option.
+        assert!(!err.contains("local["), "{err}");
     }
 
     #[test]
@@ -1142,8 +1079,8 @@ mod tests {
 
     #[test]
     fn create_judge_unconfigured_errors_with_init_guidance() {
-        // #50: no silent local default — an unconfigured judge must error
-        // with actionable guidance, never start a model download.
+        // An unconfigured judge must error with actionable guidance rather
+        // than guessing a provider the user may have no key for.
         let Err(err) = create_judge(&JudgeOptions::default()) else {
             panic!("expected error for unconfigured model");
         };
@@ -1153,26 +1090,17 @@ mod tests {
     }
 
     #[test]
-    fn create_judge_local_with_repo_and_file() {
-        let opts = |model: &str| JudgeOptions {
-            model: Some(model.to_string()),
+    fn create_judge_rejects_local_specs_with_migration_guidance() {
+        let opts = JudgeOptions {
+            model: Some("local".to_string()),
             ..Default::default()
         };
-        assert_eq!(
-            create_judge(&opts("local")).unwrap().model_id(),
-            format!("local:{DEFAULT_LOCAL_REPO}")
-        );
-        assert_eq!(
-            create_judge(&opts("local:foo/bar-GGUF"))
-                .unwrap()
-                .model_id(),
-            "local:foo/bar-GGUF"
-        );
-        assert_eq!(
-            create_judge(&opts("local:foo/bar-GGUF#m-q4_0.gguf"))
-                .unwrap()
-                .model_id(),
-            "local:foo/bar-GGUF#m-q4_0.gguf"
+        let Err(err) = create_judge(&opts) else {
+            panic!("local specs must no longer build a judge");
+        };
+        assert!(
+            err.to_string().contains("openai:http://localhost:11434/v1"),
+            "{err}"
         );
     }
 
@@ -1187,31 +1115,11 @@ mod tests {
         };
         let err = err.to_string();
         assert!(err.contains("bogus:whatever"));
-        assert!(err.contains("local"));
+        assert!(err.contains("anthropic:<model>"));
     }
 
-    #[cfg(not(feature = "cloud"))]
     #[test]
-    fn create_judge_cloud_schemes_error_without_cloud_feature() {
-        for model in [
-            "anthropic:claude-sonnet-4-5",
-            "openai:http://localhost:8080/v1#m",
-            "foundry:gpt-5.5",
-        ] {
-            let opts = JudgeOptions {
-                model: Some(model.to_string()),
-                ..Default::default()
-            };
-            let Err(err) = create_judge(&opts) else {
-                panic!("expected error without cloud feature for {model}");
-            };
-            assert!(err.to_string().contains("cloud"), "{err}");
-        }
-    }
-
-    #[cfg(feature = "cloud")]
-    #[test]
-    fn create_judge_openai_scheme_routes_with_cloud_feature() {
+    fn create_judge_openai_scheme_routes_to_a_compatible_client() {
         let opts = JudgeOptions {
             model: Some("openai:http://localhost:8080/v1#qwen".to_string()),
             ..Default::default()
@@ -1227,7 +1135,6 @@ mod tests {
         assert!(create_judge(&bad).is_err());
     }
 
-    #[cfg(feature = "cloud")]
     #[test]
     fn create_judge_foundry_scheme_requires_deployment() {
         // Empty deployment fails before any credential lookup.

@@ -1464,7 +1464,7 @@ pub(crate) fn learn_command(
         ));
     }
     let spec = resolve_model_spec(model_flag, &config)?;
-    if let Some(notice) = crate::local_notice(&spec, &config) {
+    if let Some(notice) = crate::local_notice(&spec) {
         eprintln!("{notice}");
     }
     let (mut client, model_id) =
@@ -2096,7 +2096,6 @@ mod tests {
                         .into_iter()
                         .collect(),
                 ),
-                ..Default::default()
             }),
             ..Default::default()
         };

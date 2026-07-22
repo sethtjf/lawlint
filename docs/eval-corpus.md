@@ -165,17 +165,16 @@ the CI gate: judge runs are slow and backend-dependent.
 ```text
 cargo run --release -p lawlint-eval --features judged --bin judged_report
 cargo run --release -p lawlint-eval --features judged --bin judged_report -- \
-  --model "local,anthropic:claude-sonnet-4-5" --limit 20
+  --model "anthropic:claude-sonnet-4-5,foundry:gpt-5.5" --limit 20
 ```
 
 `--model` is repeatable or comma-separated and takes the same specs as
-`lawlint --judge` (`local[:<hf-repo>[#<gguf-file>]]`, `anthropic:<model>`,
-`openai:<base-url>#<model>`, `foundry:<deployment>`; hosted keys resolve
-environment-first, then the `lawlint init` credential store). A backend that
-cannot run — missing key, unreachable endpoint — fails with a per-backend
-message while the others still print results. `--limit N` truncates to the
-first N train samples for smoke runs. On macOS without full Xcode, set
-`MISTRALRS_METAL_PRECOMPILE=0`.
+`lawlint --judge` (`anthropic:<model>`, `openai:<base-url>#<model>`,
+`foundry:<deployment>`; hosted keys resolve environment-first, then the
+`lawlint init` credential store). A backend that cannot run — missing key,
+unreachable endpoint — fails with a per-backend message while the others still
+print results. `--limit N` truncates to the first N train samples for smoke
+runs.
 
 Findings are cached in the shared judge disk cache
 (`~/.cache/lawlint/judge/`), including a sibling entry per chunk holding the
@@ -183,9 +182,15 @@ findings the verdict-polarity guard dropped, so reruns are cheap and the
 discipline stats survive cache hits. Chunks whose responses stay malformed
 after core's retry are never cached and are re-attempted on every run.
 
-### Local-Qwen baseline (train split, 330 samples)
+### Local-Qwen baseline (train split, 330 samples) — historical
 
-Default backend `local:Qwen/Qwen2.5-1.5B-Instruct-GGUF` (q4_k_m), prompt
+**This is the measurement that removed in-process inference in 0.9.** The
+embedded backend is gone; the numbers are kept because they are the evidence,
+and because anyone tempted to serve a similarly small model behind `openai:`
+should expect the same results. Reproducing this row is no longer possible with
+a shipped lawlint.
+
+Backend `local:Qwen/Qwen2.5-1.5B-Instruct-GGUF` (q4_k_m), prompt
 version 2 (post-#39-Part-1 polarity guard + clean-chunk `[]` example).
 First run 948 s on an Apple-silicon laptop; cached rerun 521 s (the residual
 time is the 38 persistently malformed chunks being retried).
@@ -225,12 +230,14 @@ detection rule, and its false positives on human prose are rubric echoes
 flagged confidently. On these numbers the local judge does not support
 turning tier 3 on by default.
 
-These measurements drove the #50 cloud-first decision: hosted providers are
-now the recommended and preselected path everywhere (`lawlint init` leads
-with them, and unconfigured AI features error with init guidance rather
-than silently downloading a local model), while local models remain fully
-supported as an explicit opt-in behind an acknowledgment of exactly these
-numbers (`ai.localAcknowledged`).
+These measurements first drove the #50 cloud-first decision — hosted providers
+preselected everywhere, unconfigured AI features erroring with init guidance
+rather than silently downloading a model — and then, in 0.9, the removal of
+in-process inference altogether. A tier that finds 7% of real hedges while
+confidently emitting 39 false ones is worse than an absent tier, because the
+score looks earned. Running privately is now served by pointing
+`openai:<base-url>#<model>` at a locally-run OpenAI-compatible server, which
+needs no API key and can serve a far larger model than lawlint could bundle.
 
 ### Hosted backends (pending keys)
 

@@ -16,7 +16,7 @@ clap.workspace = true
 lawlint-core = { path = "../lawlint-core" }
 # The Azure Foundry client lives behind the ax boundary in lawlint-judge;
 # the sourcing binaries consume it from there.
-lawlint-judge = { path = "../lawlint-judge", features = ["cloud"], optional = true }
+lawlint-judge = { path = "../lawlint-judge", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

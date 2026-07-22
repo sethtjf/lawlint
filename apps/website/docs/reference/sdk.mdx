@@ -135,8 +135,9 @@ depends on your backend's pool size.
 :::
 
 Requests run up to `max_concurrency()` at a time, and a backend that panics
-fails only its own chunk. Ready-made backends (Anthropic, OpenAI-compatible,
-Azure Foundry, and in-process local models) live in `lawlint-judge`.
+fails only its own chunk. Ready-made backends — Anthropic, any
+OpenAI-compatible endpoint, and Azure Foundry — live in `lawlint-judge`. All
+of them are HTTP clients; lawlint runs no inference in-process.
 
 ## Applying fixes
 

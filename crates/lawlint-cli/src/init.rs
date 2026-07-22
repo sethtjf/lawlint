@@ -2,18 +2,14 @@
 //! optionally a `.lawlint/rules/` package) in the current directory via an
 //! interactive walkthrough.
 //!
-//! The walkthrough opens with the AI-model catalog, hosted providers first
-//! (#50): Anthropic preselected, then OpenAI and Azure Foundry — hosted is
-//! the recommended path and requires an API key. Every entry says where
-//! text goes ("text is sent to the provider" vs. "no text leaves this
-//! machine"), so consent is given once, informed, here. Local models sit
-//! behind an explicit advanced entry that states their constraints
-//! (multi-GB download, slower inference, measurably lower quality —
-//! docs/eval-corpus.md) and requires acknowledging them; the
-//! acknowledgment persists as `ai.localAcknowledged` and
-//! `--acknowledge-local` is the non-interactive equivalent. The selection
-//! lands in the config's `ai` section; hosted API keys go to the
-//! user-level credential store (`~/.lawlint/credentials`, 0600) —
+//! The walkthrough opens with the AI-model catalog: Anthropic preselected,
+//! then OpenAI and Azure Foundry, then a self-hosted OpenAI-compatible
+//! endpoint. Every entry says where text goes ("text is sent to the
+//! provider" vs. "text goes to that server"), so consent is given once,
+//! informed, here. The self-hosted entry is how lawlint runs without text
+//! leaving the machine — it points at Ollama, vLLM or llama.cpp and needs no
+//! API key. The selection lands in the config's `ai` section; hosted API keys
+//! go to the user-level credential store (`~/.lawlint/credentials`, 0600) —
 //! never into the project config, which gets committed.
 //!
 //! Prompts read stdin line by line; an empty line or EOF accepts the shown
@@ -49,47 +45,26 @@ pub(crate) const AI_CATALOG_PROMPT: &str =
     "Which AI model should lawlint use? It powers the tier-3 judge and future AI \
      features. Hosted providers are recommended.";
 
-/// The five catalog entries, in display order. Every entry says where text
-/// goes; local sits last and is marked advanced.
-pub(crate) const AI_CATALOG_OPTIONS: [&str; 5] = [
+/// The four catalog entries, in display order. Every entry says where text
+/// goes. The last is the private path: a server the user runs.
+pub(crate) const AI_CATALOG_OPTIONS: [&str; 4] = [
     "Claude (Anthropic — hosted, recommended; text is sent to the provider, \
      requires API key)",
     "GPT (OpenAI — hosted; text is sent to the provider, requires API key)",
     "Azure Foundry (hosted — text is sent to the provider, requires API key + \
      endpoint)",
-    "OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp, … — text goes to that \
-     server)",
-    "Local model (advanced — private, no text leaves this machine; multi-GB \
-     download, measurably lower quality)",
-];
-
-/// The local-model constraints, stated with the measured numbers before the
-/// acknowledgment (docs/eval-corpus.md).
-pub(crate) const LOCAL_CONSTRAINTS: &str =
-    "  Local models are private (no text leaves this machine) but constrained:\n\
-     \x20   - multi-GB model download on first use, slower inference\n\
-     \x20   - measurably lower quality than hosted models: on lawlint's tier-3 eval\n\
-     \x20     the local default scored F1 0.111 (empty-hedge) and 0.000\n\
-     \x20     (padded-elaboration), with 38 of 330 chunks failing closed\n\
-     \x20     (docs/eval-corpus.md)";
-
-/// The two local-model choices, in display order (Qwen default, then Gemma).
-pub(crate) const LOCAL_CHOICE_OPTIONS: [&str; 2] = [
-    "Qwen2.5-1.5B (~1 GB GGUF download on first use)",
-    "Gemma 4 E4B (~16 GB download on first use, runs 4-bit-quantized in memory)",
+    "Self-hosted OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp, … — text \
+     goes only to that server, no API key needed)",
 ];
 
 // ---- answers -----------------------------------------------------------
 
-/// One catalog selection: the `ai.model` spec plus any credentials to store
-/// (entries keyed by the provider's environment-variable name), plus
-/// whether the local-model constraints were acknowledged (#50) — persisted
-/// as `ai.localAcknowledged` so the per-use notice stays quiet.
+/// One catalog selection: the `ai.model` spec plus any credentials to store,
+/// keyed by the provider's environment-variable name.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AiSelection {
     pub(crate) model: String,
     pub(crate) keys: Vec<(String, String)>,
-    pub(crate) acknowledge_local: bool,
 }
 
 impl AiSelection {
@@ -97,23 +72,8 @@ impl AiSelection {
         AiSelection {
             model: model.into(),
             keys: Vec::new(),
-            acknowledge_local: false,
         }
     }
-
-    /// A local selection whose constraints were acknowledged.
-    pub(crate) fn acknowledged_local(model: impl Into<String>) -> Self {
-        AiSelection {
-            model: model.into(),
-            keys: Vec::new(),
-            acknowledge_local: true,
-        }
-    }
-}
-
-/// Is `model` a local (mistral.rs) spec?
-pub(crate) fn is_local_spec(model: &str) -> bool {
-    model == "local" || model.starts_with("local:")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,18 +119,18 @@ impl Answers {
     }
 }
 
-/// `--ai` shorthand: `qwen`/`gemma` name the catalog's local entries;
-/// anything else must be a full model spec.
+/// `--ai` takes a full model spec. A `local:` spec names the removed
+/// in-process backend, so it is rejected here with the same migration
+/// guidance the judge gives rather than being accepted and failing later.
 pub(crate) fn parse_ai_flag(value: &str) -> Result<AiSelection, String> {
     let model = match value {
-        "qwen" | "local" => "local".to_string(),
-        "gemma" => format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO),
-        spec if spec.starts_with("local:")
-            || spec.starts_with("anthropic:")
-            || spec.starts_with("foundry:") =>
-        {
-            spec.to_string()
+        "qwen" | "gemma" | "local" => {
+            return Err(format!("--ai {value:?}: {LOCAL_REMOVED_HINT}"));
         }
+        spec if spec.starts_with("local:") => {
+            return Err(format!("--ai {spec:?}: {LOCAL_REMOVED_HINT}"));
+        }
+        spec if spec.starts_with("anthropic:") || spec.starts_with("foundry:") => spec.to_string(),
         spec if spec.starts_with("openai:") => {
             if !spec.contains('#') {
                 return Err(format!(
@@ -181,14 +141,22 @@ pub(crate) fn parse_ai_flag(value: &str) -> Result<AiSelection, String> {
         }
         other => {
             return Err(format!(
-                "--ai {other:?}: use qwen, gemma, or a model spec \
-                 (anthropic:<model>, openai:<base-url>#<model>, \
-                 foundry:<deployment>, local:<hf-repo>[#<gguf>])"
+                "--ai {other:?}: use a model spec (anthropic:<model>, \
+                 openai:<base-url>#<model>, foundry:<deployment>)"
             ));
         }
     };
     Ok(AiSelection::keyless(model))
 }
+
+/// Shared wording for a `--ai` value naming the removed local backend. Leads
+/// with the replacement that keeps text on the machine, since that is what
+/// the user was after.
+pub(crate) const LOCAL_REMOVED_HINT: &str =
+    "in-process local models were removed in 0.9 (they could not judge these \
+     rules — docs/eval-corpus.md). Run an OpenAI-compatible server such as \
+     Ollama and use \"openai:http://localhost:11434/v1#<model>\" to keep text \
+     on your machine";
 
 // ---- config assembly ---------------------------------------------------
 
@@ -207,9 +175,9 @@ fn build_config(base: &Value, answers: &Answers) -> Value {
             .cloned()
             .unwrap_or_default();
         ai.insert("model".into(), json!(selection.model));
-        if selection.acknowledge_local {
-            ai.insert("localAcknowledged".into(), json!(true));
-        }
+        // A config carried over from before 0.9 may still hold it; the field
+        // no longer means anything, so stop propagating it.
+        ai.remove("localAcknowledged");
         config.insert("ai".into(), Value::Object(ai));
     }
     if let Some(enabled) = answers.judge_enabled {
@@ -372,13 +340,11 @@ impl<R: BufRead, W: Write> Prompter<R, W> {
 // ---- AI-preferences step -----------------------------------------------
 
 /// Catalog index whose entry matches `model` (a spec from the seeding
-/// config), for the prompt default. Hosted entries lead (#50): a fresh
-/// project (empty spec) preselects Anthropic; local specs map to the
-/// advanced local entry.
+/// config), for the prompt default. A fresh project (empty spec) preselects
+/// Anthropic. A stale `local:` spec has no entry to map to, so it also lands
+/// on the recommended one — the migration is a re-pick, not a rename.
 pub(crate) fn default_catalog_index(model: &str) -> usize {
-    if is_local_spec(model) {
-        4
-    } else if let Some(spec) = model.strip_prefix("openai:") {
+    if let Some(spec) = model.strip_prefix("openai:") {
         if spec.starts_with(OPENAI_HOSTED_BASE_URL) {
             1
         } else {
@@ -391,15 +357,6 @@ pub(crate) fn default_catalog_index(model: &str) -> usize {
         // spec) preselect the recommended hosted entry.
         0
     }
-}
-
-/// Gemma GGUFs (any version) have no loader in the bundled mistral.rs
-/// runtime — its GGUF loader carries no gemma architecture. Gemma runs
-/// from safetensors repos instead (quantized in situ), so warn at
-/// selection time, not after a multi-GB download at first run.
-pub(crate) fn looks_like_gemma_gguf(repo: &str) -> bool {
-    let lower = repo.to_lowercase();
-    lower.contains("gemma") && lower.contains("gguf")
 }
 
 /// Provider API key prompt. A stored key goes to the user-level credential
@@ -434,78 +391,14 @@ fn ask_anthropic<R: BufRead, W: Write>(
     Ok(AiSelection {
         model: format!("anthropic:{model}"),
         keys,
-        acknowledge_local: false,
     })
 }
 
-/// The advanced local-model flow (#50): states the constraints with the
-/// measured numbers, requires acknowledging them, then picks the model.
-/// `Ok(None)` = the user declined the acknowledgment. `ack_default` seeds
-/// the confirm so re-running init over an already-local config (or with
-/// `--acknowledge-local`) Enter-throughs cleanly.
-fn ask_local<R: BufRead, W: Write>(
-    base_model: &str,
-    ack_default: bool,
-    prompter: &mut Prompter<R, W>,
-) -> Result<Option<AiSelection>, String> {
-    prompter.say(LOCAL_CONSTRAINTS)?;
-    if !prompter.confirm("Use a local model with these constraints?", ack_default)? {
-        return Ok(None);
-    }
-    let is_gemma = |repo: &str| repo.to_lowercase().contains("gemma");
-    let local_choice = prompter.choice(
-        "Which local model?",
-        &LOCAL_CHOICE_OPTIONS,
-        if base_model.strip_prefix("local:").is_some_and(is_gemma) {
-            1
-        } else {
-            0
-        },
-    )?;
-    if local_choice == 0 {
-        // A custom non-Gemma repo from the seeding config must survive
-        // Enter-through (re-running init preserves earlier choices); the
-        // stock repo is spelled "local" so fresh configs stay short.
-        let default_repo = base_model
-            .strip_prefix("local:")
-            .filter(|repo| !repo.is_empty() && !is_gemma(repo))
-            .unwrap_or(lawlint_judge::DEFAULT_LOCAL_REPO);
-        let repo = prompter.line("Hugging Face GGUF repo (repo[#file])", default_repo)?;
-        Ok(Some(AiSelection::acknowledged_local(
-            if repo == lawlint_judge::DEFAULT_LOCAL_REPO {
-                "local".to_string()
-            } else {
-                format!("local:{repo}")
-            },
-        )))
-    } else {
-        let default_repo = base_model
-            .strip_prefix("local:")
-            .filter(|repo| is_gemma(repo))
-            .unwrap_or(lawlint_judge::DEFAULT_GEMMA_REPO);
-        let repo = prompter.line("Hugging Face repo (repo[#file])", default_repo)?;
-        if looks_like_gemma_gguf(&repo) {
-            prompter.say(&format!(
-                "  Note: gemma GGUFs are not runnable by the bundled runtime — use \
-                 the safetensors repo (e.g. {}), which runs 4-bit-quantized \
-                 in-process. The repo stays editable in .lawlint/config.json.",
-                lawlint_judge::DEFAULT_GEMMA_REPO
-            ))?;
-        }
-        Ok(Some(AiSelection::acknowledged_local(format!(
-            "local:{repo}"
-        ))))
-    }
-}
-
-/// The model catalog, hosted providers first (#50) with Anthropic
-/// preselected. Every entry says where text goes; hosted entries prompt for
-/// the provider API key. Local models sit behind the last, advanced entry
-/// and require acknowledging their constraints; declining falls back to the
-/// recommended hosted entry.
+/// The model catalog with Anthropic preselected. Every entry says where text
+/// goes; hosted entries prompt for the provider API key. The last entry is a
+/// server the user runs, which is how text stays on the machine.
 fn ask_ai<R: BufRead, W: Write>(
     base_model: &str,
-    ack_default: bool,
     prompter: &mut Prompter<R, W>,
 ) -> Result<AiSelection, String> {
     let choice = prompter.choice(
@@ -528,7 +421,6 @@ fn ask_ai<R: BufRead, W: Write>(
             Ok(AiSelection {
                 model: format!("openai:{OPENAI_HOSTED_BASE_URL}#{model}"),
                 keys,
-                acknowledge_local: false,
             })
         }
         2 => {
@@ -555,25 +447,21 @@ fn ask_ai<R: BufRead, W: Write>(
             Ok(AiSelection {
                 model: format!("foundry:{deployment}"),
                 keys,
-                acknowledge_local: false,
             })
         }
-        3 => {
+        _ => {
             let (base_url, model) = base_model
                 .strip_prefix("openai:")
                 .and_then(|spec| spec.rsplit_once('#'))
                 .unwrap_or((DEFAULT_COMPAT_BASE_URL, DEFAULT_COMPAT_MODEL));
+            prompter.say(
+                "  Text goes only to this server. Point it at Ollama, vLLM or \
+                 llama.cpp; no API key is needed.",
+            )?;
             let base_url = prompter.line("Base URL", base_url)?;
             let model = prompter.line("Model", model)?;
             Ok(AiSelection::keyless(format!("openai:{base_url}#{model}")))
         }
-        _ => match ask_local(base_model, ack_default, prompter)? {
-            Some(selection) => Ok(selection),
-            None => {
-                prompter.say("Using the recommended hosted provider instead.")?;
-                ask_anthropic(base_model, prompter)
-            }
-        },
     }
 }
 
@@ -584,7 +472,6 @@ fn ask_ai<R: BufRead, W: Write>(
 fn ask<R: BufRead, W: Write>(
     base: &Value,
     ai_override: Option<AiSelection>,
-    acknowledge_local: bool,
     prompter: &mut Prompter<R, W>,
 ) -> Result<Answers, String> {
     let base_judge = base.get("judge");
@@ -599,24 +486,12 @@ fn ask<R: BufRead, W: Write>(
         })
         .unwrap_or("");
 
-    // The local acknowledgment prompt defaults yes when the user has, in
-    // effect, already opted in: `--acknowledge-local`, a config already on
-    // a local model (Enter-through must preserve earlier choices), or a
-    // prior acknowledgment.
-    let ack_default = acknowledge_local
-        || is_local_spec(base_ai_model)
-        || base
-            .get("ai")
-            .and_then(|ai| ai.get("localAcknowledged"))
-            .and_then(Value::as_bool)
-            == Some(true);
-
     let ai = match ai_override {
         Some(selection) => {
             prompter.say(&format!("AI model: {} (from --ai).", selection.model))?;
             selection
         }
-        None => ask_ai(base_ai_model, ack_default, prompter)?,
+        None => ask_ai(base_ai_model, prompter)?,
     };
 
     let base_enabled = base_judge
@@ -927,7 +802,6 @@ fn run_init<R: BufRead, W: Write>(
     yes: bool,
     force: bool,
     ai_flag: Option<&str>,
-    acknowledge_local: bool,
     scope: &UserScope<'_>,
     prompter: &mut Prompter<R, W>,
 ) -> Result<i32, String> {
@@ -957,38 +831,15 @@ fn run_init<R: BufRead, W: Write>(
         SeedSource::Fresh => {}
     }
 
-    let mut answers = if yes {
+    let answers = if yes {
         Answers::accept_defaults(&base, ai_override)
     } else {
         prompter.say(&format!(
             "{}\n",
             "lawlint init — sets up .lawlint/config.json for this project.".bold()
         ))?;
-        ask(&base, ai_override, acknowledge_local, prompter)?
+        ask(&base, ai_override, prompter)?
     };
-
-    // `--acknowledge-local`: the non-interactive acknowledgment (#50). It
-    // attaches to a local selection from `--ai`, or — when `--yes` left an
-    // existing `ai` section untouched — to the base config's local model,
-    // so CI can acknowledge an existing setup without re-answering prompts.
-    if acknowledge_local {
-        match &mut answers.ai {
-            Some(selection) if is_local_spec(&selection.model) => {
-                selection.acknowledge_local = true;
-            }
-            Some(_) => {}
-            None => {
-                let base_local = base
-                    .get("ai")
-                    .and_then(|ai| ai.get("model"))
-                    .and_then(Value::as_str)
-                    .filter(|model| is_local_spec(model));
-                if let Some(model) = base_local {
-                    answers.ai = Some(AiSelection::acknowledged_local(model));
-                }
-            }
-        }
-    }
 
     let applied = apply_answers(directory, &base, &answers, scope)?;
     if let Some(message) = &applied.credential_message {
@@ -1034,12 +885,7 @@ fn run_init<R: BufRead, W: Write>(
     Ok(0)
 }
 
-pub fn init_command(
-    yes: bool,
-    force: bool,
-    ai: Option<&str>,
-    acknowledge_local: bool,
-) -> Result<i32, String> {
+pub fn init_command(yes: bool, force: bool, ai: Option<&str>) -> Result<i32, String> {
     let directory = std::env::current_dir().map_err(|error| error.to_string())?;
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -1052,15 +898,7 @@ pub fn init_command(
         credentials: None,
         dirs: dirs.as_ref().map(|(a, b)| (a.as_path(), b.as_path())),
     };
-    run_init(
-        &directory,
-        yes,
-        force,
-        ai,
-        acknowledge_local,
-        &scope,
-        &mut prompter,
-    )
+    run_init(&directory, yes, force, ai, &scope, &mut prompter)
 }
 
 // ------------------------------------------------------------------------
@@ -1090,32 +928,6 @@ mod tests {
                 "ai": {"model": format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}")}
             })
         );
-    }
-
-    #[test]
-    fn build_config_writes_local_acknowledgment() {
-        let answers = Answers {
-            ai: Some(AiSelection::acknowledged_local("local")),
-            judge_enabled: Some(false),
-            floor: None,
-            markdown: None,
-            scaffold_rules: false,
-        };
-        let config = build_config(&json!({}), &answers);
-        assert_eq!(
-            config["ai"],
-            json!({"model": "local", "localAcknowledged": true})
-        );
-        // Unacknowledged selections never write the key.
-        let answers = Answers {
-            ai: Some(AiSelection::keyless("local")),
-            judge_enabled: Some(false),
-            floor: None,
-            markdown: None,
-            scaffold_rules: false,
-        };
-        let config = build_config(&json!({}), &answers);
-        assert_eq!(config["ai"], json!({"model": "local"}));
     }
 
     #[test]
@@ -1175,11 +987,11 @@ mod tests {
 
     #[test]
     fn parse_ai_flag_shorthands_and_specs() {
-        assert_eq!(parse_ai_flag("qwen").unwrap().model, "local");
-        assert_eq!(
-            parse_ai_flag("gemma").unwrap().model,
-            format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO)
-        );
+        // The removed local shorthands must not silently resolve to anything.
+        for stale in ["qwen", "gemma", "local", "local:foo/bar"] {
+            let err = parse_ai_flag(stale).unwrap_err();
+            assert!(err.contains("openai:http://localhost:11434/v1"), "{err}");
+        }
         assert_eq!(
             parse_ai_flag("anthropic:claude-x").unwrap().model,
             "anthropic:claude-x"
@@ -1193,16 +1005,16 @@ mod tests {
         assert!(parse_ai_flag("openai:http://x/v1")
             .unwrap_err()
             .contains("#<model>"));
-        assert!(parse_ai_flag("gpt4").unwrap_err().contains("qwen, gemma"));
+        assert!(parse_ai_flag("gpt4")
+            .unwrap_err()
+            .contains("anthropic:<model>"));
         // No key entries ever come from the flag.
         assert!(parse_ai_flag("anthropic:m").unwrap().keys.is_empty());
     }
 
     #[test]
     fn default_catalog_index_maps_specs() {
-        // Hosted-first (#50): fresh (empty) and anthropic specs preselect
-        // the recommended hosted entry; local specs map to the advanced
-        // local entry at the end.
+        // Fresh (empty) and anthropic specs preselect the recommended entry.
         assert_eq!(default_catalog_index(""), 0);
         assert_eq!(default_catalog_index("anthropic:m"), 0);
         assert_eq!(
@@ -1214,12 +1026,10 @@ mod tests {
             default_catalog_index("openai:http://localhost:11434/v1#m"),
             3
         );
-        assert_eq!(default_catalog_index("local"), 4);
-        assert_eq!(default_catalog_index("local:foo/bar-GGUF"), 4);
-        assert_eq!(
-            default_catalog_index("local:google/gemma-4-E4B-it-qat-q4_0-gguf"),
-            4
-        );
+        // A stale local spec has no entry of its own; it falls back to the
+        // recommended one so re-running init is a clean re-pick.
+        assert_eq!(default_catalog_index("local"), 0);
+        assert_eq!(default_catalog_index("local:foo/bar-GGUF"), 0);
     }
 
     #[test]
@@ -1254,93 +1064,11 @@ mod tests {
     }
 
     #[test]
-    fn ask_ai_local_choices() {
-        // Choice 5 (local, advanced) + acknowledgment + Qwen: the stock
-        // repo is spelled "local", and the acknowledgment is recorded.
-        let mut p = prompter("5\ny\n1\n\n");
-        assert_eq!(
-            ask_ai("", false, &mut p).unwrap(),
-            AiSelection::acknowledged_local("local")
-        );
-        // The constraints are stated with the measured numbers before the
-        // acknowledgment prompt.
-        let transcript = String::from_utf8(p.output).unwrap();
-        assert!(transcript.contains("0.111"), "{transcript}");
-        assert!(transcript.contains("38 of 330"), "{transcript}");
-        assert!(transcript.contains("docs/eval-corpus.md"), "{transcript}");
-
-        // Custom Qwen repo: full local:<repo> spec.
-        let mut p = prompter("5\ny\n1\nme/custom-qwen-GGUF\n");
-        assert_eq!(
-            ask_ai("", false, &mut p).unwrap().model,
-            "local:me/custom-qwen-GGUF"
-        );
-
-        // Gemma 4: config-editable repo; the default (safetensors, runs via
-        // in-situ quantization) draws no warning.
-        let mut p = prompter("5\ny\n2\n\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
-        assert_eq!(
-            selection.model,
-            format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO)
-        );
-        assert!(selection.acknowledge_local);
-        let transcript = String::from_utf8(p.output).unwrap();
-        assert!(!transcript.contains("not runnable"));
-
-        // A gemma GGUF repo (no gemma architecture in the bundled runtime's
-        // GGUF loader) warns at selection time, before any download.
-        let mut p = prompter("5\ny\n2\nunsloth/gemma-4-E4B-it-GGUF\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
-        assert_eq!(selection.model, "local:unsloth/gemma-4-E4B-it-GGUF");
-        let transcript = String::from_utf8(p.output).unwrap();
-        assert!(transcript.contains("not runnable"));
-        assert!(transcript.contains(lawlint_judge::DEFAULT_GEMMA_REPO));
-    }
-
-    #[test]
-    fn ask_ai_local_decline_falls_back_to_hosted() {
-        // Declining the constraints acknowledgment (the fresh default)
-        // lands on the recommended hosted provider, not on a local model.
-        let mut p = prompter("5\nn\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
-        assert_eq!(
-            selection.model,
-            format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}")
-        );
-        assert!(!selection.acknowledge_local);
-        let transcript = String::from_utf8(p.output).unwrap();
-        assert!(transcript.contains("recommended hosted"), "{transcript}");
-
-        // EOF at the acknowledgment behaves like declining: no local model
-        // without an explicit yes.
-        let mut p = prompter("5\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
-        assert_eq!(
-            selection.model,
-            format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}")
-        );
-    }
-
-    #[test]
-    fn ask_ai_preserves_custom_local_repo_on_defaults() {
-        // Regression: a custom non-Gemma local repo seeds the local entry's
-        // repo prompt, so Enter-through keeps it instead of resetting to
-        // the stock model. The already-local seed makes the acknowledgment
-        // default yes, so EOF passes through it.
-        let mut p = prompter("");
-        assert_eq!(
-            ask_ai("local:me/custom-qwen-GGUF#m.gguf", true, &mut p).unwrap(),
-            AiSelection::acknowledged_local("local:me/custom-qwen-GGUF#m.gguf")
-        );
-    }
-
-    #[test]
     fn ask_ai_hosted_choices_collect_keys_and_caveats() {
         // Anthropic (choice 1, preselected): default model, key stored
         // under its env-var name.
         let mut p = prompter("1\n\nsk-ant-secret\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
+        let selection = ask_ai("", &mut p).unwrap();
         assert_eq!(
             selection.model,
             format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}")
@@ -1351,15 +1079,17 @@ mod tests {
         );
         let transcript = String::from_utf8(p.output).unwrap();
         assert!(transcript.contains("text is sent to the provider"));
-        // Hosted first, recommended, local last and marked advanced.
+        // Hosted first and recommended; the private path is the self-hosted
+        // endpoint, and it is the last entry.
         assert!(transcript.contains("Hosted providers are recommended"));
         assert!(transcript.contains("1) Claude (Anthropic"));
-        assert!(transcript.contains("5) Local model (advanced"));
+        assert!(transcript.contains("4) Self-hosted OpenAI-compatible endpoint"));
+        assert!(!transcript.contains("Local model"));
 
         // OpenAI hosted: skipping the key stores nothing and points at the
         // env var instead.
         let mut p = prompter("2\n\n\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
+        let selection = ask_ai("", &mut p).unwrap();
         assert_eq!(
             selection.model,
             format!("openai:{OPENAI_HOSTED_BASE_URL}#{DEFAULT_OPENAI_HOSTED_MODEL}")
@@ -1370,7 +1100,7 @@ mod tests {
 
         // Foundry: endpoint + key both land in the credential entries.
         let mut p = prompter("3\ngpt-5.5\nhttps://res.services.ai.azure.com\nfoundry-key\n");
-        let selection = ask_ai("", false, &mut p).unwrap();
+        let selection = ask_ai("", &mut p).unwrap();
         assert_eq!(selection.model, "foundry:gpt-5.5");
         assert_eq!(
             selection.keys,
@@ -1391,13 +1121,13 @@ mod tests {
     fn ask_ai_compat_endpoint_choice() {
         let mut p = prompter("4\n\n\n");
         assert_eq!(
-            ask_ai("", false, &mut p).unwrap().model,
+            ask_ai("", &mut p).unwrap().model,
             format!("openai:{DEFAULT_COMPAT_BASE_URL}#{DEFAULT_COMPAT_MODEL}")
         );
         // An existing compat spec seeds both prompts.
         let mut p = prompter("\n\n\n");
         assert_eq!(
-            ask_ai("openai:http://gpu-box:8000/v1#qwen3", false, &mut p)
+            ask_ai("openai:http://gpu-box:8000/v1#qwen3", &mut p)
                 .unwrap()
                 .model,
             "openai:http://gpu-box:8000/v1#qwen3"
@@ -1410,7 +1140,7 @@ mod tests {
         // recommended hosted provider — never a local model, and no
         // download-sized surprises.
         let mut p = prompter("");
-        let answers = ask(&json!({}), None, false, &mut p).unwrap();
+        let answers = ask(&json!({}), None, &mut p).unwrap();
         assert_eq!(
             answers.ai,
             Some(AiSelection::keyless(format!(
@@ -1429,7 +1159,7 @@ mod tests {
         // every default migrates it into the ai section.
         let base = json!({"judge": {"enabled": true, "model": "anthropic:claude-x", "floor": 0.7}, "markdown": true});
         let mut p = prompter("");
-        let answers = ask(&base, None, false, &mut p).unwrap();
+        let answers = ask(&base, None, &mut p).unwrap();
         assert_eq!(answers.ai, Some(AiSelection::keyless("anthropic:claude-x")));
         assert_eq!(answers.judge_enabled, Some(true));
         assert_eq!(answers.floor, Some(0.7));
@@ -1437,17 +1167,19 @@ mod tests {
     }
 
     #[test]
-    fn ask_preserves_custom_local_judge_model_on_defaults() {
-        // Regression: a legacy judge.model naming a custom local repo must
-        // survive accepting every default — the repo prompt is seeded with
-        // it, so migration into `ai` keeps the spec verbatim (and records
-        // the acknowledgment the Enter-through passed).
+    fn ask_migrates_a_stale_local_model_to_the_recommended_backend() {
+        // A config naming the removed in-process backend has nothing to
+        // preserve: Enter-through must land on the recommended hosted entry
+        // rather than carrying a spec that can no longer run. Everything else
+        // about the config still survives.
         let base = json!({"judge": {"enabled": true, "model": "local:me/custom-qwen-GGUF"}});
         let mut p = prompter("");
-        let answers = ask(&base, None, false, &mut p).unwrap();
+        let answers = ask(&base, None, &mut p).unwrap();
         assert_eq!(
             answers.ai,
-            Some(AiSelection::acknowledged_local("local:me/custom-qwen-GGUF"))
+            Some(AiSelection::keyless(format!(
+                "anthropic:{DEFAULT_ANTHROPIC_MODEL}"
+            )))
         );
         assert_eq!(answers.judge_enabled, Some(true));
     }
@@ -1456,13 +1188,7 @@ mod tests {
     fn ask_ai_override_skips_the_catalog() {
         // Only the judge/markdown/rules prompts consume input.
         let mut p = prompter("y\n0.8\n\n\n");
-        let answers = ask(
-            &json!({}),
-            Some(AiSelection::keyless("foundry:d")),
-            false,
-            &mut p,
-        )
-        .unwrap();
+        let answers = ask(&json!({}), Some(AiSelection::keyless("foundry:d")), &mut p).unwrap();
         assert_eq!(answers.ai, Some(AiSelection::keyless("foundry:d")));
         assert_eq!(answers.judge_enabled, Some(true));
         assert_eq!(answers.floor, Some(0.8));
@@ -1477,7 +1203,7 @@ mod tests {
         // forever. It falls back to the engine default instead.
         let base = json!({"judge": {"enabled": true, "floor": 5.0}});
         let mut p = prompter("");
-        let answers = ask(&base, None, false, &mut p).unwrap();
+        let answers = ask(&base, None, &mut p).unwrap();
         assert_eq!(answers.floor, None); // 0.6 == engine default, omitted
     }
 
@@ -1489,16 +1215,7 @@ mod tests {
 
         let mut p = prompter("");
         assert_eq!(
-            run_init(
-                &dir,
-                true,
-                false,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, true, false, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let written = fs::read_to_string(dir.join(".lawlint/config.json")).unwrap();
@@ -1513,20 +1230,14 @@ mod tests {
 
         // Existing config: refuse without --force, overwrite with it.
         let mut p = prompter("");
-        assert!(run_init(
-            &dir,
-            true,
-            false,
-            None,
-            false,
-            &UserScope::default(),
-            &mut p
-        )
-        .unwrap_err()
-        .contains("--force"));
+        assert!(
+            run_init(&dir, true, false, None, &UserScope::default(), &mut p)
+                .unwrap_err()
+                .contains("--force")
+        );
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, false, &UserScope::default(), &mut p).unwrap(),
+            run_init(&dir, true, true, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
 
@@ -1545,8 +1256,7 @@ mod tests {
                 &dir,
                 true,
                 false,
-                Some("gemma"),
-                false,
+                Some("foundry:gpt-5.5"),
                 &UserScope::default(),
                 &mut p
             )
@@ -1556,13 +1266,7 @@ mod tests {
         let config: Value =
             serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
                 .unwrap();
-        assert_eq!(
-            config["ai"]["model"],
-            json!(format!("local:{}", lawlint_judge::DEFAULT_GEMMA_REPO))
-        );
-        // Without --acknowledge-local the acknowledgment is not written —
-        // the per-use notice keeps printing.
-        assert!(config["ai"].get("localAcknowledged").is_none());
+        assert_eq!(config["ai"]["model"], json!("foundry:gpt-5.5"));
 
         // An invalid value errors before any file is touched.
         let mut p = prompter("");
@@ -1571,97 +1275,10 @@ mod tests {
             true,
             true,
             Some("nope"),
-            false,
             &UserScope::default(),
             &mut p
         )
         .is_err());
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn run_init_acknowledge_local_flag_non_interactive() {
-        let dir = std::env::temp_dir().join(format!("lawlint-init-ack-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        // CI path: --yes --ai qwen --acknowledge-local writes the local
-        // model with the acknowledgment persisted.
-        let mut p = prompter("");
-        assert_eq!(
-            run_init(
-                &dir,
-                true,
-                false,
-                Some("qwen"),
-                true,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
-            0
-        );
-        let config: Value =
-            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
-                .unwrap();
-        assert_eq!(
-            config["ai"],
-            json!({"model": "local", "localAcknowledged": true})
-        );
-
-        // Acknowledging an existing local config without re-answering:
-        // --yes --force --acknowledge-local (no --ai) attaches the
-        // acknowledgment to the base config's local model.
-        let mut p = prompter("");
-        assert_eq!(
-            run_init(&dir, true, true, None, true, &UserScope::default(), &mut p).unwrap(),
-            0
-        );
-        let config: Value =
-            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
-                .unwrap();
-        assert_eq!(
-            config["ai"],
-            json!({"model": "local", "localAcknowledged": true})
-        );
-
-        // The flag never invents an acknowledgment for hosted selections.
-        let mut p = prompter("");
-        assert_eq!(
-            run_init(
-                &dir,
-                true,
-                true,
-                Some("anthropic:claude-x"),
-                true,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
-            0
-        );
-        let config: Value =
-            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
-                .unwrap();
-        assert_eq!(config["ai"]["model"], json!("anthropic:claude-x"));
-        // The earlier acknowledgment survives as pass-through state, but no
-        // new write happens for hosted models: drop it from the base first
-        // to observe that.
-        fs::write(
-            dir.join(".lawlint/config.json"),
-            r#"{"ai": {"model": "foundry:d"}}"#,
-        )
-        .unwrap();
-        let mut p = prompter("");
-        assert_eq!(
-            run_init(&dir, true, true, None, true, &UserScope::default(), &mut p).unwrap(),
-            0
-        );
-        let config: Value =
-            serde_json::from_str(&fs::read_to_string(dir.join(".lawlint/config.json")).unwrap())
-                .unwrap();
-        assert_eq!(config["ai"], json!({"model": "foundry:d"}));
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1682,7 +1299,6 @@ mod tests {
                 false,
                 false,
                 None,
-                false,
                 &UserScope {
                     credentials: Some(&credentials),
                     ..Default::default()
@@ -1729,16 +1345,7 @@ mod tests {
         // markdown) except the final rules-package prompt.
         let mut p = prompter("\n\n\n\n\ny\n");
         assert_eq!(
-            run_init(
-                &dir,
-                false,
-                false,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, false, false, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let manifest_path = dir.join(RULES_DIR).join("style.yaml");
@@ -1753,16 +1360,7 @@ mod tests {
         fs::write(&manifest_path, "name: edited\nversion: 9.9.9\n").unwrap();
         let mut p = prompter("\n\n\n\n\ny\n");
         assert_eq!(
-            run_init(
-                &dir,
-                false,
-                true,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, false, true, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         assert!(fs::read_to_string(&manifest_path)
@@ -1788,7 +1386,7 @@ mod tests {
         // --yes: everything preserved verbatim.
         let mut p = prompter("");
         assert_eq!(
-            run_init(&dir, true, true, None, false, &UserScope::default(), &mut p).unwrap(),
+            run_init(&dir, true, true, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1803,16 +1401,7 @@ mod tests {
         // with its 0.8 floor).
         let mut p = prompter("");
         assert_eq!(
-            run_init(
-                &dir,
-                false,
-                true,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, false, true, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1836,16 +1425,7 @@ mod tests {
 
         let mut p = prompter("");
         assert_eq!(
-            run_init(
-                &dir,
-                false,
-                false,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, false, false, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         assert_eq!(
@@ -1873,16 +1453,7 @@ mod tests {
         // --yes: settings carried over verbatim, legacy file kept.
         let mut p = prompter("");
         assert_eq!(
-            run_init(
-                &dir,
-                true,
-                false,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, true, false, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         let config: Value =
@@ -1896,16 +1467,7 @@ mod tests {
         // the legacy file (confirm defaults to yes).
         let mut p = prompter("");
         assert_eq!(
-            run_init(
-                &dir,
-                false,
-                true,
-                None,
-                false,
-                &UserScope::default(),
-                &mut p
-            )
-            .unwrap(),
+            run_init(&dir, false, true, None, &UserScope::default(), &mut p).unwrap(),
             0
         );
         assert!(!dir.join("lawlint.config.json").exists());

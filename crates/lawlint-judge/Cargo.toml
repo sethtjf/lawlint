@@ -8,36 +8,16 @@ version.workspace = true
 [dependencies]
 lawlint-core = { path = "../lawlint-core" }
 # ax is the AI interface for ALL backends (hard product requirement).
-# Pinned: AxJudge and MistralRsClient are written against the v23.0.1
-# AxAIClient contract (`chat(&mut self, Value) -> AxResult<Value>`, blocking
-# transport).
+# Pinned: AxJudge is written against the v23.0.1 AxAIClient contract
+# (`chat(&mut self, Value) -> AxResult<Value>`, blocking transport).
 axllm = "=23.0.1"
 anyhow = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-# In-process mistral.rs inference for the default local backend (GGUF repos
-# via the GGUF loader; safetensors repos — the Gemma 4 series among them —
-# via auto-detection + in-situ quantization). Git tag: v0.9.0 is the first
-# release with Gemma 4 support and is not published to crates.io yet
-# (crates.io stops at 0.8.1).
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", tag = "v0.9.0" }
-# mistral.rs' SDK is async; the ax boundary is blocking. Each local client
-# owns a small runtime and bridges with `block_on`.
-tokio = { version = "1", features = ["rt-multi-thread"] }
-# Repo listings for `local:<repo>` specs without a pinned GGUF file (same
-# HF cache as mistral.rs' own hub downloads).
-hf-hub = { version = "0.4", default-features = false, features = ["ureq", "native-tls"] }
-# Azure Foundry ax client (feature `cloud`) — blocking HTTP, no async runtime.
-ureq = { version = "2", optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", tag = "v0.9.0", features = ["metal"] }
+# Azure Foundry ax client — blocking HTTP, no async runtime. Every backend is
+# now an HTTP client, so there is nothing left to feature-gate.
+ureq = "2"
 
 [dev-dependencies]
 tempfile = "3"
-
-[features]
-# Cloud backends ("anthropic:<model>", "openai:<base-url>#<model>",
-# "foundry:<deployment>") through the ax boundary.
-cloud = ["dep:ureq"]

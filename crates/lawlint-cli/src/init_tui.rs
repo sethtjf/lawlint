@@ -16,8 +16,7 @@
 use crate::init::{
     self, AiSelection, Answers, Seed, AI_CATALOG_OPTIONS, AI_CATALOG_PROMPT,
     DEFAULT_ANTHROPIC_MODEL, DEFAULT_COMPAT_BASE_URL, DEFAULT_COMPAT_MODEL, DEFAULT_FLOOR,
-    DEFAULT_FOUNDRY_DEPLOYMENT, DEFAULT_OPENAI_HOSTED_MODEL, LOCAL_CHOICE_OPTIONS,
-    LOCAL_CONSTRAINTS, OPENAI_HOSTED_BASE_URL,
+    DEFAULT_FOUNDRY_DEPLOYMENT, DEFAULT_OPENAI_HOSTED_MODEL, OPENAI_HOSTED_BASE_URL,
 };
 use crate::ui::{
     bullet_line, pad_line, tilde, wrap_line, SelectList, BRAND, BRAND_DARK, DIM, GOOD, INPUT_BAR_BG,
@@ -40,15 +39,11 @@ use std::io::{self, IsTerminal, Stdout};
 use std::path::PathBuf;
 
 /// Why the wizard was launched — controls whether a "skip" escape is offered
-/// and what non-interactive inputs (`--ai`, `--force`, `--acknowledge-local`)
+/// and what non-interactive inputs (`--ai`, `--force`)
 /// carry over from the `init` command.
 pub enum SetupContext {
     /// From `lawlint init` in an interactive terminal.
-    Explicit {
-        force: bool,
-        ai: Option<String>,
-        acknowledge_local: bool,
-    },
+    Explicit { force: bool, ai: Option<String> },
     /// From bare `lawlint` with no project config found; offers a skip.
     FirstRun,
 }
@@ -73,13 +68,9 @@ pub fn run_setup(context: SetupContext) -> Result<SetupOutcome, String> {
         return Err("setup requires an interactive terminal".into());
     }
     let directory = std::env::current_dir().map_err(|error| error.to_string())?;
-    let (force, ai_flag, acknowledge_local, first_run) = match &context {
-        SetupContext::Explicit {
-            force,
-            ai,
-            acknowledge_local,
-        } => (*force, ai.clone(), *acknowledge_local, false),
-        SetupContext::FirstRun => (false, None, false, true),
+    let (force, ai_flag, first_run) = match &context {
+        SetupContext::Explicit { force, ai } => (*force, ai.clone(), false),
+        SetupContext::FirstRun => (false, None, true),
     };
     let ai_override = ai_flag.as_deref().map(init::parse_ai_flag).transpose()?;
     let seed = init::resolve_seed(&directory, force)?;
@@ -97,7 +88,6 @@ pub fn run_setup(context: SetupContext) -> Result<SetupOutcome, String> {
         directory,
         seed,
         ai_override,
-        acknowledge_local,
         first_run,
         init::real_user_dirs(),
     );
@@ -130,9 +120,6 @@ enum Stage {
     FoundryKey,
     CompatBaseUrl,
     CompatModel,
-    LocalConfirm,
-    LocalChoice,
-    LocalRepo,
     JudgeEnabled,
     Floor,
     Markdown,
@@ -155,7 +142,6 @@ struct Wizard {
     directory: PathBuf,
     seed: Seed,
     first_run: bool,
-    acknowledge_local: bool,
     /// Pre-0.8 and current user-level directories, for the one-time migration.
     /// `None` — the default, and what every test gets — means `finish()` makes
     /// no change outside `directory`. Resolving `$HOME` inside `finish()`
@@ -165,7 +151,6 @@ struct Wizard {
 
     // Seed-derived defaults (computed once, mirroring init::ask).
     base_model: String,
-    ack_default: bool,
     base_judge_enabled: bool,
     base_floor: f64,
     base_markdown: bool,
@@ -181,7 +166,6 @@ struct Wizard {
     // In-flight AI selection built across sub-steps.
     pending_model: String,
     pending_keys: Vec<(String, String)>,
-    pending_local_gemma: bool,
 
     transcript: Vec<TranscriptLine>,
     scroll_up: usize,
@@ -205,7 +189,6 @@ impl Wizard {
         directory: PathBuf,
         seed: Seed,
         ai_override: Option<AiSelection>,
-        acknowledge_local: bool,
         first_run: bool,
         user_dirs: Option<(PathBuf, PathBuf)>,
     ) -> Self {
@@ -222,13 +205,6 @@ impl Wizard {
             })
             .unwrap_or("")
             .to_string();
-        let ack_default = acknowledge_local
-            || init::is_local_spec(&base_model)
-            || base
-                .get("ai")
-                .and_then(|ai| ai.get("localAcknowledged"))
-                .and_then(Value::as_bool)
-                == Some(true);
         let base_judge_enabled = base_judge
             .and_then(|judge| judge.get("enabled"))
             .and_then(Value::as_bool)
@@ -244,10 +220,8 @@ impl Wizard {
             directory,
             seed,
             first_run,
-            acknowledge_local,
             user_dirs,
             base_model,
-            ack_default,
             base_judge_enabled,
             base_floor,
             base_markdown,
@@ -259,7 +233,6 @@ impl Wizard {
             remove_legacy: None,
             pending_model: String::new(),
             pending_keys: Vec::new(),
-            pending_local_gemma: false,
             transcript: Vec::new(),
             scroll_up: 0,
             stage: Stage::Welcome,
@@ -400,29 +373,8 @@ impl Wizard {
                         self.pending_keys.clear();
                         self.enter_stage(Stage::FoundryDeployment);
                     }
-                    3 => self.enter_stage(Stage::CompatBaseUrl),
-                    _ => self.enter_stage(Stage::LocalConfirm),
+                    _ => self.enter_stage(Stage::CompatBaseUrl),
                 }
-            }
-            Stage::LocalConfirm => {
-                let yes = selected == 0;
-                self.push_answer(if yes { "Yes" } else { "No" });
-                if yes {
-                    self.enter_stage(Stage::LocalChoice);
-                } else {
-                    self.push_note("Using the recommended hosted provider instead.");
-                    self.pending_keys.clear();
-                    self.enter_stage(Stage::AnthropicModel);
-                }
-            }
-            Stage::LocalChoice => {
-                self.pending_local_gemma = selected == 1;
-                self.push_answer(if self.pending_local_gemma {
-                    "Gemma 4 E4B"
-                } else {
-                    "Qwen2.5-1.5B"
-                });
-                self.enter_stage(Stage::LocalRepo);
             }
             Stage::JudgeEnabled => {
                 let yes = selected == 0;
@@ -475,7 +427,6 @@ impl Wizard {
                 let selection = AiSelection {
                     model: format!("anthropic:{}", self.pending_model),
                     keys: std::mem::take(&mut self.pending_keys),
-                    acknowledge_local: false,
                 };
                 self.finish_ai(selection);
             }
@@ -489,7 +440,6 @@ impl Wizard {
                 let selection = AiSelection {
                     model: format!("openai:{OPENAI_HOSTED_BASE_URL}#{}", self.pending_model),
                     keys: std::mem::take(&mut self.pending_keys),
-                    acknowledge_local: false,
                 };
                 self.finish_ai(selection);
             }
@@ -507,7 +457,6 @@ impl Wizard {
                 let selection = AiSelection {
                     model: format!("foundry:{}", self.pending_model),
                     keys: std::mem::take(&mut self.pending_keys),
-                    acknowledge_local: false,
                 };
                 self.finish_ai(selection);
             }
@@ -520,25 +469,6 @@ impl Wizard {
                 self.push_answer(&value);
                 let selection =
                     AiSelection::keyless(format!("openai:{}#{}", self.pending_model, value));
-                self.finish_ai(selection);
-            }
-            Stage::LocalRepo => {
-                self.push_answer(&value);
-                let selection = if self.pending_local_gemma {
-                    if init::looks_like_gemma_gguf(&value) {
-                        self.push_note(&format!(
-                            "Note: gemma GGUFs are not runnable by the bundled runtime — use \
-                             the safetensors repo (e.g. {}), which runs 4-bit-quantized \
-                             in-process. The repo stays editable in .lawlint/config.json.",
-                            lawlint_judge::DEFAULT_GEMMA_REPO
-                        ));
-                    }
-                    AiSelection::acknowledged_local(format!("local:{value}"))
-                } else if value == lawlint_judge::DEFAULT_LOCAL_REPO {
-                    AiSelection::acknowledged_local("local")
-                } else {
-                    AiSelection::acknowledged_local(format!("local:{value}"))
-                };
                 self.finish_ai(selection);
             }
             Stage::Floor => match value.parse::<f64>() {
@@ -591,20 +521,10 @@ impl Wizard {
         self.enter_stage(Stage::JudgeEnabled);
     }
 
-    /// All answers collected — apply the `--acknowledge-local` fixup, write the
-    /// config via the shared path, remove the legacy file if asked, and render
-    /// the summary. Returns `Some(Completed)` only after the user dismisses it.
+    /// All answers collected — write the config via the shared path, remove
+    /// the legacy file if asked, and render the summary. Returns
+    /// `Some(Completed)` only after the user dismisses it.
     fn finish(&mut self) -> Result<Option<SetupOutcome>, String> {
-        // `--acknowledge-local` attaches to a local selection (parity with the
-        // line flow); interactive local choices already carry it.
-        if self.acknowledge_local {
-            if let Some(selection) = &mut self.ai {
-                if init::is_local_spec(&selection.model) {
-                    selection.acknowledge_local = true;
-                }
-            }
-        }
-
         let answers = Answers {
             ai: self.ai.clone(),
             judge_enabled: self.judge_enabled,
@@ -753,7 +673,6 @@ impl Wizard {
                     .strip_prefix("openai:")
                     .and_then(|spec| spec.rsplit_once('#'))
                     .unwrap_or((DEFAULT_COMPAT_BASE_URL, DEFAULT_COMPAT_MODEL));
-                self.pending_local_gemma = false;
                 self.pending_model = base_url.to_string();
                 let _ = model;
                 self.text_stage("Base URL", base_url.to_string());
@@ -768,50 +687,6 @@ impl Wizard {
                     .unwrap_or(DEFAULT_COMPAT_MODEL)
                     .to_string();
                 self.text_stage("Model", default);
-            }
-            Stage::LocalConfirm => {
-                for line in LOCAL_CONSTRAINTS.lines() {
-                    self.push(Line::from(Span::styled(
-                        line.to_string(),
-                        Style::default().fg(DIM),
-                    )));
-                }
-                self.push_question("Use a local model with these constraints?", "");
-                self.mode = Mode::Menu(yes_no(self.ack_default));
-            }
-            Stage::LocalChoice => {
-                let is_gemma = |repo: &str| repo.to_lowercase().contains("gemma");
-                let default = if self.base_model.strip_prefix("local:").is_some_and(is_gemma) {
-                    1
-                } else {
-                    0
-                };
-                self.push_question("Which local model?", "");
-                self.mode = Mode::Menu(SelectList::new(
-                    LOCAL_CHOICE_OPTIONS.iter().map(|s| s.to_string()).collect(),
-                    default,
-                ));
-            }
-            Stage::LocalRepo => {
-                let is_gemma = |repo: &str| repo.to_lowercase().contains("gemma");
-                let (label, default) = if self.pending_local_gemma {
-                    let default = self
-                        .base_model
-                        .strip_prefix("local:")
-                        .filter(|repo| is_gemma(repo))
-                        .unwrap_or(lawlint_judge::DEFAULT_GEMMA_REPO)
-                        .to_string();
-                    ("Hugging Face repo (repo[#file])", default)
-                } else {
-                    let default = self
-                        .base_model
-                        .strip_prefix("local:")
-                        .filter(|repo| !repo.is_empty() && !is_gemma(repo))
-                        .unwrap_or(lawlint_judge::DEFAULT_LOCAL_REPO)
-                        .to_string();
-                    ("Hugging Face GGUF repo (repo[#file])", default)
-                };
-                self.text_stage(label, default);
             }
             Stage::JudgeEnabled => {
                 self.push_question(
@@ -1103,7 +978,7 @@ mod tests {
             legacy_path: PathBuf::from("lawlint.config.json"),
             source: SeedSource::Fresh,
         };
-        Wizard::new(PathBuf::from("."), seed, None, false, first_run, None)
+        Wizard::new(PathBuf::from("."), seed, None, first_run, None)
     }
 
     /// Flatten the transcript to plain text for substring assertions.
@@ -1152,7 +1027,6 @@ mod tests {
             Some(AiSelection {
                 model: "anthropic:claude-x".into(),
                 keys: vec![("ANTHROPIC_API_KEY".into(), "sk-ant-secret".into())],
-                acknowledge_local: false,
             })
         );
     }
@@ -1199,46 +1073,6 @@ mod tests {
         assert_eq!(w.stage, Stage::Markdown);
         assert_eq!(w.judge_enabled, Some(false));
         assert_eq!(w.floor, None);
-    }
-
-    #[test]
-    fn local_acknowledged_qwen_default_is_short_spec() {
-        let mut w = wizard(json!({}), false);
-        w.submit_menu(4).unwrap(); // Local (advanced)
-        assert_eq!(w.stage, Stage::LocalConfirm);
-        assert!(transcript_text(&w).contains("0.111")); // constraints shown
-        w.submit_menu(0).unwrap(); // acknowledge
-        assert_eq!(w.stage, Stage::LocalChoice);
-        w.submit_menu(0).unwrap(); // Qwen
-        assert_eq!(w.stage, Stage::LocalRepo);
-        type_and_submit(&mut w, ""); // accept the stock repo
-        assert_eq!(w.ai, Some(AiSelection::acknowledged_local("local")));
-        assert_eq!(w.stage, Stage::JudgeEnabled);
-    }
-
-    #[test]
-    fn local_gemma_gguf_repo_warns() {
-        let mut w = wizard(json!({}), false);
-        w.submit_menu(4).unwrap();
-        w.submit_menu(0).unwrap();
-        w.submit_menu(1).unwrap(); // Gemma
-        type_and_submit(&mut w, "unsloth/gemma-4-E4B-it-GGUF");
-        assert_eq!(
-            w.ai,
-            Some(AiSelection::acknowledged_local(
-                "local:unsloth/gemma-4-E4B-it-GGUF"
-            ))
-        );
-        assert!(transcript_text(&w).contains("not runnable"));
-    }
-
-    #[test]
-    fn local_decline_falls_back_to_hosted() {
-        let mut w = wizard(json!({}), false);
-        w.submit_menu(4).unwrap();
-        w.submit_menu(1).unwrap(); // decline the constraints
-        assert_eq!(w.stage, Stage::AnthropicModel);
-        assert!(transcript_text(&w).contains("recommended hosted provider"));
     }
 
     #[test]
@@ -1300,7 +1134,6 @@ mod tests {
             seed,
             Some(AiSelection::keyless("foundry:d")),
             false,
-            false,
             None,
         );
         assert_eq!(w.stage, Stage::JudgeEnabled);
@@ -1321,7 +1154,7 @@ mod tests {
             legacy_path: dir.join("lawlint.config.json"),
             source: SeedSource::Fresh,
         };
-        let mut w = Wizard::new(dir.clone(), seed, None, false, false, None);
+        let mut w = Wizard::new(dir.clone(), seed, None, false, None);
         // Hosted Anthropic default, judge off, markdown off, no scaffold.
         w.submit_menu(0).unwrap();
         type_and_submit(&mut w, "");
