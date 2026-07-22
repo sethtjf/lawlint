@@ -527,12 +527,16 @@ pub fn run_judge_with_progress(
     let total = reqs.len();
     on_progress(0, total);
 
-    let workers = judge.max_concurrency().clamp(1, total.max(1));
+    // The worker count is scoped to this branch: on wasm it would be a dead
+    // binding, and core builds for wasm with `-D warnings`.
     #[cfg(not(target_arch = "wasm32"))]
-    let fetched = if workers > 1 {
-        fetch_parallel(judge, cache, reqs, workers, on_progress)
-    } else {
-        fetch_serial(judge, cache, reqs, on_progress)
+    let fetched = {
+        let workers = judge.max_concurrency().clamp(1, total.max(1));
+        if workers > 1 {
+            fetch_parallel(judge, cache, reqs, workers, on_progress)
+        } else {
+            fetch_serial(judge, cache, reqs, on_progress)
+        }
     };
     // wasm has no threads; core must stay wasm-safe (design invariant 7).
     #[cfg(target_arch = "wasm32")]
