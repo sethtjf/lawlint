@@ -103,12 +103,6 @@ enum Command {
         /// foundry:<deployment>, local:<hf-repo>[#<gguf>]).
         #[arg(long, value_name = "MODEL")]
         ai: Option<String>,
-        /// Acknowledge the local-model constraints (multi-GB download,
-        /// slower inference, measurably lower quality — docs/eval-corpus.md)
-        /// non-interactively; writes ai.localAcknowledged. Only meaningful
-        /// with a local model selection.
-        #[arg(long)]
-        acknowledge_local: bool,
     },
     /// Mine a personal rule package from your own prior writing: a local
     /// statistical pass over the full corpus, then an AI mining pass over a
@@ -274,7 +268,6 @@ fn layer_options(mut base: LintOptions, over: LintOptions) -> LintOptions {
         (Some(base_ai), Some(over_ai)) => Some(lawlint_core::AiOptions {
             model: over_ai.model.or(base_ai.model),
             features: merge_map(base_ai.features, over_ai.features),
-            local_acknowledged: over_ai.local_acknowledged.or(base_ai.local_acknowledged),
         }),
         (base_ai, over_ai) => over_ai.or(base_ai),
     };
@@ -383,9 +376,10 @@ pub(crate) enum AiOff {
     NoModel,
     /// A model is configured but its key is missing.
     NoCredentials(&'static str),
-    /// A `local:` model whose constraints have not been acknowledged. Running
-    /// it automatically would mean a multi-GB download nobody asked for.
-    LocalNotAcknowledged,
+    /// A `local:` model left over from before in-process inference was
+    /// removed. The automatic path reports it rather than erroring: a stale
+    /// config should cost the AI tier, not the whole lint.
+    LocalRemoved,
 }
 
 impl AiOff {
@@ -394,7 +388,7 @@ impl AiOff {
             AiOff::OptedOut => "disabled".into(),
             AiOff::NoModel => "no credentials".into(),
             AiOff::NoCredentials(name) => format!("no {name}"),
-            AiOff::LocalNotAcknowledged => "local model not acknowledged".into(),
+            AiOff::LocalRemoved => "local models removed".into(),
         }
     }
 
@@ -404,9 +398,7 @@ impl AiOff {
         match self {
             AiOff::OptedOut => None,
             AiOff::NoModel | AiOff::NoCredentials(_) => Some("Set up AI review: lawlint init"),
-            AiOff::LocalNotAcknowledged => {
-                Some("Acknowledge local-model constraints: lawlint init")
-            }
+            AiOff::LocalRemoved => Some("Local models were removed; pick a backend: lawlint init"),
         }
     }
 }
@@ -436,66 +428,67 @@ pub(crate) fn ai_decision(
     if config.judge.as_ref().and_then(|judge| judge.enabled) == Some(false) {
         return Ok(Err(AiOff::OptedOut));
     }
-    if config.judge.as_ref().and_then(|judge| judge.enabled) == Some(true) {
-        return judge_spec(&None, config).map(|model| model.ok_or(AiOff::OptedOut));
-    }
-    let Some(model) = config
+    let configured = config
         .judge
         .as_ref()
         .and_then(|judge| judge.model.clone())
-        .or_else(|| config.ai_model("judge"))
-    else {
+        .or_else(|| config.ai_model("judge"));
+    // Checked before `judge.enabled: true` is honored, so a config carried
+    // over from before 0.9 reports the AI tier as skipped instead of letting
+    // the judge fail per chunk and leaving the summary claiming the soft
+    // rules ran and found nothing — an unearned score is the failure this
+    // reporting exists to prevent.
+    if configured
+        .as_deref()
+        .is_some_and(|model| model == "local" || model.starts_with("local:"))
+    {
+        return Ok(Err(AiOff::LocalRemoved));
+    }
+    if config.judge.as_ref().and_then(|judge| judge.enabled) == Some(true) {
+        return judge_spec(&None, config).map(|model| model.ok_or(AiOff::OptedOut));
+    }
+    let Some(model) = configured else {
         return Ok(Err(AiOff::NoModel));
     };
-    if (model == "local" || model.starts_with("local:"))
-        && config.ai.as_ref().and_then(|ai| ai.local_acknowledged) != Some(true)
-    {
-        return Ok(Err(AiOff::LocalNotAcknowledged));
-    }
     Ok(match lawlint_judge::credentials_ready(&model) {
         Ok(()) => Ok(model),
         Err(lawlint_judge::NotReady::MissingKey(name)) => Err(AiOff::NoCredentials(name)),
     })
 }
 
-/// One-line constraints notice for local-model use while the config has not
-/// acknowledged the local constraints (#50). Explicit `local:` specs keep
-/// working — this only informs. `None` = nothing to print (hosted spec, or
-/// `ai.localAcknowledged: true`).
-pub(crate) fn local_notice(spec: &str, config: &LintOptions) -> Option<String> {
+/// One-line migration notice for a config still naming the removed
+/// in-process backend. `None` = nothing to print.
+pub(crate) fn local_notice(spec: &str) -> Option<String> {
     if spec != "local" && !spec.starts_with("local:") {
         return None;
     }
-    if config.ai.as_ref().and_then(|ai| ai.local_acknowledged) == Some(true) {
-        return None;
-    }
     Some(format!(
-        "lawlint: note: {spec} is a local model — multi-GB first-use download, slower \
-         inference, and measurably lower quality than hosted backends (tier-3 F1 0.111 \
-         empty-hedge, 0.000 padded-elaboration; docs/eval-corpus.md); run `lawlint init` \
-         to switch or acknowledge (sets ai.localAcknowledged and silences this notice)"
+        "lawlint: note: {spec} names the in-process local backend, removed in 0.9 \
+         (it could not judge these rules — docs/eval-corpus.md). To keep text on this \
+         machine, run an OpenAI-compatible server such as Ollama and set \
+         \"openai:http://localhost:11434/v1#<model>\"; `lawlint init` will do it for you"
     ))
 }
 
 /// Build the judge + disk cache. A cache failure is not fatal (judge runs
 /// uncached); a judge build failure is reported to the caller, who falls
 /// back to tiers 1-2.
-/// `options` with the backend's profile filled in wherever the user left it
+/// `options` with the judge defaults filled in wherever the user left them
 /// unset — request shaping and the generation budget both. An explicit config
-/// value always wins; the profile is a default, not an override.
+/// value always wins; these are defaults, not overrides.
 ///
 /// The budget is resolved here rather than left to each backend's own
 /// fallback: only `FoundryClient` defaults high enough for a reasoning model,
 /// so an `anthropic:`/`openai:` thinking model would otherwise inherit ax's
 /// default and truncate to empty output.
-fn with_backend_defaults(options: &LintOptions, model: &str) -> LintOptions {
-    let profile = lawlint_judge::plan_for_model(model);
+fn with_backend_defaults(options: &LintOptions) -> LintOptions {
+    let profile = lawlint_judge::default_plan();
     let mut options = options.clone();
     let judge = options.judge.get_or_insert_with(JudgeOptions::default);
     judge.context_chars.get_or_insert(profile.context_chars);
     judge.per_rule.get_or_insert(profile.per_rule);
     if judge.max_tokens.is_none() {
-        judge.max_tokens = lawlint_judge::default_max_tokens_for(model);
+        judge.max_tokens = Some(lawlint_judge::DEFAULT_HOSTED_MAX_TOKENS);
     }
     options
 }
@@ -544,7 +537,7 @@ pub(crate) fn lint_text_with_progress(
     };
     // Backend defaults are resolved here — the only place the model spec is
     // known — then handed to core as plain numbers and to the judge as options.
-    let options = &with_backend_defaults(options, &model);
+    let options = &with_backend_defaults(options);
     let judge_options = options.judge.clone().unwrap_or_default();
     match build_judge(model, &judge_options) {
         Ok((judge, cache)) => {
@@ -1357,10 +1350,7 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
     let decision = ai_decision(&cli.judge, cli.no_ai, &config)?;
     let judge = decision.as_ref().ok().cloned();
     let ai_off = decision.as_ref().err();
-    if let Some(notice) = judge
-        .as_deref()
-        .and_then(|spec| local_notice(spec, &config))
-    {
+    if let Some(notice) = judge.as_deref().and_then(local_notice) {
         eprintln!("{notice}");
     }
     let options = merge_options(config, cli_options(cli, markdown));
@@ -1755,10 +1745,7 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
     } else {
         judge_spec(judge_flag, &config)?
     };
-    if let Some(notice) = judge_model
-        .as_deref()
-        .and_then(|spec| local_notice(spec, &config))
-    {
+    if let Some(notice) = judge_model.as_deref().and_then(local_notice) {
         eprintln!("{notice}");
     }
     let mut judge_state: Option<JudgeState> = None;
@@ -1769,12 +1756,8 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
         judge: config.judge.clone(),
         ..LintOptions::default()
     };
-    // Rule examples are single sentences, so the plan never splits them; the
-    // per-rule/bundled choice and the token budget still follow the backend.
-    let options = judge_model.as_deref().map_or_else(
-        || options.clone(),
-        |model| with_backend_defaults(&options, model),
-    );
+    // Rule examples are single sentences, so the plan never splits them.
+    let options = with_backend_defaults(&options);
     let judge_options = options.judge.clone().unwrap_or_default();
 
     for file in &files {
@@ -1912,18 +1895,12 @@ fn launch_tui() -> Result<i32, String> {
 /// `lawlint init`: an interactive terminal gets the ratatui wizard and then
 /// drops into the TUI; anything scripted (`--yes`, a pipe, CI) takes the
 /// line-oriented walkthrough and exits, unchanged.
-fn init_command(
-    yes: bool,
-    force: bool,
-    ai: Option<&str>,
-    acknowledge_local: bool,
-) -> Result<i32, String> {
+fn init_command(yes: bool, force: bool, ai: Option<&str>) -> Result<i32, String> {
     let interactive = !yes && io::stdin().is_terminal() && io::stdout().is_terminal();
     if interactive {
         match init_tui::run_setup(init_tui::SetupContext::Explicit {
             force,
             ai: ai.map(str::to_string),
-            acknowledge_local,
         })? {
             init_tui::SetupOutcome::Completed => tui::run_tui(),
             // Explicit init has no "skip"; a user who bailed out gets a
@@ -1931,7 +1908,7 @@ fn init_command(
             init_tui::SetupOutcome::Aborted | init_tui::SetupOutcome::Skipped => Ok(1),
         }
     } else {
-        init::init_command(yes, force, ai, acknowledge_local)
+        init::init_command(yes, force, ai)
     }
 }
 
@@ -1944,12 +1921,7 @@ fn run(cli: Cli) -> Result<i32, String> {
     }
 
     match &cli.command {
-        Some(Command::Init {
-            yes,
-            force,
-            ai,
-            acknowledge_local,
-        }) => init_command(*yes, *force, ai.as_deref(), *acknowledge_local),
+        Some(Command::Init { yes, force, ai }) => init_command(*yes, *force, ai.as_deref()),
         Some(Command::Learn { path, out, model }) => {
             learn::learn_command(path, out, model.as_deref())
         }
@@ -2094,41 +2066,6 @@ mod tests {
     }
 
     #[test]
-    fn local_notice_fires_only_for_unacknowledged_local_specs() {
-        use lawlint_core::AiOptions;
-        let off = LintOptions::default();
-        // Local specs draw the notice while unacknowledged…
-        for spec in ["local", "local:me/repo-GGUF", "local:me/repo-GGUF#m.gguf"] {
-            let notice = local_notice(spec, &off).expect(spec);
-            assert!(notice.contains("docs/eval-corpus.md"), "{notice}");
-            assert!(notice.contains("0.111"), "{notice}");
-            assert!(notice.contains("lawlint init"), "{notice}");
-        }
-        // …hosted specs never do.
-        for spec in ["anthropic:m", "openai:http://x/v1#m", "foundry:d"] {
-            assert_eq!(local_notice(spec, &off), None, "{spec}");
-        }
-        // An acknowledged config silences it.
-        let acknowledged = options_with(|o| {
-            o.ai = Some(AiOptions {
-                model: Some("local".into()),
-                local_acknowledged: Some(true),
-                ..Default::default()
-            });
-        });
-        assert_eq!(local_notice("local", &acknowledged), None);
-        // Explicitly false behaves like unset.
-        let unacknowledged = options_with(|o| {
-            o.ai = Some(AiOptions {
-                model: Some("local".into()),
-                local_acknowledged: Some(false),
-                ..Default::default()
-            });
-        });
-        assert!(local_notice("local", &unacknowledged).is_some());
-    }
-
-    #[test]
     fn judge_spec_resolves_from_ai_preferences() {
         use lawlint_core::AiOptions;
         // No judge.model: the ai section supplies the spec.
@@ -2158,13 +2095,12 @@ mod tests {
         let with_override = options_with(|o| {
             o.judge = prefs.judge.clone();
             o.ai = Some(AiOptions {
-                model: Some("local".into()),
+                model: Some("foundry:d".into()),
                 features: Some(
                     [("judge".to_string(), "anthropic:m".to_string())]
                         .into_iter()
                         .collect(),
                 ),
-                ..Default::default()
             });
         });
         assert_eq!(
@@ -2309,24 +2245,6 @@ mod tests {
         assert_eq!(
             ai_decision(&None, false, &config).unwrap(),
             Ok("openai:http://x#m".to_string())
-        );
-    }
-
-    #[test]
-    fn a_local_model_does_not_auto_enable_until_acknowledged() {
-        // Auto-enabling `local:` would mean a multi-GB download nobody asked
-        // for, so readiness alone is not enough here.
-        let config = ai_config(json!({"ai": {"model": "local:some/repo"}}));
-        assert_eq!(
-            ai_decision(&None, false, &config).unwrap(),
-            Err(AiOff::LocalNotAcknowledged)
-        );
-        let acknowledged = ai_config(json!({
-            "ai": {"model": "local:some/repo", "localAcknowledged": true}
-        }));
-        assert_eq!(
-            ai_decision(&None, false, &acknowledged).unwrap(),
-            Ok("local:some/repo".to_string())
         );
     }
 

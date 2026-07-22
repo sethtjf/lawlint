@@ -34,10 +34,9 @@ The walkthrough asks which AI model lawlint should use. Hosted providers
 stored in a user-level credential file — never in your project.
 
 Once a model and its key are configured, **the soft rules run on every lint**,
-including from directories that contain no project config. Nothing is
-downloaded silently: a `local:` model still waits for the explicit
-acknowledgment `init` asks for, and with no model configured the soft rules are
-skipped and the summary says so. `--no-ai` turns them off for a run.
+including from directories that contain no project config. With no model
+configured the soft rules are skipped and the summary says so. `--no-ai` turns
+them off for a run.
 
 The [download page](https://lawlint.com/download) also has the unsigned desktop
 app for macOS and Windows, plus direct CLI archives for every supported
@@ -69,7 +68,6 @@ you it did.
   "ai": {
     "model": "anthropic:claude-haiku-4-5-20251001", // default for all AI features
     "features": { "judge": "...", "learn": "..." }, // optional per-feature overrides
-    "localAcknowledged": false                       // set by init's local-model consent step
   },
   "judge": {
     "enabled": true,              // force the soft rules on/off; omit to let
@@ -86,25 +84,30 @@ you it did.
 }
 ```
 
-**Hosted vs local models.** Hosted providers are the recommended path: better
-quality, no downloads. API keys go to a user-level credential file
+**Models.** Every backend is a remote endpoint; lawlint runs no inference
+in-process. API keys go to a user-level credential file
 (`~/.lawlint/credentials`, `0600`), or set `ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY` / `AZURE_FOUNDRY_API_KEY` in the environment (env wins).
-Local models (Qwen 2.5, Gemma — via the embedded mistral.rs runtime) remain
-available as an explicit advanced choice: they involve multi-GB downloads,
-slower inference, and measurably lower quality (see `docs/eval-corpus.md`),
-and init asks you to acknowledge that before enabling one. Non-interactive
-setup: `lawlint init --yes` (hosted default), or `--ai qwen
---acknowledge-local` for a local model.
+Non-interactive setup: `lawlint init --yes` (hosted default) or `--ai <spec>`.
 
-**How soft rules are batched.** Every field above has a backend-derived
-default, so the defaults track the model rather than a constant. Hosted
-backends get `contextChars: 24000` and `perRule: true` — each rule is judged
-in its own request seeing the whole document (or a few large sections), and
-requests run `concurrency` at a time. `local:` backends keep small sections
-with every rubric bundled into one request and stay sequential, because a
-1.5B model degrades on long context and a second in-process copy would mean a
-second multi-GB model load.
+**Keeping text on your machine.** Point `openai:` at a server you run — no API
+key required, and nothing but that server sees the text:
+
+```sh
+ollama serve && ollama pull qwen3:30b
+lawlint init --ai openai:http://localhost:11434/v1#qwen3:30b
+```
+
+lawlint embedded a 1.5B model for this until 0.9. It was removed because it
+could not do the job — F1 0.111 on `empty-hedge` and 0.000 on
+`padded-elaboration`, with 38 of 330 sections failing outright
+(`docs/eval-corpus.md`). Serving a larger model yourself is both more private
+and far better than that was.
+
+**How soft rules are batched.** The defaults — `contextChars: 24000`,
+`perRule: true` — judge each rule in its own request seeing the whole document
+(or a few large sections), `concurrency` at a time. For a small self-hosted
+model, lower `contextChars` and set `perRule: false`.
 
 Per-rule requests each carry the document, which sounds expensive and isn't:
 the prompt puts the document *before* the rubric, so every rule request over

@@ -36,9 +36,13 @@ impl LintOptions {
 }
 
 /// The `ai` config section: which model powers AI features. Specs share the
-/// judge's grammar (`local[:<hf-repo>[#<gguf>]]`, `anthropic:<model>`,
-/// `openai:<base-url>#<model>`, `foundry:<deployment>`). API keys never live
-/// here — they stay in the user-level credential store or the environment.
+/// judge's grammar (`anthropic:<model>`, `openai:<base-url>#<model>`,
+/// `foundry:<deployment>`). API keys never live here — they stay in the
+/// user-level credential store or the environment.
+///
+/// The removed `localAcknowledged` field is intentionally not carried as a
+/// deprecated stub: serde ignores unknown fields, so a config written before
+/// in-process models were dropped still deserializes untouched.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiOptions {
@@ -46,12 +50,6 @@ pub struct AiOptions {
     pub model: Option<String>,
     /// Per-feature overrides keyed by feature name ("judge", "learn", …).
     pub features: Option<HashMap<String, String>>,
-    /// `true` = the user has acknowledged the local-model constraints
-    /// (multi-GB download, slower inference, measurably lower quality —
-    /// docs/eval-corpus.md). Written by `lawlint init`'s advanced local
-    /// path; while unset, consumers print a one-line constraints notice
-    /// whenever a `local:` spec is used.
-    pub local_acknowledged: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -66,7 +64,7 @@ pub struct JudgeOptions {
     /// output and fails every chunk closed. `None` uses the backend default.
     pub max_tokens: Option<usize>,
     /// How many judge requests may be in flight at once. `None` uses the
-    /// backend default; local in-process models ignore it and stay at 1.
+    /// backend default.
     pub concurrency: Option<usize>,
     /// Max chars of document text per judge request. Larger units mean fewer
     /// requests and more context per call, at the cost of coarser cache
@@ -129,22 +127,27 @@ mod tests {
     #[test]
     fn ai_section_deserializes_camel_case() {
         let o: LintOptions = serde_json::from_str(
-            r#"{"ai": {"model": "local", "features": {"judge": "anthropic:m"}}}"#,
+            r#"{"ai": {"model": "anthropic:m", "features": {"judge": "foundry:d"}}}"#,
         )
         .unwrap();
         let ai = o.ai.as_ref().unwrap();
-        assert_eq!(ai.model.as_deref(), Some("local"));
+        assert_eq!(ai.model.as_deref(), Some("anthropic:m"));
         assert_eq!(
             ai.features.as_ref().unwrap().get("judge").unwrap(),
-            "anthropic:m"
+            "foundry:d"
         );
-        // Absent acknowledgment field stays None (notice keeps printing).
-        assert!(ai.local_acknowledged.is_none());
+    }
 
+    /// Configs written before in-process models were removed still carry
+    /// `localAcknowledged`. Reading one must not be a hard error — a stale
+    /// field is not a reason to refuse to lint. The stale `ai.model` is
+    /// rejected later, by the judge, with migration guidance.
+    #[test]
+    fn legacy_local_acknowledged_field_is_ignored_not_rejected() {
         let o: LintOptions =
             serde_json::from_str(r#"{"ai": {"model": "local", "localAcknowledged": true}}"#)
-                .unwrap();
-        assert_eq!(o.ai.unwrap().local_acknowledged, Some(true));
+                .expect("a pre-0.9 config must still deserialize");
+        assert_eq!(o.ai.unwrap().model.as_deref(), Some("local"));
     }
 
     #[test]
@@ -153,22 +156,21 @@ mod tests {
         assert_eq!(o.ai_model("judge"), None);
 
         o.ai = Some(AiOptions {
-            model: Some("local".into()),
+            model: Some("anthropic:m".into()),
             ..Default::default()
         });
-        assert_eq!(o.ai_model("judge"), Some("local".into()));
+        assert_eq!(o.ai_model("judge"), Some("anthropic:m".into()));
 
         o.ai = Some(AiOptions {
-            model: Some("local".into()),
+            model: Some("foundry:d".into()),
             features: Some(
                 [("judge".to_string(), "anthropic:m".to_string())]
                     .into_iter()
                     .collect(),
             ),
-            ..Default::default()
         });
         assert_eq!(o.ai_model("judge"), Some("anthropic:m".into()));
         // Unknown feature falls back to the default model.
-        assert_eq!(o.ai_model("learn"), Some("local".into()));
+        assert_eq!(o.ai_model("learn"), Some("foundry:d".into()));
     }
 }

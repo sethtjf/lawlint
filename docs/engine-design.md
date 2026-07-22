@@ -433,7 +433,7 @@ docs/eval-corpus.md.
 ("It could perhaps be argued that…" bad; "Damages are uncertain because treatment is ongoing" fine).
 `padded-elaboration`: flag sentences/clauses that restate the previous point with
 no new information (AI padding). Both need ≥3 flag + ≥3 pass examples, rubrics
-written for a small local judge model (short, concrete, no meta-instructions).
+written to be short and concrete, with no meta-instructions.
 
 ## 10. `crates/lawlint-judge` (phase 2, native-only)
 
@@ -444,30 +444,25 @@ retry) is backend-independent; backends are `AxAIClient` implementations:
 1. **`AxJudge`**: implements `lawlint_core::Judge` over `Box<dyn axllm::AxAIClient>`.
    Uses an ax signature to produce the `JudgeFinding[]` JSON contract (§7). One judge,
    any backend. Trait is sync; wrap ax's async internals in a private tokio runtime.
-2. **`MistralRsClient` (`local:` specs — an explicit, acknowledged opt-in since #50,
-   not a default)**: custom `AxAIClient` impl — required method is
-   just `chat(&mut self, request: Value) -> AxResult<Value>` (verified, axllm v23,
-   dyn-compatible). Runs **mistral.rs** inference in-process (`mistralrs`): a
-   quantized small instruct GGUF (default Qwen2.5-1.5B-Instruct) via the GGUF
-   loader, or a safetensors repo (the Gemma 4 series) auto-detected and quantized
-   in situ to Q4K. CPU/Metal, lazy model download into the standard HF cache,
-   deterministic (temp-0) sampling; chat templates/tokenization owned by
-   mistral.rs. Parses the incoming chat-completions-shaped request and returns a
-   chat-completions-shaped response (`choices[0].message.content`). The client
-   owns a small tokio runtime bridging ax's blocking `chat` to mistral.rs' async
-   SDK. (Day one shipped a hand-rolled candle client; swapped for mistral.rs to
-   run the Gemma 4 series, whose GGUF architecture candle cannot load.)
-3. **Cloud backends (feature `cloud`)**: stock ax clients — `OpenAICompatibleClient`
-   (custom base URL; also covers any local OpenAI-compatible server such as an
-   Ollama/vLLM/llama.cpp sidecar), Anthropic, Gemini, etc. Zero judge-logic changes.
+2. **Remote backends only**: stock ax clients — `OpenAICompatibleClient` (custom
+   base URL; covers api.openai.com and any self-hosted OpenAI-compatible server
+   such as an Ollama/vLLM/llama.cpp sidecar) and Anthropic — plus `FoundryClient`
+   for Azure AI Foundry. All are blocking HTTP; ax v23's `chat` is blocking, so no
+   async runtime is needed anywhere.
+3. **No in-process inference (removed in 0.9).** `MistralRsClient` embedded a
+   mistral.rs runtime behind `local:` specs. It was removed because models small
+   enough to embed cannot judge these rules: tier-3 F1 0.111 (`empty-hedge`) and
+   0.000 (`padded-elaboration`), 38 of 330 chunks failing closed
+   (docs/eval-corpus.md). Removing it also drops the `mistralrs`/`hf-hub`/`tokio`
+   dependencies and the `cloud` feature flag, which no longer distinguishes
+   anything. Running privately is still supported and strictly better served by
+   `openai:` pointed at a locally-run server, which needs no API key.
 4. Backend selection: `create_judge(&JudgeOptions) -> Result<Box<dyn Judge>>` keyed on
-   `model` (`anthropic:<model>`, `openai:<base-url>#<model>`, `foundry:<deployment>`,
-   `local:<hf-repo>`). **There is no default backend (#50)**: `model: None` errors with
-   `lawlint init` guidance — the measured local-judge quality (tier-3 F1 0.111/0.000,
-   docs/eval-corpus.md) plus the multi-GB download cost make hosted providers the
-   recommended path, and a silent local download the wrong surprise. `local:` specs
-   stay fully supported as an explicit opt-in; consumers print a one-line constraints
-   notice until the config records `ai.localAcknowledged: true`.
+   `model` (`anthropic:<model>`, `openai:<base-url>#<model>`, `foundry:<deployment>`).
+   **There is no default backend**: `model: None` errors with `lawlint init`
+   guidance rather than guessing a provider the user may have no key for. A
+   `local:` spec errors with migration guidance naming the Ollama URL form —
+   it used to work, so hitting it means a config to fix, not a typo.
 Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or in CLI.
 
 ## 11. Consumers (phase 2)
@@ -478,19 +473,17 @@ Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or i
 
 ### CLI `init` (added post-v0.3.0)
 
-- `lawlint init [--yes] [--force] [--ai MODEL] [--acknowledge-local]` — interactive project
-  setup writing `.lawlint/config.json`: AI-model catalog hosted-first (#50 — Anthropic
-  preselected, then OpenAI, Azure Foundry, OpenAI-compatible endpoint; local models behind
-  a final advanced entry that states the measured constraints and requires acknowledgment,
-  persisted as `ai.localAcknowledged`), judge enable, confidence floor (written only when
+- `lawlint init [--yes] [--force] [--ai MODEL]` — interactive project
+  setup writing `.lawlint/config.json`: AI-model catalog (Anthropic preselected, then
+  OpenAI, Azure Foundry, and a self-hosted OpenAI-compatible endpoint — the last being
+  how text stays on the machine), judge enable, confidence floor (written only when
   ≠ 0.6), markdown default, and an optional starter rules package (`.lawlint/rules/` —
   `style.yaml` named after the project directory + one example phrase rule, wired up via
   `ruleDirs`; existing package files are never overwritten).
 - Prompts read stdin line-by-line; empty line or EOF accepts the shown default, so piped/CI
   runs degrade to defaults instead of hanging. `--yes` skips prompts; `--force` overwrites an
   existing `.lawlint/config.json` (exit 2 otherwise); `--ai MODEL` answers the catalog
-  non-interactively and `--acknowledge-local` is the non-interactive constraints
-  acknowledgment for local selections.
+  non-interactively.
 - A legacy `lawlint.config.json` seeds the prompt defaults; its uncovered keys
   (enable/disable/severity/thresholds/…) carry over verbatim, and the interactive flow offers
   to delete the legacy file (`--yes` always keeps it).

@@ -19,7 +19,6 @@ Configuration is optional. Linting works with none at all.
   "ai": {
     "model": "anthropic:claude-haiku-4-5-20251001",
     "features": { "judge": "...", "learn": "..." },
-    "localAcknowledged": false
   }
 }
 ```
@@ -45,15 +44,14 @@ are never stored here.
 <TypeTable type={{
   enabled: { type: "boolean", description: "Run the soft-rule judge on every lint, without passing --judge." },
   floor: { type: "number", default: "0.6", description: "Minimum confidence for a judge finding to be reported. Findings below it are dropped before scoring." },
-  maxTokens: { type: "number", description: "Tokens the model may generate per request. Defaults to 16384 for hosted backends; local: keeps its own smaller cap." },
-  concurrency: { type: "number", default: "4", description: "Requests in flight at once. Hosted backends only — local: is always 1, since each client owns its own in-process model." },
-  contextChars: { type: "number", description: "Document text per request. Defaults to 24000 for hosted backends, 1200 for local:." },
-  perRule: { type: "boolean", description: "Send one request per rule instead of one per section carrying every rubric. Defaults to true for hosted backends, false for local:." },
+  maxTokens: { type: "number", default: "16384", description: "Tokens the model may generate per request, including any hidden reasoning tokens." },
+  concurrency: { type: "number", default: "4", description: "Requests in flight at once." },
+  contextChars: { type: "number", default: "24000", description: "Document text per request. Also the cache granule." },
+  perRule: { type: "boolean", default: "true", description: "Send one request per rule instead of one per section carrying every rubric." },
 }} />
 
-Every field except `enabled` and `floor` has a **backend-derived default**, so
-the defaults track the model rather than a fixed constant. Setting one
-explicitly always wins.
+The defaults suit a capable hosted model. If you point lawlint at a small
+self-hosted model, lower `contextChars` and set `perRule: false`.
 
 The two shaping fields are worth understanding together:
 
@@ -79,7 +77,6 @@ reports that it failed on every section, this is almost always why — see
 <TypeTable type={{
   model: { type: "string", description: "Default model spec for every AI feature." },
   features: { type: "Record<string, string>", description: "Per-feature overrides keyed by feature name (\"judge\", \"learn\", …). Takes precedence over `model`." },
-  localAcknowledged: { type: "boolean", description: "Set by init's local-model consent step. While unset, a local: spec prints a one-line constraints notice on every use." },
 }} />
 
 API keys are **not** part of this file. They live in

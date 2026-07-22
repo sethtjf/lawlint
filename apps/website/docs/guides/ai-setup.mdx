@@ -44,34 +44,43 @@ Before 0.8 the credential file lived at `~/.config/lawlint/credentials`. It is
 still read from there, and the next `lawlint init` moves it to `~/.lawlint/`
 and reports the move.
 
-## Local models
+## Keeping text on your machine
 
-Local models — Qwen 2.5 and Gemma, via the embedded `mistral.rs` runtime —
-remain available as an explicit advanced choice.
+lawlint has no built-in model. If the document must not leave your machine —
+privileged material, a client matter under an engagement term that forbids it —
+run an OpenAI-compatible server yourself and point lawlint at it:
 
-:::warning[Local models are measurably worse]
-They involve multi-gigabyte downloads, noticeably slower inference, and lower
-judgement quality than the hosted providers. `init` asks you to acknowledge
-that before enabling one, and records the acknowledgement as
-`ai.localAcknowledged`.
+```sh
+ollama serve && ollama pull qwen3:30b
+lawlint init --ai openai:http://localhost:11434/v1#qwen3:30b
+```
+
+That spec needs **no API key**, and nothing but your own server ever sees the
+text. Ollama, vLLM, llama.cpp and LM Studio all speak this protocol.
+
+:::note[Judgement quality still depends on the model]
+The soft rules ask for judgement a small model cannot make. lawlint used to
+embed a 1.5B model for this; it was removed in 0.9 because it scored F1 0.111
+on `empty-hedge` and 0.000 on `padded-elaboration`, failing 38 of 330 sections
+outright. Serving a larger model yourself is both more private and far better
+than that was — but a 1–3B model behind `openai:` will do no better. Prefer the
+largest model your hardware serves comfortably, and consider lowering
+`judge.contextChars` and setting `judge.perRule: false` for a small one.
 :::
-
-Spec: `local:<hf-repo>[#<gguf>]`.
 
 ## Non-interactive setup
 
 ```sh
 lawlint init --yes                          # accept defaults (hosted)
 lawlint init --ai anthropic:claude-haiku-4-5-20251001
-lawlint init --ai qwen --acknowledge-local  # a local model, unattended
+lawlint init --ai openai:http://localhost:11434/v1#qwen3:30b  # self-hosted
 lawlint init --force                        # overwrite an existing config
 ```
 
 <TypeTable type={{
   "--yes": { type: "flag", description: "Accept the default answer for every prompt." },
   "--force": { type: "flag", description: "Overwrite an existing .lawlint/config.json." },
-  "--ai": { type: "string", description: "Model preference, skipping the catalog prompt: qwen, gemma, or a full spec." },
-  "--acknowledge-local": { type: "flag", description: "Acknowledge the local-model constraints without a prompt. Only meaningful with a local model." },
+  "--ai": { type: "string", description: "Model spec, skipping the catalog prompt (anthropic:<model>, openai:<base-url>#<model>, foundry:<deployment>)." },
 }} />
 
 ## What it writes
@@ -82,7 +91,6 @@ lawlint init --force                        # overwrite an existing config
   "ai": {
     "model": "anthropic:claude-haiku-4-5-20251001",
     "features": { "judge": "...", "learn": "..." },
-    "localAcknowledged": false
   },
   "judge": { "enabled": false },
   "markdown": false,
