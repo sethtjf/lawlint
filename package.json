@@ -14,12 +14,14 @@
     "dev": "bun run --cwd apps/website dev",
     "desktop:dev": "bun run --cwd apps/desktop tauri dev",
     "desktop:build": "bun run --cwd apps/desktop tauri build",
+    "check:commits": "bun run scripts/check-commit-messages.mjs",
     "lint": "bunx biome check apps/website",
     "typecheck": "bun run wasm:build && bunx tsc --noEmit -p apps/website/tsconfig.json",
     "test": "cargo test --workspace"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@conventional-commits/parser": "^0.4.1",
     "typescript": "^5.7.2"
   }
 }

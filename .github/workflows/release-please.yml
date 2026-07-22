@@ -33,6 +33,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Safety net behind the PR-time check in ci.yml, for messages edited in the
+  # merge box after CI ran. Deliberately a separate job: a bad message must not
+  # block release-please from releasing the *good* commits around it, so this
+  # only turns the workflow red. It answers "why is there no release PR?"
+  # immediately, instead of at the next release.
+  commit-messages:
+    name: Commit messages are parseable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Check every commit since the last release
+        run: |
+          version=$(jq -r '."."' .github/.release-please-manifest.json)
+          bun run scripts/check-commit-messages.mjs --since "v$version"
+
   release-please:
     name: Maintain release PR
     runs-on: ubuntu-latest
