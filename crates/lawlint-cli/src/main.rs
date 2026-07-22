@@ -617,7 +617,11 @@ fn apply_docx_fixes(file: &str, diagnostics: &[Diagnostic]) -> Result<(), String
         &lawlint_docx::ReviseOptions::default(),
     )
     .map_err(|error| format!("failed to apply fixes to {file}: {error}"))?;
-    if result.applied > 0 {
+    // Comments count as output too. Guarding on `applied` alone silently
+    // threw away a document whose findings were all comment-only — the
+    // common case, since most rules have no machine-applicable fix — while
+    // still reporting the comments as written.
+    if result.applied > 0 || result.annotated > 0 {
         fs::write(file, &result.bytes)
             .map_err(|error| format!("failed to write {file}: {error}"))?;
     }
