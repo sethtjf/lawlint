@@ -42,8 +42,20 @@ const DEFAULT_GGUF_FILE: &str = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
 /// usual sweet spot for 1–3B instruct models.
 const QUANT_PREFERENCE: [&str; 5] = ["q4_k_m", "q5_k_m", "q4_0", "q5_0", "q8_0"];
 
-/// Cap on generated tokens per chat call (a findings array is short).
+/// Default cap on generated tokens per chat call when the request names none
+/// (a findings array is short, and local instruct models do not think first).
 const MAX_NEW_TOKENS: usize = 1024;
+
+/// The generation cap a chat request asks for, under either OpenAI spelling,
+/// falling back to [`MAX_NEW_TOKENS`]. Lets `judge.maxTokens` reach the local
+/// backend the same way it reaches the hosted ones.
+fn request_max_tokens(request: &Value) -> usize {
+    request
+        .get("max_completion_tokens")
+        .or_else(|| request.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .map_or(MAX_NEW_TOKENS, |value| value as usize)
+}
 
 pub struct MistralRsClient {
     repo: String,
@@ -83,12 +95,13 @@ impl AxAIClient for MistralRsClient {
     fn chat(&mut self, request: Value) -> AxResult<Value> {
         // Validate the request before any model load/download.
         let messages = parse_messages(&request)?;
+        let max_tokens = request_max_tokens(&request);
         let repo = self.repo.clone();
         let loaded = self.ensure_loaded()?;
 
         let mut builder = RequestBuilder::new()
             .set_deterministic_sampler() // the judge runs at temperature 0
-            .set_sampler_max_len(MAX_NEW_TOKENS);
+            .set_sampler_max_len(max_tokens);
         for (role, content) in &messages {
             builder = builder.add_message(map_role(role), content);
         }

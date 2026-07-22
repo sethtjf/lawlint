@@ -34,12 +34,13 @@ pub use mistralrs_client::MistralRsClient;
 // Re-export the ax boundary so consumers can supply custom backends.
 pub use axllm::{AxAIClient, AxError, AxResult};
 
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Mutex;
 
 use anyhow::bail;
 #[cfg(feature = "cloud")]
 use anyhow::Context;
-use lawlint_core::{Judge, JudgeError, JudgeFinding, JudgeOptions, JudgeRequest};
+use lawlint_core::{Judge, JudgeError, JudgeFinding, JudgeOptions, JudgePlan, JudgeRequest};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -65,27 +66,88 @@ pub const DEFAULT_GEMMA_REPO: &str = "google/gemma-4-E4B-it";
 /// then fail the chunk closed.
 pub struct AxJudge {
     // `AxAIClient::chat` takes `&mut self`; `Judge::evaluate` takes `&self`
-    // and requires Send + Sync — hence the mutex.
-    client: Mutex<Box<dyn AxAIClient + Send>>,
+    // and requires Send + Sync — hence the mutexes.
+    //
+    // One client per concurrent worker. A single client behind one mutex
+    // would serialize every request no matter how many workers core spawns,
+    // which is exactly the bottleneck this pool exists to remove. Backends
+    // that must not be duplicated (an in-process local model) get a pool of
+    // one and stay sequential.
+    clients: Vec<Mutex<Box<dyn AxAIClient + Send>>>,
+    /// Round-robin starting point, so concurrent callers don't all contend on
+    /// the first client before finding a free one.
+    cursor: AtomicUsize,
     model_id: String,
+    /// Per-call generation cap sent to the backend; `None` leaves the
+    /// backend's own default in force.
+    max_tokens: Option<usize>,
 }
 
 impl AxJudge {
     pub fn new(client: Box<dyn AxAIClient + Send>, model_id: impl Into<String>) -> Self {
+        Self::with_clients(vec![client], model_id)
+    }
+
+    /// An `AxJudge` over a pool of interchangeable clients, one per concurrent
+    /// worker. Panics on an empty pool: a judge with no client can only fail
+    /// every chunk, and doing so lazily would report a backend error instead
+    /// of the construction bug it is.
+    pub fn with_clients(
+        clients: Vec<Box<dyn AxAIClient + Send>>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        assert!(!clients.is_empty(), "AxJudge needs at least one client");
         AxJudge {
-            client: Mutex::new(client),
+            clients: clients.into_iter().map(Mutex::new).collect(),
+            cursor: AtomicUsize::new(0),
             model_id: model_id.into(),
+            max_tokens: None,
         }
+    }
+
+    /// Cap generated tokens per chunk (config `judge.maxTokens`). Reasoning
+    /// backends need headroom for hidden thinking on top of the findings
+    /// array; see [`FoundryClient`]'s default.
+    pub fn with_max_tokens(mut self, max_tokens: Option<usize>) -> Self {
+        self.max_tokens = max_tokens;
+        self
     }
 
     /// The OpenAI chat-completions-shaped request sent to the backend.
     /// `model` is intentionally omitted: ax clients default to their
     /// configured model, and `MistralRsClient` has exactly one model.
-    fn chat_request(req: &JudgeRequest) -> Value {
-        json!({
+    /// `max_completion_tokens` is emitted only when configured, so backends
+    /// keep their own defaults otherwise.
+    fn chat_request(&self, req: &JudgeRequest) -> Value {
+        let mut request = json!({
             "messages": [{"role": "user", "content": req.prompt}],
             "temperature": 0,
-        })
+        });
+        if let Some(max_tokens) = self.max_tokens {
+            request["max_completion_tokens"] = json!(max_tokens);
+        }
+        request
+    }
+
+    /// Borrow a free client, else block on one. Starting the scan at a
+    /// rotating cursor keeps concurrent callers from all queueing behind
+    /// client 0 while later clients sit idle.
+    fn checked_out(&self) -> std::sync::MutexGuard<'_, Box<dyn AxAIClient + Send>> {
+        let count = self.clients.len();
+        let start = self.cursor.fetch_add(1, AtomicOrdering::Relaxed);
+        for offset in 0..count {
+            let client = &self.clients[(start + offset) % count];
+            if let Ok(guard) = client.try_lock() {
+                return guard;
+            }
+        }
+        // Every client is busy: wait for the one this call was assigned.
+        // A poisoned mutex means another worker panicked mid-chat; the client
+        // is still usable for the next request, so recover rather than
+        // failing every remaining chunk.
+        self.clients[start % count]
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -95,11 +157,9 @@ impl AxJudge {
     /// harness measures the verdict-discipline rate from the dropped set;
     /// `evaluate` discards it, so trait behavior is unchanged.
     pub fn evaluate_with_stats(&self, req: &JudgeRequest) -> Result<ParsedFindings, JudgeError> {
-        let request = Self::chat_request(req);
+        let request = self.chat_request(req);
         let response = self
-            .client
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .checked_out()
             .chat(request)
             .map_err(|e| JudgeError::Backend(e.to_string()))?;
         let content = chat_content(&response).ok_or_else(|| {
@@ -108,6 +168,21 @@ impl AxJudge {
                 truncate(&response.to_string(), 300)
             ))
         })?;
+        // Empty content with a length stop is a truncated generation, not
+        // malformed JSON: a reasoning model spent the whole budget thinking.
+        // Naming that distinctly is the difference between an actionable
+        // error and a bare "the judge failed".
+        if content.trim().is_empty() {
+            let truncated = finish_reason(&response).is_some_and(|reason| reason == "length");
+            return Err(JudgeError::MalformedResponse(if truncated {
+                "model generated no output before hitting its token cap — \
+                 raise `judge.maxTokens` in .lawlint/config.json (reasoning \
+                 models spend the cap on hidden thinking)"
+                    .to_string()
+            } else {
+                "model returned empty content".to_string()
+            }));
+        }
         parse_findings_with_stats(&content)
     }
 }
@@ -119,6 +194,10 @@ impl Judge for AxJudge {
 
     fn model_id(&self) -> &str {
         &self.model_id
+    }
+
+    fn max_concurrency(&self) -> usize {
+        self.clients.len()
     }
 }
 
@@ -141,6 +220,16 @@ pub fn chat_content(response: &Value) -> Option<String> {
                 .and_then(|r| r.get("content"))
         })?;
     value_as_text(node)
+}
+
+/// Why the backend stopped generating, when it says. `"length"` means the
+/// token cap was hit mid-generation — the response is truncated, not wrong.
+pub fn finish_reason(response: &Value) -> Option<&str> {
+    response
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("finish_reason"))
+        .and_then(Value::as_str)
 }
 
 /// A content node is either a plain string or an array of
@@ -453,11 +542,79 @@ pub fn create_client(model: &str) -> anyhow::Result<(Box<dyn AxAIClient + Send>,
     )
 }
 
+/// Default generation budget per request for a hosted backend.
+///
+/// Sized for reasoning deployments: on OpenAI-compatible routes this budget
+/// also covers hidden reasoning tokens, and a thinking model that exhausts it
+/// returns empty content and fails every chunk closed. Only tokens actually
+/// generated are billed, so the headroom is free for non-reasoning models.
+pub const DEFAULT_HOSTED_MAX_TOKENS: usize = 16_384;
+
+/// The generation budget to send for a model spec when the user configured
+/// none.
+///
+/// This has to be resolved per spec rather than left to each backend's own
+/// fallback: `FoundryClient` defaults to [`DEFAULT_HOSTED_MAX_TOKENS`], but
+/// the stock ax Anthropic and OpenAI-compatible clients inherit ax's default,
+/// so a reasoning model reached through those routes would truncate exactly
+/// the way Foundry did. `local:` returns `None` — [`MistralRsClient`]'s
+/// smaller cap suits a small instruct model that does not think first.
+pub fn default_max_tokens_for(model: &str) -> Option<usize> {
+    if model == "local" || model.starts_with("local:") {
+        None
+    } else {
+        Some(DEFAULT_HOSTED_MAX_TOKENS)
+    }
+}
+
+/// Document chars per request for a hosted backend. Deliberately far below
+/// any modern context window: the limit on unit size is not what the model can
+/// read but how much re-linting an edit should invalidate, since a unit is the
+/// cache granule. ~24k chars is roughly a 4,000-word document — one request
+/// for most briefs and memos, a handful for a long one.
+pub const CLOUD_CONTEXT_CHARS: usize = 24_000;
+
+/// The request-shaping profile for a model spec.
+///
+/// Hosted backends get large units and one request per rule. `local:` keeps
+/// the conservative default: a 1.5B model degrades on long context and needs
+/// the rubrics bundled to stay within one short generation, which is exactly
+/// what [`lawlint_core::JudgePlan::default`] encodes.
+pub fn plan_for_model(model: &str) -> JudgePlan {
+    if model == "local" || model.starts_with("local:") {
+        JudgePlan::default()
+    } else {
+        JudgePlan::for_context(CLOUD_CONTEXT_CHARS)
+    }
+}
+
+/// Default concurrent requests for a hosted backend. Judge requests are
+/// network-bound, not CPU-bound, so this tracks provider rate limits rather
+/// than core count; 4 keeps a document's requests overlapping without looking
+/// like a burst. Override with `judge.concurrency`.
+pub const DEFAULT_CLOUD_CONCURRENCY: usize = 4;
+
+/// How many clients a spec's backend can run at once.
+///
+/// `local:` is pinned to 1: every [`MistralRsClient`] owns its own in-process
+/// model, so a pool of N would mean N multi-GB loads competing for the same
+/// GPU/CPU — slower than sequential, and enough memory pressure to fail
+/// outright. Hosted backends are just HTTP and pool freely.
+pub fn max_concurrency_for(model: &str, configured: Option<usize>) -> usize {
+    if model == "local" || model.starts_with("local:") {
+        return 1;
+    }
+    configured.unwrap_or(DEFAULT_CLOUD_CONCURRENCY).max(1)
+}
+
 /// Create a judge from `JudgeOptions.model`. See [`create_client`] for the
 /// spec grammar. There is no default backend (#50): `model: None` means the
 /// user never configured one, and silently downloading a multi-GB local
 /// model would be the wrong surprise — it errors with `lawlint init`
 /// guidance instead. Explicit specs (including `local:`) always work.
+///
+/// Builds one client per concurrent worker ([`max_concurrency_for`]); clients
+/// are independent, so this costs a little setup and no network traffic.
 pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
     let Some(model) = options.model.as_deref() else {
         bail!(
@@ -467,7 +624,13 @@ pub fn create_judge(options: &JudgeOptions) -> anyhow::Result<Box<dyn Judge>> {
         );
     };
     let (client, model_id) = create_client(model)?;
-    Ok(Box::new(AxJudge::new(client, model_id)))
+    let mut clients = vec![client];
+    for _ in 1..max_concurrency_for(model, options.concurrency) {
+        clients.push(create_client(model)?.0);
+    }
+    Ok(Box::new(
+        AxJudge::with_clients(clients, model_id).with_max_tokens(options.max_tokens),
+    ))
 }
 
 // ------------------------------------------------------------------------
@@ -546,6 +709,142 @@ mod tests {
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"], "PROMPT TEXT");
         assert_eq!(sent[0]["temperature"], 0);
+        // Unset by default, so each backend keeps its own budget.
+        assert!(sent[0].get("max_completion_tokens").is_none());
+    }
+
+    /// A single-client judge must stay sequential, and a pool must advertise
+    /// its real width — core spawns exactly this many workers.
+    #[test]
+    fn max_concurrency_reflects_the_client_pool() {
+        let one = AxJudge::new(Box::new(FakeClient::new(vec![]).0), "m");
+        assert_eq!(one.max_concurrency(), 1);
+
+        let clients: Vec<Box<dyn AxAIClient + Send>> = (0..3)
+            .map(|_| Box::new(FakeClient::new(vec![]).0) as Box<dyn AxAIClient + Send>)
+            .collect();
+        assert_eq!(AxJudge::with_clients(clients, "m").max_concurrency(), 3);
+    }
+
+    /// Every client in the pool must be reachable, or a pool of N would
+    /// serialize onto client 0 and the concurrency would be a lie.
+    #[test]
+    fn pool_rotates_across_clients() {
+        let mut clients: Vec<Box<dyn AxAIClient + Send>> = Vec::new();
+        let mut logs = Vec::new();
+        for _ in 0..3 {
+            let (client, requests) =
+                FakeClient::new(vec![choices_response("[]"), choices_response("[]")]);
+            logs.push(requests);
+            clients.push(Box::new(client));
+        }
+        let judge = AxJudge::with_clients(clients, "m");
+        for _ in 0..3 {
+            judge.evaluate(&req("p")).unwrap();
+        }
+        let used = logs
+            .iter()
+            .filter(|r| !r.lock().unwrap().is_empty())
+            .count();
+        assert_eq!(used, 3, "three sequential calls should touch three clients");
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one client")]
+    fn empty_pool_panics() {
+        AxJudge::with_clients(Vec::new(), "m");
+    }
+
+    #[test]
+    fn local_specs_never_pool_but_hosted_specs_do() {
+        // An in-process model must not be duplicated regardless of config.
+        assert_eq!(max_concurrency_for("local", Some(8)), 1);
+        assert_eq!(max_concurrency_for("local:foo/bar", None), 1);
+        assert_eq!(
+            max_concurrency_for("foundry:gpt-5.5", None),
+            DEFAULT_CLOUD_CONCURRENCY
+        );
+        assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(2)), 2);
+        // 0 workers would mean no requests ever run.
+        assert_eq!(max_concurrency_for("foundry:gpt-5.5", Some(0)), 1);
+    }
+
+    /// Every hosted route must get a reasoning-sized budget, not just Foundry.
+    /// The stock ax Anthropic/OpenAI clients have their own (smaller) default,
+    /// so leaving this to the backend would let a thinking model reached
+    /// through those routes truncate to empty output the way Foundry did.
+    #[test]
+    fn hosted_backends_all_get_a_reasoning_sized_budget() {
+        for model in [
+            "foundry:gpt-5.5",
+            "anthropic:claude-sonnet-5",
+            "openai:http://localhost:8080/v1#qwen",
+        ] {
+            assert_eq!(
+                default_max_tokens_for(model),
+                Some(DEFAULT_HOSTED_MAX_TOKENS),
+                "{model}"
+            );
+        }
+        // A small local instruct model does not think first; its own cap fits.
+        assert_eq!(default_max_tokens_for("local"), None);
+        assert_eq!(default_max_tokens_for("local:foo/bar"), None);
+    }
+
+    #[test]
+    fn plan_profile_follows_the_backend() {
+        let local = plan_for_model("local:foo/bar");
+        assert_eq!(local, JudgePlan::default());
+        assert!(!local.per_rule);
+
+        let hosted = plan_for_model("foundry:gpt-5.5");
+        assert!(hosted.per_rule);
+        assert_eq!(hosted.context_chars, CLOUD_CONTEXT_CHARS);
+    }
+
+    #[test]
+    fn configured_max_tokens_rides_along_on_the_request() {
+        let (client, requests) = FakeClient::new(vec![choices_response("[]")]);
+        let judge = AxJudge::new(Box::new(client), "test-model").with_max_tokens(Some(16384));
+        judge.evaluate(&req("PROMPT TEXT")).unwrap();
+        assert_eq!(requests.lock().unwrap()[0]["max_completion_tokens"], 16384);
+    }
+
+    /// A reasoning model that spends its whole budget thinking returns
+    /// `finish_reason: "length"` with empty content. That is a budget
+    /// problem, and the error has to say so — a generic parse failure sends
+    /// the user looking at their rules or their API key instead.
+    #[test]
+    fn truncated_empty_generation_names_the_token_cap() {
+        let truncated = || {
+            Ok(json!({
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": "length",
+                }]
+            }))
+        };
+        let (client, _) = FakeClient::new(vec![truncated()]);
+        let judge = AxJudge::new(Box::new(client), "m");
+        let Err(err) = judge.evaluate(&req("p")) else {
+            panic!("expected an error for empty truncated content");
+        };
+        let err = err.to_string();
+        assert!(err.contains("maxTokens"), "{err}");
+        assert!(err.contains("token cap"), "{err}");
+    }
+
+    #[test]
+    fn empty_content_without_truncation_is_reported_as_empty() {
+        let (client, _) = FakeClient::new(vec![choices_response("   ")]);
+        let judge = AxJudge::new(Box::new(client), "m");
+        let Err(err) = judge.evaluate(&req("p")) else {
+            panic!("expected an error for empty content");
+        };
+        let err = err.to_string();
+        assert!(err.contains("empty content"), "{err}");
+        assert!(!err.contains("maxTokens"), "{err}");
     }
 
     // ---- response parsing ----------------------------------------------

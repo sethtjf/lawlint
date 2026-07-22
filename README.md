@@ -71,8 +71,16 @@ you it did.
     "features": { "judge": "...", "learn": "..." }, // optional per-feature overrides
     "localAcknowledged": false                       // set by init's local-model consent step
   },
-  "judge": { "enabled": true },   // force the soft rules on/off; omit to let
+  "judge": {
+    "enabled": true,              // force the soft rules on/off; omit to let
                                   // them run whenever credentials allow
+    "floor": 0.6,                 // minimum confidence for a judge finding
+    "maxTokens": 16384,           // per-request generation budget; raise for
+                                  // reasoning models (see below)
+    "concurrency": 4,             // requests in flight at once (hosted only)
+    "contextChars": 24000,        // document text per request
+    "perRule": true               // one request per rule, not per section
+  },
   "markdown": false,              // treat stdin as Markdown
   "ruleDirs": [".lawlint/rules"]  // extra rule packages, merged over built-ins
 }
@@ -88,6 +96,34 @@ slower inference, and measurably lower quality (see `docs/eval-corpus.md`),
 and init asks you to acknowledge that before enabling one. Non-interactive
 setup: `lawlint init --yes` (hosted default), or `--ai qwen
 --acknowledge-local` for a local model.
+
+**How soft rules are batched.** Every field above has a backend-derived
+default, so the defaults track the model rather than a constant. Hosted
+backends get `contextChars: 24000` and `perRule: true` — each rule is judged
+in its own request seeing the whole document (or a few large sections), and
+requests run `concurrency` at a time. `local:` backends keep small sections
+with every rubric bundled into one request and stay sequential, because a
+1.5B model degrades on long context and a second in-process copy would mean a
+second multi-GB model load.
+
+Per-rule requests each carry the document, which sounds expensive and isn't:
+the prompt puts the document *before* the rubric, so every rule request over
+one document shares a byte-identical prefix that providers bill at a discount.
+Measured on Azure Foundry with four rules over an 852-word memo, 72% of total
+input tokens came back cached — the marginal cost of another rule is its
+rubric, not another copy of the document.
+
+The tradeoff to know: `contextChars` is also the cache granule. Bigger units
+mean fewer requests and more cross-section context, but an edit anywhere in a
+unit re-runs that whole unit. Lower it if you lint large documents on every
+keystroke.
+
+**Reasoning models.** `judge.maxTokens` caps what the model may generate per
+request. On OpenAI-compatible routes that budget covers hidden reasoning
+tokens as well as the findings array, so a thinking model can spend the whole
+cap on reasoning and return nothing — every section then fails and lawlint
+warns that the judge failed on N of N sections. If you see that, raise
+`maxTokens`. Only tokens actually generated are billed, so headroom is cheap.
 
 ## Everyday commands
 

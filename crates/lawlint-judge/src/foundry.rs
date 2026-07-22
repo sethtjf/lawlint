@@ -18,9 +18,22 @@ use crate::credentials;
 
 const API_VERSION: &str = "2024-05-01-preview";
 
-/// Cap on generated tokens per judge chat call (a findings array is short);
-/// `completion` callers pass their own budget.
-const CHAT_MAX_TOKENS: usize = 1024;
+/// Default cap on generated tokens per judge chat call when the request names
+/// none; `completion` callers pass their own budget.
+///
+/// Sized for reasoning deployments, not for the findings array. On the
+/// OpenAI-compatible route this budget covers hidden reasoning tokens too, and
+/// a thinking model that exhausts it returns `finish_reason: "length"` with
+/// empty `content` — every chunk then fails closed. Measured: Kimi-K2.6 on a
+/// 676-token judge prompt truncates at both 1024 and 4096 and completes at
+/// ~3.8k generated tokens. Only tokens actually generated are billed, so the
+/// headroom costs nothing for non-reasoning deployments. Override per project
+/// with `judge.maxTokens`.
+///
+/// Shares one source of truth with [`crate::default_max_tokens_for`], which is
+/// what the CLI sends for every hosted backend — this is the floor for callers
+/// that build a `FoundryClient` directly.
+const CHAT_MAX_TOKENS: usize = crate::DEFAULT_HOSTED_MAX_TOKENS;
 
 #[derive(Debug)]
 pub struct FoundryClient {
@@ -38,16 +51,23 @@ struct OpenAiResponse {
 #[derive(Debug, Deserialize)]
 struct OpenAiChoice {
     message: OpenAiMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
-    content: String,
+    /// Absent (not just empty) on some routes when a reasoning model is cut
+    /// off mid-thought, so this cannot be a bare `String`.
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,24 +124,62 @@ fn request_body(model: &str, system: &str, user: &str, max_tokens: usize) -> Val
     }
 }
 
-fn extract_text(model: &str, value: Value) -> Result<String, String> {
+/// Generated text plus why generation stopped, normalized to the OpenAI
+/// `finish_reason` vocabulary (`"length"` = hit the token cap). The reason
+/// has to survive normalization: a truncated reasoning model returns empty
+/// text, and only the reason distinguishes that from a model with nothing
+/// to say.
+struct Completion {
+    text: String,
+    finish_reason: Option<String>,
+}
+
+fn extract_text(model: &str, value: Value) -> Result<Completion, String> {
     if uses_anthropic_route(model) {
-        serde_json::from_value::<AnthropicResponse>(value)
-            .map_err(|error| format!("invalid Anthropic response: {error}"))?
+        let response = serde_json::from_value::<AnthropicResponse>(value)
+            .map_err(|error| format!("invalid Anthropic response: {error}"))?;
+        // Anthropic spells the cap stop `max_tokens`.
+        let finish_reason = response.stop_reason.map(|reason| match reason.as_str() {
+            "max_tokens" => "length".to_string(),
+            _ => reason,
+        });
+        let text = response
             .content
             .into_iter()
             .next()
             .map(|content| content.text)
-            .ok_or_else(|| "Anthropic response had no content".to_string())
+            // A cap-truncated Anthropic response can carry no content block
+            // at all; that is empty output, not a malformed response.
+            .unwrap_or_default();
+        if text.is_empty() && finish_reason.is_none() {
+            return Err("Anthropic response had no content".to_string());
+        }
+        Ok(Completion {
+            text,
+            finish_reason,
+        })
     } else {
-        serde_json::from_value::<OpenAiResponse>(value)
+        let choice = serde_json::from_value::<OpenAiResponse>(value)
             .map_err(|error| format!("invalid OpenAI response: {error}"))?
             .choices
             .into_iter()
             .next()
-            .map(|choice| choice.message.content)
-            .ok_or_else(|| "OpenAI response had no choices".to_string())
+            .ok_or_else(|| "OpenAI response had no choices".to_string())?;
+        Ok(Completion {
+            text: choice.message.content.unwrap_or_default(),
+            finish_reason: choice.finish_reason,
+        })
     }
+}
+
+/// The generation cap a chat request asks for, under either OpenAI spelling,
+/// falling back to [`CHAT_MAX_TOKENS`].
+fn request_max_tokens(request: &Value) -> usize {
+    request
+        .get("max_completion_tokens")
+        .or_else(|| request.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .map_or(CHAT_MAX_TOKENS, |value| value as usize)
 }
 
 /// Collapse an OpenAI chat-completions-shaped request into the
@@ -177,7 +235,8 @@ impl FoundryClient {
     }
 
     /// One system+user completion against the named deployment, with
-    /// exponential backoff on 429/5xx (3 attempts).
+    /// exponential backoff on 429/5xx (3 attempts). Returns just the text;
+    /// `chat` uses [`Self::completion_detailed`] to keep the stop reason.
     pub fn completion(
         &self,
         model: &str,
@@ -185,6 +244,18 @@ impl FoundryClient {
         user: &str,
         max_tokens: usize,
     ) -> Result<String, String> {
+        self.completion_detailed(model, system, user, max_tokens)
+            .map(|completion| completion.text)
+    }
+
+    /// [`Self::completion`], keeping the stop reason alongside the text.
+    fn completion_detailed(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        max_tokens: usize,
+    ) -> Result<Completion, String> {
         let url = request_url(&self.host, model);
         let body = request_body(model, system, user, max_tokens);
 
@@ -250,16 +321,16 @@ impl AxAIClient for FoundryClient {
                 )
             })?;
         let (system, user) = collapse_messages(&request)?;
-        let content = self
-            .completion(&model, &system, &user, CHAT_MAX_TOKENS)
+        let completion = self
+            .completion_detailed(&model, &system, &user, request_max_tokens(&request))
             .map_err(AxError::runtime)?;
         Ok(json!({
             "object": "chat.completion",
             "model": model,
             "choices": [{
                 "index": 0,
-                "message": { "role": "assistant", "content": content },
-                "finish_reason": "stop",
+                "message": { "role": "assistant", "content": completion.text },
+                "finish_reason": completion.finish_reason.unwrap_or_else(|| "stop".to_string()),
             }],
         }))
     }
@@ -308,12 +379,61 @@ mod tests {
     }
 
     #[test]
+    fn request_max_tokens_honors_either_spelling_and_defaults() {
+        assert_eq!(request_max_tokens(&json!({})), CHAT_MAX_TOKENS);
+        assert_eq!(
+            request_max_tokens(&json!({"max_completion_tokens": 4096})),
+            4096
+        );
+        assert_eq!(request_max_tokens(&json!({"max_tokens": 2048})), 2048);
+        // A non-numeric value is not a budget; fall back rather than panic.
+        assert_eq!(
+            request_max_tokens(&json!({"max_tokens": "lots"})),
+            CHAT_MAX_TOKENS
+        );
+    }
+
+    /// The default must leave room for hidden reasoning tokens: at 1024 every
+    /// chunk of a thinking deployment truncates to empty output and fails
+    /// closed (observed with Kimi-K2.6 on Foundry).
+    #[test]
+    fn default_chat_budget_accommodates_reasoning_models() {
+        const { assert!(CHAT_MAX_TOKENS >= 8192) };
+    }
+
+    #[test]
     fn extract_text_parses_both_response_shapes() {
         let anthropic = json!({"content": [{"text": "hi"}]});
-        assert_eq!(extract_text("claude-opus-4-8", anthropic).unwrap(), "hi");
+        assert_eq!(
+            extract_text("claude-opus-4-8", anthropic).unwrap().text,
+            "hi"
+        );
         let openai = json!({"choices": [{"message": {"content": "ok"}}]});
-        assert_eq!(extract_text("gpt-5.5", openai).unwrap(), "ok");
+        assert_eq!(extract_text("gpt-5.5", openai).unwrap().text, "ok");
         assert!(extract_text("gpt-5.5", json!({"choices": []})).is_err());
+    }
+
+    /// The stop reason has to survive normalization under both wire
+    /// protocols, or a cap-truncated reasoning model is indistinguishable
+    /// from one that simply found nothing to report.
+    #[test]
+    fn extract_text_keeps_the_stop_reason() {
+        let openai = json!({
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}]
+        });
+        let completion = extract_text("gpt-5.5", openai).unwrap();
+        assert_eq!(completion.text, "");
+        assert_eq!(completion.finish_reason.as_deref(), Some("length"));
+
+        // Anthropic's `max_tokens` normalizes to OpenAI's `length`, and a
+        // truncated response can carry no content block at all.
+        let anthropic = json!({"content": [], "stop_reason": "max_tokens"});
+        let completion = extract_text("claude-opus-4-8", anthropic).unwrap();
+        assert_eq!(completion.text, "");
+        assert_eq!(completion.finish_reason.as_deref(), Some("length"));
+
+        // A missing content block with no stop reason is still an error.
+        assert!(extract_text("claude-opus-4-8", json!({"content": []})).is_err());
     }
 
     #[test]
