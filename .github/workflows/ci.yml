@@ -5,6 +5,35 @@ on:
   pull_request:
 
 jobs:
+  # release-please skips a commit it cannot parse without failing anything, so
+  # an unreadable message costs a release silently. Catch it here, where the
+  # fix is a reword rather than an extra commit on main. Bodies count: this
+  # repo squashes with COMMIT_MESSAGES, so every commit body on the branch
+  # lands in the message release-please reads.
+  commit-messages:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Preview the squash-merge message
+        # A PR title is untrusted input; pass it through the environment so it
+        # is never interpolated into the shell command.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          bun run scripts/check-commit-messages.mjs \
+            --squash-preview "$BASE_SHA" --title "$PR_TITLE" --pr "$PR_NUMBER"
+
   verify:
     runs-on: ubuntu-latest
     steps:
