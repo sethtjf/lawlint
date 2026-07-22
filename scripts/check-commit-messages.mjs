@@ -40,6 +40,18 @@ const LOOKS_CONVENTIONAL = new RegExp(`^(${TYPES})(\\([^)]*\\))?!?: .`);
 const git = (...args) =>
   execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
+/** Whether `ref` resolves to a commit in this checkout. */
+function resolves(ref) {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Commits in `range`, newest first, as {sha, message}. */
 function commits(range) {
   // \x1e between records, \x1f between fields: neither occurs in commit text.
@@ -126,6 +138,15 @@ function main() {
     const message = squashPreview(title, branchCommits, flag("--pr") ?? "0");
     checked = [{ sha: "squash-preview", message }];
   } else if (since) {
+    // The release tag is created by release-please *during* the same workflow
+    // run this check rides along in, so on a release merge the manifest names
+    // a version whose tag does not exist yet. That is a race, not a problem
+    // with any commit — failing here would make every release red and teach
+    // everyone to ignore this job.
+    if (!resolves(since)) {
+      console.log(`${since} does not exist yet; nothing to check.`);
+      return;
+    }
     checked = commits(`${since}..HEAD`);
     if (checked.length === 0) {
       console.log(`No commits since ${since}; nothing to check.`);
