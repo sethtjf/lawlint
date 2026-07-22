@@ -84,7 +84,34 @@ See [Fixes and tracked changes](/docs/guides/fixing#only-what-is-safe).
 ## `judge`
 
 Present only when the [AI judge](/docs/guides/judge) ran, carrying that run's
-judging statistics.
+judging statistics. A "chunk" here is one judge request.
+
+<TypeTable type={{
+  chunks: { type: "number", required: true, description: "Requests the run planned. Depends on the backend's batching — one per rule for hosted models, one per section for local ones." },
+  cacheHits: { type: "number", required: true, description: "Requests answered from the on-disk cache instead of the provider." },
+  chunksFailed: { type: "number", required: true, description: "Requests that failed after a retry. Those chunks contributed no findings and fell back to the deterministic tiers." },
+  grounded: { type: "number", required: true, description: "Findings whose quote was matched back to a source span. Only these become diagnostics." },
+  hallucinated: { type: "Record<string, number>", required: true, description: "Discarded findings per rule id: an ungroundable quote, or a rule the request never asked about." },
+  firstFailure: { type: "string", description: "Why the first failed chunk failed. Absent when chunksFailed is 0." },
+}} />
+
+```json
+{
+  "chunks": 2,
+  "cacheHits": 0,
+  "chunksFailed": 0,
+  "grounded": 3,
+  "hallucinated": { "empty-hedge": 1 }
+}
+```
+
+:::warning
+`chunksFailed > 0` means the soft rules did not fully run, so the `score` in
+`stats` is earned on the deterministic tiers alone. Treat it the way the CLI
+does — as an incomplete review, not a clean document. `firstFailure` carries
+the cause; see [When the judge
+fails](/docs/guides/judge#when-the-judge-fails).
+:::
 
 ## Rule metadata
 
