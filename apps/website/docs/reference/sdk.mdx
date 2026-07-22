@@ -91,6 +91,53 @@ let result = lint_with(text, &rules, &LintOptions::default());
 `lint()` is `lint_with()` over the built-in set. Loader errors are written to be
 shown to a user verbatim — propagate them rather than rewording.
 
+## Soft rules and the judge
+
+Core is inference-agnostic: it plans requests, grounds the findings that come
+back, and never talks to a model. Supply a backend by implementing `Judge`.
+
+```rust
+pub trait Judge: Send + Sync {
+    fn evaluate(&self, req: &JudgeRequest) -> Result<Vec<JudgeFinding>, JudgeError>;
+    fn model_id(&self) -> &str;
+    /// Requests this backend can serve at once. Default 1.
+    fn max_concurrency(&self) -> usize { 1 }
+}
+```
+
+`lint_full` plans, runs, and grounds in one call. To drive the stages yourself
+— the wasm playground does, since it cannot make network calls from core —
+use `plan_judge_with` and `run_judge`:
+
+```rust
+use lawlint_core::{plan_judge_with, run_judge, JudgePlan};
+
+let plan = JudgePlan { context_chars: 24_000, per_rule: true };
+let requests = plan_judge_with(&doc, text, &rubrics, &plan);
+let (grounded, stats) = run_judge(&judge, cache, &requests, text);
+```
+
+<TypeTable type={{
+  context_chars: { type: "usize", description: "Document text per request. Also the cache granule — an edit anywhere in a unit re-runs it." },
+  per_rule: { type: "bool", description: "One request per rule instead of one per unit carrying every rubric." },
+}} />
+
+`JudgePlan::default()` is the conservative small-model shape (1,200 chars,
+rubrics bundled). `JudgePlan::for_context(n)` derives a profile from a context
+budget. Mapping a model spec to a profile is `lawlint-judge`'s job
+(`plan_for_model`), not core's.
+
+:::note[Two invariants worth knowing before you implement `Judge`]
+A finding whose `quote` cannot be grounded to a source span **does not exist** —
+it is discarded and counted in `hallucinated`. And results are folded in
+request order no matter how many requests run concurrently, so output never
+depends on your backend's pool size.
+:::
+
+Requests run up to `max_concurrency()` at a time, and a backend that panics
+fails only its own chunk. Ready-made backends (Anthropic, OpenAI-compatible,
+Azure Foundry, and in-process local models) live in `lawlint-judge`.
+
 ## Applying fixes
 
 ```rust
@@ -115,6 +162,7 @@ the page.
     <Tree.File name="lawlint-core — the linting SDK" />
     <Tree.File name="lawlint-cli — the native CLI" />
     <Tree.File name="lawlint-docx — .docx reading and tracked-change writing" />
+    <Tree.File name="lawlint-judge — soft-rule judge backends (native only)" />
     <Tree.File name="lawlint-wasm — browser binding for the playground" />
   </Tree.Folder>
 </Tree>

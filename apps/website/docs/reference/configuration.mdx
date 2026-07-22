@@ -15,7 +15,7 @@ Configuration is optional. Linting works with none at all.
   "thresholds": { "no-hedging": 8 },
   "markdown": false,
   "ruleDirs": [".lawlint/rules"],
-  "judge": { "enabled": false },
+  "judge": { "enabled": false, "maxTokens": 16384 },
   "ai": {
     "model": "anthropic:claude-haiku-4-5-20251001",
     "features": { "judge": "...", "learn": "..." },
@@ -36,9 +36,43 @@ are never stored here.
   thresholds: { type: "Record<string, number>", description: "Override a density or statistical rule's threshold." },
   markdown: { type: "boolean", description: "Treat stdin as Markdown. .md files enable this on their own." },
   ruleDirs: { type: "string[]", description: "Additional rule package directories, merged over the built-ins. Resolved relative to the config file's directory." },
-  judge: { type: "{ enabled: boolean }", description: "Run the soft-rule AI judge on every lint, without passing --judge." },
+  judge: { type: "JudgeOptions", description: "How the soft-rule AI judge runs. See below." },
   ai: { type: "AiOptions", description: "Which model powers AI features. See below." },
 }} />
+
+### `judge`
+
+<TypeTable type={{
+  enabled: { type: "boolean", description: "Run the soft-rule judge on every lint, without passing --judge." },
+  floor: { type: "number", default: "0.6", description: "Minimum confidence for a judge finding to be reported. Findings below it are dropped before scoring." },
+  maxTokens: { type: "number", description: "Tokens the model may generate per request. Defaults to 16384 for hosted backends; local: keeps its own smaller cap." },
+  concurrency: { type: "number", default: "4", description: "Requests in flight at once. Hosted backends only — local: is always 1, since each client owns its own in-process model." },
+  contextChars: { type: "number", description: "Document text per request. Defaults to 24000 for hosted backends, 1200 for local:." },
+  perRule: { type: "boolean", description: "Send one request per rule instead of one per section carrying every rubric. Defaults to true for hosted backends, false for local:." },
+}} />
+
+Every field except `enabled` and `floor` has a **backend-derived default**, so
+the defaults track the model rather than a fixed constant. Setting one
+explicitly always wins.
+
+The two shaping fields are worth understanding together:
+
+- **`perRule: true`** judges each rule in its own request, so a rule gets the
+  model's undivided attention and its own cache entry — adding a rule no
+  longer invalidates the others. Each request carries the document, which is
+  cheaper than it sounds: the document precedes the rubric in the prompt, so
+  requests over one document share a prefix that providers bill at a discount.
+- **`contextChars`** is also the **cache granule**. Raising it means fewer
+  requests and more cross-section context; it also means an edit anywhere in a
+  section re-runs that whole section. Lower it if you lint large documents on
+  every keystroke.
+
+:::note
+`maxTokens` covers everything the model generates, including the hidden
+reasoning tokens a thinking model spends before it answers. If the judge
+reports that it failed on every section, this is almost always why — see
+[Troubleshooting](/docs/guides/judge#when-the-judge-fails).
+:::
 
 ### `ai`
 
