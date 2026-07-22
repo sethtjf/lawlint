@@ -72,4 +72,34 @@ patterns:
     message: "Replace this phrase with “can”."
     suggestion: "Use “can”."
     fix: "can"
+  - pattern: '(?i)\bwhen it comes to\b'
+    message: "Cut “when it comes to”."
+    suggestion: "State the subject directly."
+  - pattern: '(?i)\bin today[''’]s world\b'
+    message: "Cut “in today’s world”."
+    suggestion: "Start with the point."
+  - pattern: '(?i)\bin the age of\b'
+    message: "Cut “in the age of”."
+    suggestion: "Name the present condition directly."
+  - pattern: '(?i)\bin the world of\b'
+    message: "Cut “in the world of”."
+    suggestion: "Name the subject directly."
+  - pattern: '(?i)\bthe reality is\b'
+    message: "Cut “the reality is”."
+    suggestion: "State the reality directly."
+  - pattern: '(?i)\bthe truth is\b'
+    message: "Cut “the truth is”."
+    suggestion: "State the point directly."
+  - pattern: '(?i)\bgoing forward\b'
+    message: "Cut “going forward”."
+    suggestion: "State when or what happens next."
+  - pattern: '(?i)\blet[''’]s dive in\b'
+    message: "Cut “let’s dive in”."
+    suggestion: "Start with the substance."
+  - pattern: '(?i)\bat its core\b'
+    message: "Cut “at its core”."
+    suggestion: "State the central point directly."
+  - pattern: '(?i)\bit[''’]s important to note\b'
+    message: "Cut “it’s important to note”."
+    suggestion: "State the important point directly."
 ---

@@ -6,7 +6,7 @@
     "self-edit": 0.9376214979988565
   },
   "per_rule_precision": {
-    "core/no-ai-cliches": 0.9722222222222222,
+    "core/no-ai-cliches": 0.9,
     "core/no-doublets": 0.9487179487179487,
     "core/no-em-dash-overuse": 0.0,
     "core/no-empty-emphasis": 0.5,

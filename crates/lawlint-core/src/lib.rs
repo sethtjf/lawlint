@@ -263,9 +263,10 @@ mod tests {
     fn registry() {
         // 20 bespoke rules; +2 inferential, -1 with no-em-dash folded into
         // no-em-dash-overuse (#38), +2 document-level statistical rules
-        // (#37), +5 Orwell/AI-voice writing rules (#47) = 28.
+        // (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop rules
+        // = 36.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 28);
+        assert_eq!(rs.metas().len(), 36);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -278,6 +279,35 @@ mod tests {
             "We should delve into this issue.",
             "core/no-ai-cliches"
         ));
+        assert!(has(
+            "The question isn't the model. It's the eval.",
+            "core/no-binary-contrast"
+        ));
+        assert!(has(
+            "The part everyone misses: distribution is the moat.",
+            "core/no-faux-insight"
+        ));
+        assert!(has(
+            "The launch adds search, highlighting the team's commitment.",
+            "core/no-superficial-analysis"
+        ));
+        assert!(has(
+            "The launch marks a pivotal moment.",
+            "core/no-importance-puffery"
+        ));
+        assert!(has(
+            "Experts agree that the policy will fail.",
+            "core/no-weasel-attribution"
+        ));
+        assert!(has(
+            "Think about it: the deadline passed.",
+            "core/no-rhetorical-setups"
+        ));
+        assert!(has(
+            "Not a bug. Not a feature. A policy choice.",
+            "core/no-dramatic-fragment"
+        ));
+        assert!(has("The best part: it learns.", "core/no-colon-reveal"));
         assert!(has(
             "The parties are Alice, Bob and Carol.",
             "core/oxford-comma"
