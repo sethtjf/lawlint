@@ -820,7 +820,7 @@ fn rules_json_lists_all_built_ins_in_website_contract_shape() {
     assert_eq!(output.status.code(), Some(0));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let rules = json.as_array().unwrap();
-    assert_eq!(rules.len(), 28);
+    assert_eq!(rules.len(), 36);
     for rule in rules {
         let id = rule["id"].as_str().unwrap();
         assert!(!id.contains('/'), "ids must be flat, got {id}");
