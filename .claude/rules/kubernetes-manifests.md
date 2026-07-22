@@ -1,0 +1,1 @@
+../../.agents/rules/kubernetes-manifests.md

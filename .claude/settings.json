@@ -1,0 +1,116 @@
+{
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true,
+    "learning-output-style@claude-code-plugins": true
+  },
+  "permissions": {
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gcloud/**)",
+      "Write(~/.ssh/**)",
+      "Edit(~/.ssh/**)",
+      "Write(~/.aws/**)",
+      "Edit(~/.aws/**)",
+      "Write(~/.bashrc)",
+      "Write(~/.profile)",
+      "Write(~/.zshrc)",
+      "Write(//etc/**)",
+      "Edit(//etc/**)",
+      "Write(//usr/**)",
+      "Edit(//usr/**)",
+      "Write(//var/**)",
+      "Edit(//var/**)",
+      "Write(//boot/**)",
+      "Edit(//boot/**)",
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(sudo rm:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/repo-guard.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ci-check.sh",
+            "timeout": 300
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/repo-guard.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/task-completed.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/cwd-changed.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": "packages/db/migrations/*.sql",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && atlas migrate hash --env local --dir file://packages/db/migrations 2>/dev/null && git add packages/db/migrations/atlas.sum",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "apps/api-rs/src/openapi.rs",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'OpenAPI spec changed — run just gen to regenerate the API client'",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "bun.lock",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Lock file changed — run bun install if dependencies were updated'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

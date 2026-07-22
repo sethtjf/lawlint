@@ -1,0 +1,1 @@
+../../.agents/rules/web-routes.md

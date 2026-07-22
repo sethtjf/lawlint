@@ -1,0 +1,1 @@
+../../.agents/rules/commands-and-verification.md

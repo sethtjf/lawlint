@@ -1,0 +1,1 @@
+../../.agents/rules/db-naming.md

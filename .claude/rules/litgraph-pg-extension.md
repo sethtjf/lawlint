@@ -1,0 +1,1 @@
+../../.agents/rules/litgraph-pg-extension.md

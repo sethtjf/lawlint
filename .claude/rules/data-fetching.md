@@ -1,0 +1,1 @@
+../../.agents/rules/data-fetching.md

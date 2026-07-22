@@ -1,0 +1,1 @@
+../../.agents/rules/rbac-pattern.md
