@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.0](https://github.com/sethtjf/lawlint/compare/v0.8.0...v0.9.0) (2026-07-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* `local:` model specs no longer run. Replace them with `openai:<base-url>#<model>` pointed at a local OpenAI-compatible server, or with a hosted spec. The `--acknowledge-local` flag and the `ai.localAcknowledged` config field are removed; a stale field is ignored rather than rejected.
+
+### Features
+
+* harvest no-ai-slop writing rules ([#63](https://github.com/sethtjf/lawlint/issues/63)) ([dd33aed](https://github.com/sethtjf/lawlint/commit/dd33aede5438731899c7c5b50c2d90716ad56e4e))
+* **judge:** per-rule request planning, parallel judging, configurable token cap ([#64](https://github.com/sethtjf/lawlint/issues/64)) ([c69d779](https://github.com/sethtjf/lawlint/commit/c69d7797d469458ed941ab2f9f0178d3bef3527b))
+* remove in-process local model inference ([#67](https://github.com/sethtjf/lawlint/issues/67)) ([6270470](https://github.com/sethtjf/lawlint/commit/6270470f32e237f6288c090d0f830764465c532c))
+
+
+### Bug Fixes
+
+* **docx:** write the document when findings are comment-only ([#68](https://github.com/sethtjf/lawlint/issues/68)) ([df0aac6](https://github.com/sethtjf/lawlint/commit/df0aac6bf3fd305a5a74364980514840658cb07f))
+
 ## [0.8.0](https://github.com/sethtjf/lawlint/compare/v0.7.0...v0.8.0) (2026-07-22)
 
 
