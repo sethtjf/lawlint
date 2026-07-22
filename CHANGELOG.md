@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/sethtjf/lawlint/compare/v0.7.0...v0.8.0) (2026-07-22)
+
+
+### Features
+
+* **rules:** hard/soft rule terminology + unified Markdown skill-file rule format ([#55](https://github.com/sethtjf/lawlint/issues/55)) ([840c7e3](https://github.com/sethtjf/lawlint/commit/840c7e39e33ea2081186d6b75e3238b22ad8b965))
+* **website:** adopt the Blume framework, docs at /docs ([6de5972](https://github.com/sethtjf/lawlint/commit/6de597254c40606f861884a98b1e1321d9c1cd65))
+
 ## [0.7.0](https://github.com/sethtjf/lawlint/compare/v0.6.0...v0.7.0) (2026-07-21)
 
 
