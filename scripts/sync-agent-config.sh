@@ -38,7 +38,7 @@ fi
 for dir in .agents .claude .devin; do
 	if [[ -d "$SRC/$dir" ]]; then
 		mkdir -p "./$dir"
-		cp -rT "$SRC/$dir" "./$dir"
+		cp -r "$SRC/$dir/." "./$dir/"
 		echo "synced $dir"
 	fi
 done
