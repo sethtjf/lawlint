@@ -77,6 +77,20 @@ pub fn lint_full(
     judge: &dyn Judge,
     cache: Option<&dyn JudgeCache>,
 ) -> LintResult {
+    lint_full_with_progress(text, options, rules, judge, cache, &mut |_, _| {})
+}
+
+/// [`lint_full`], reporting `(completed, total)` judge chunks as they finish so
+/// front-ends can show progress across what is otherwise a silent multi-second
+/// wait. Tiers 1–2 run before the first callback.
+pub fn lint_full_with_progress(
+    text: &str,
+    options: &LintOptions,
+    rules: &RuleSet,
+    judge: &dyn Judge,
+    cache: Option<&dyn JudgeCache>,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> LintResult {
     let doc = document::parse(text, options.markdown.unwrap_or(false));
     let instances = rules.instantiate(options);
     // Rubrics (plus each rule's scope for masking grounded findings, and its
@@ -94,7 +108,7 @@ pub fn lint_full(
 
     let refs: Vec<&RubricFragment> = fragments.iter().map(|(_, _, f)| f).collect();
     let reqs = plan_judge(&doc, text, &refs);
-    let (grounded, stats) = run_judge(judge, cache, &reqs, text);
+    let (grounded, stats) = judge::run_judge_with_progress(judge, cache, &reqs, text, on_progress);
 
     let suppressions = dispatch::Suppressions::new(text, rules);
     let mut tier3 = Vec::new();
@@ -158,10 +172,25 @@ pub fn lint_full(
 
 /// Apply MachineApplicable fixes: non-overlapping, span order, single pass.
 pub fn apply_fixes(text: &str, diagnostics: &[Diagnostic]) -> String {
+    apply_fixes_with(text, diagnostics, false)
+}
+
+/// [`apply_fixes`], optionally including `MaybeIncorrect` fixes — the AI
+/// rules' suggested rewrites. Callers must only pass `true` where the result
+/// gets reviewed before it counts (a `.docx` tracked change, an explicit
+/// `--unsafe`), because these are judgment calls, not substitutions.
+pub fn apply_fixes_with(
+    text: &str,
+    diagnostics: &[Diagnostic],
+    include_maybe_incorrect: bool,
+) -> String {
     let mut edits: Vec<&Edit> = diagnostics
         .iter()
         .filter_map(|d| d.fix.as_ref())
-        .filter(|f| f.applicability == Applicability::MachineApplicable)
+        .filter(|f| {
+            f.applicability == Applicability::MachineApplicable
+                || (include_maybe_incorrect && f.applicability == Applicability::MaybeIncorrect)
+        })
         .flat_map(|f| f.edits.iter())
         .filter(|e| e.range.start <= e.range.end && e.range.end <= text.len())
         .collect();

@@ -1,5 +1,10 @@
 //! CLI integration tests (assert_cmd). Every command runs with cwd set to a
-//! fresh temp dir so config discovery never escapes into the repo.
+//! fresh temp dir so config discovery never escapes into the repo, and with
+//! `LAWLINT_HOME`/`XDG_CONFIG_HOME` pointed at that temp dir so it never
+//! reaches the running user's `~/.lawlint` (or the pre-0.8
+//! `~/.config/lawlint`) either — otherwise a developer with a real config or a
+//! stored API key would get different results from CI, and the AI rules would
+//! fire during unit tests.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -8,7 +13,13 @@ use tempfile::TempDir;
 
 fn cmd(dir: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("lawlint").unwrap();
-    cmd.current_dir(dir.path());
+    cmd.current_dir(dir.path())
+        .env("LAWLINT_HOME", dir.path().join("home"))
+        .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
+        .env(
+            "LAWLINT_CREDENTIALS",
+            dir.path().join("home/no-credentials"),
+        );
     cmd
 }
 
@@ -63,11 +74,12 @@ fn write_fix_package(dir: &TempDir) -> std::path::PathBuf {
 fn lint_stdin_pretty_reports_findings_and_score() {
     let dir = TempDir::new().unwrap();
     cmd(&dir)
+        .arg("--list")
         .write_stdin("We map the landscape of this matter.")
         .assert()
         .code(0) // warnings only, no limit
         .stdout(predicate::str::contains("core/no-ai-cliches"))
-        .stdout(predicate::str::contains("Human-likeness score:"));
+        .stdout(predicate::str::contains("Human-likeness"));
 }
 
 #[test]
@@ -95,7 +107,7 @@ fn lint_exit_codes() {
         .write_stdin("The court granted the motion.")
         .assert()
         .code(0)
-        .stdout(predicate::str::contains("No issues found"));
+        .stdout(predicate::str::contains("No findings"));
     // Error-severity finding (sycophantic opener) → 1.
     cmd(&dir)
         .write_stdin("Great question! The answer is no.")
@@ -142,7 +154,165 @@ fn disable_flag_silences_a_rule_by_flat_alias() {
         .stdout(predicate::str::contains("no-ai-cliches").not());
 }
 
+// ---- summary output ----------------------------------------------------
+
+#[test]
+fn default_output_is_a_summary_not_a_finding_dump() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .write_stdin("We map the landscape of this matter.")
+        .assert()
+        .code(0)
+        // Coverage per tier, the score, and how to go deeper…
+        .stdout(predicate::str::contains("Static rules"))
+        .stdout(predicate::str::contains("Human-likeness"))
+        .stdout(predicate::str::contains("--list to see them"))
+        // …but not the findings themselves.
+        .stdout(predicate::str::contains("core/no-ai-cliches").not());
+}
+
+#[test]
+fn summary_reports_ai_rules_as_skipped_without_credentials() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .write_stdin("We map the landscape of this matter.")
+        .assert()
+        .stdout(predicate::str::contains("AI rules"))
+        .stdout(predicate::str::contains("no credentials"))
+        // The score must not be mistakable for a full-tier score.
+        .stdout(predicate::str::contains("static rules only"))
+        .stdout(predicate::str::contains("lawlint init"));
+}
+
+#[test]
+fn coverage_names_the_rules_that_did_not_run() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--coverage", "--disable", "no-ai-cliches"])
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .stdout(predicate::str::contains("core/no-ai-cliches"))
+        .stdout(predicate::str::contains("core/empty-hedge"))
+        .stdout(predicate::str::contains("skipped (disabled)"));
+}
+
+#[test]
+fn list_trims_excerpts_to_the_match_not_the_paragraph() {
+    let dir = TempDir::new().unwrap();
+    // One long paragraph with the trigger near the end: the old renderer
+    // reprinted the whole thing per finding.
+    let filler = "The parties agreed to the schedule set out in the exhibit. ".repeat(6);
+    cmd(&dir)
+        .arg("--list")
+        .write_stdin(format!("{filler}We map the landscape of it."))
+        .assert()
+        .stdout(predicate::str::contains("core/no-ai-cliches"))
+        // Context is elided rather than dumped.
+        .stdout(predicate::str::contains("…"))
+        .stdout(predicate::str::contains(filler.trim()).not());
+}
+
+#[test]
+fn no_ai_flag_reports_opting_out_rather_than_missing_setup() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--no-ai", "--coverage"])
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .stdout(predicate::str::contains("(disabled)"))
+        // Opting out is not a setup problem, so no init nudge.
+        .stdout(predicate::str::contains("Set up AI review").not());
+}
+
+#[test]
+fn format_full_keeps_the_pre_0_8_flat_listing() {
+    let dir = TempDir::new().unwrap();
+    cmd(&dir)
+        .args(["--format", "full"])
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .stdout(predicate::str::contains("core/no-ai-cliches"))
+        .stdout(predicate::str::contains("Human-likeness score:"));
+}
+
 // ---- config discovery --------------------------------------------------
+
+#[test]
+fn user_level_config_applies_outside_any_project() {
+    // The original bug: `lawlint init` stores the key user-level but the model
+    // preference project-level, so linting a document in ~/Downloads found no
+    // config and silently skipped the AI rules.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("home")).unwrap();
+    fs::write(
+        dir.path().join("home/config.json"),
+        r#"{"disable": ["no-ai-cliches"]}"#,
+    )
+    .unwrap();
+    cmd(&dir)
+        .arg("--list")
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no-ai-cliches").not());
+}
+
+#[test]
+fn pre_0_8_user_config_is_still_read_from_the_legacy_location() {
+    // Upgrading must not silently drop settings written by 0.7 into
+    // ~/.config/lawlint; the new ~/.lawlint just takes precedence.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("xdg/lawlint")).unwrap();
+    fs::write(
+        dir.path().join("xdg/lawlint/config.json"),
+        r#"{"disable": ["no-ai-cliches"]}"#,
+    )
+    .unwrap();
+    cmd(&dir)
+        .arg("--list")
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("no-ai-cliches").not());
+}
+
+#[test]
+fn new_user_config_wins_over_the_legacy_one() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("xdg/lawlint")).unwrap();
+    fs::create_dir_all(dir.path().join("home")).unwrap();
+    fs::write(
+        dir.path().join("xdg/lawlint/config.json"),
+        r#"{"disable": ["no-ai-cliches"]}"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("home/config.json"), r#"{}"#).unwrap();
+    cmd(&dir)
+        .arg("--list")
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        // ~/.lawlint wins, so the legacy `disable` no longer applies.
+        .stdout(predicate::str::contains("no-ai-cliches"));
+}
+
+#[test]
+fn project_config_layers_over_user_config_instead_of_replacing_it() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("home")).unwrap();
+    // User level disables one rule; the project sets an unrelated field.
+    fs::write(
+        dir.path().join("home/config.json"),
+        r#"{"disable": ["no-ai-cliches"], "markdown": true}"#,
+    )
+    .unwrap();
+    write(&dir, ".lawlint/config.json", r#"{"markdown": false}"#);
+    cmd(&dir)
+        .write_stdin("We map the landscape of it.")
+        .assert()
+        .code(0)
+        // The project overrode `markdown` only; `disable` survived.
+        .stdout(predicate::str::contains("no-ai-cliches").not());
+}
 
 #[test]
 fn config_file_is_discovered_and_applied() {
@@ -177,8 +347,9 @@ fn config_rule_dirs_load_relative_to_config() {
     write(&dir, "lawlint.config.json", r#"{"ruleDirs": ["pkg"]}"#);
     // Run from a nested cwd; the config's ruleDirs still resolve.
     fs::create_dir_all(dir.path().join("sub")).unwrap();
-    let mut cmd = Command::cargo_bin("lawlint").unwrap();
+    let mut cmd = cmd(&dir);
     cmd.current_dir(dir.path().join("sub"))
+        .arg("--list")
         .write_stdin("We utilize tools.")
         .assert()
         .code(1)
@@ -208,8 +379,9 @@ fn nested_config_rule_dirs_resolve_from_project_root() {
     write_fix_package(&dir);
     write(&dir, ".lawlint/config.json", r#"{"ruleDirs": ["pkg"]}"#);
     fs::create_dir_all(dir.path().join("sub")).unwrap();
-    let mut cmd = Command::cargo_bin("lawlint").unwrap();
+    let mut cmd = cmd(&dir);
     cmd.current_dir(dir.path().join("sub"))
+        .arg("--list")
         .write_stdin("We utilize tools.")
         .assert()
         .code(1)
@@ -295,6 +467,7 @@ fn init_scaffolds_a_working_rules_package() {
         .code(0)
         .stdout(predicate::str::contains("0 failed"));
     cmd(&dir)
+        .arg("--list")
         .write_stdin("For the avoidance of doubt, the fee is due monthly.")
         .assert()
         .stdout(predicate::str::contains("no-avoidance-of-doubt"));
@@ -327,7 +500,7 @@ fn markdown_auto_enables_for_md_files() {
         .arg(path.to_str().unwrap())
         .assert()
         .code(0)
-        .stdout(predicate::str::contains("No issues found"));
+        .stdout(predicate::str::contains("No findings"));
 }
 
 // ---- --fix -------------------------------------------------------------
@@ -423,7 +596,7 @@ fn docx_is_linted_like_text() {
     let file = dir.path().join("brief.docx");
     fs::write(&file, DOCX_FIXTURE).unwrap();
     cmd(&dir)
-        .arg(file.to_str().unwrap())
+        .args([file.to_str().unwrap(), "--list"])
         .assert()
         .code(0) // findings are warnings; no error severity
         .stdout(predicate::str::contains("no-legalese"));

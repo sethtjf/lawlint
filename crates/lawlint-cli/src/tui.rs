@@ -21,7 +21,7 @@ use crate::ui::{
     build_composer, bullet_line, pad_line, plural, tilde, wrap_line, AMBER, BRAND, BRAND_DARK, DIM,
     GOOD, INPUT_BAR_BG, SELECT_BG, SLATE,
 };
-use crate::{build_rule_set, find_config, judge_spec, lint_text};
+use crate::{build_rule_set, find_config, lint_text};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers,
@@ -104,9 +104,11 @@ impl TuiApp {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         let (config, config_dir) = find_config(cwd.clone())?;
         let rules = build_rule_set(&config, config_dir.as_deref(), &[])?;
-        // A config that enables the judge without naming a model is a
-        // config error (#50); it aborts the TUI launch with init guidance.
-        let judge = judge_spec(&None, &config)?;
+        // Same rule as the lint command: AI rules run whenever they can, and
+        // stay quiet when they cannot. A config that *enables* the judge
+        // without naming a model is still a config error (#50) and aborts the
+        // TUI launch with init guidance.
+        let judge = crate::ai_decision(&None, false, &config)?.ok();
         let options = LintOptions {
             markdown: Some(false),
             ..Default::default()

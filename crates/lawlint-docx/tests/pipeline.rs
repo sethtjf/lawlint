@@ -45,6 +45,8 @@ fn writes_tracked_changes_and_preserves_all_other_parts() {
     let opts = ReviseOptions {
         author: "unit-test".to_string(),
         date: Some("2020-01-01T00:00:00Z".to_string()),
+        include_ai_rewrites: true,
+        annotate_findings: true,
     };
     let out = apply_tracked_changes(FIXTURE, &result.diagnostics, &opts).unwrap();
     assert!(out.applied >= 1, "at least one fix should be applied");

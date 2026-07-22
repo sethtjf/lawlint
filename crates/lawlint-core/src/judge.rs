@@ -305,12 +305,28 @@ pub fn run_judge(
     reqs: &[JudgeRequest],
     source: &str,
 ) -> (Vec<(JudgeRequest, JudgeFinding, TextRange)>, JudgeStats) {
+    run_judge_with_progress(judge, cache, reqs, source, &mut |_, _| {})
+}
+
+/// [`run_judge`], reporting `(completed, total)` after each chunk so a caller
+/// can drive a progress indicator. The judge is a per-chunk network round trip
+/// and this loop is sequential, so without this a multi-section document looks
+/// like a hung process.
+pub fn run_judge_with_progress(
+    judge: &dyn Judge,
+    cache: Option<&dyn JudgeCache>,
+    reqs: &[JudgeRequest],
+    source: &str,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> (Vec<(JudgeRequest, JudgeFinding, TextRange)>, JudgeStats) {
     let mut out = Vec::new();
     let mut stats = JudgeStats {
         chunks: reqs.len(),
         ..JudgeStats::default()
     };
-    for req in reqs {
+    let total = reqs.len();
+    on_progress(0, total);
+    for (index, req) in reqs.iter().enumerate() {
         debug_assert!(
             req.chunk_range.start <= req.chunk_range.end && req.chunk_range.end <= source.len(),
             "chunk_range must index the original source"
@@ -330,6 +346,7 @@ pub fn run_judge(
                 }
                 Err(_) => {
                     stats.chunks_failed += 1;
+                    on_progress(index + 1, total);
                     continue;
                 }
             },
@@ -355,6 +372,7 @@ pub fn run_judge(
                 }
             }
         }
+        on_progress(index + 1, total);
     }
     (out, stats)
 }

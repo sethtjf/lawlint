@@ -49,7 +49,7 @@ are never stored here.
 }} />
 
 API keys are **not** part of this file. They live in
-`~/.config/lawlint/credentials` (mode `0600`) or in the environment —
+`~/.lawlint/credentials` (mode `0600`) or in the environment —
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_FOUNDRY_API_KEY` — and the
 environment wins.
 
@@ -58,6 +58,15 @@ environment wins.
 The CLI walks up from the current directory. At each level it looks for
 `.lawlint/config.json`, falling back to the legacy `lawlint.config.json`. The
 first directory containing either is the project root.
+
+If no project config is found, the CLI falls back to a user-level
+`~/.lawlint/config.json` (`$LAWLINT_HOME` overrides the directory; the pre-0.8
+`~/.config/lawlint/config.json` is still read). This is what lets lawlint work
+on documents outside any project.
+
+A project config **layers over** the user-level one field by field: whatever
+the project sets wins, and everything it leaves out keeps the user-level value.
+A repo that pins only `ruleDirs` still inherits your AI model.
 
 If both exist at the same level, the nested `.lawlint/config.json` is used and
 the CLI warns.

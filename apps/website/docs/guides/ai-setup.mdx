@@ -32,9 +32,17 @@ The recommended path: better quality, no multi-gigabyte download.
 | OpenAI-compatible | `openai:<base-url>#<model>` | `OPENAI_API_KEY` |
 | Azure AI Foundry | `foundry:<deployment>` | `AZURE_FOUNDRY_API_KEY` |
 
-API keys go to a user-level credential file — `~/.config/lawlint/credentials`,
-mode `0600` — or to the environment. **The environment wins.** Keys are never
+API keys go to a user-level credential file — `~/.lawlint/credentials`, mode
+`0600` — or to the environment. **The environment wins.** Keys are never
 written into your project, so `.lawlint/config.json` is safe to commit.
+
+Once a key and a model are configured, the soft rules run on every lint,
+including in directories with no project config. `--no-ai` skips them for a
+run; `"judge": { "enabled": false }` turns them off for good.
+
+Before 0.8 the credential file lived at `~/.config/lawlint/credentials`. It is
+still read from there, and the next `lawlint init` moves it to `~/.lawlint/`
+and reports the move.
 
 ## Local models
 

@@ -16,6 +16,7 @@ mod project;
 mod revise;
 
 use pkg::Package;
+use project::{Projection, RunText};
 use revise::{Ids, RunEdit};
 
 const DOCUMENT: &str = "word/document.xml";
@@ -48,6 +49,19 @@ pub struct ReviseOptions {
     pub author: String,
     /// xsd:dateTime, e.g. `2026-07-19T01:11:00Z`. Defaults to now (UTC).
     pub date: Option<String>,
+    /// Include `MaybeIncorrect` fixes — in practice the AI rules' suggested
+    /// rewrites, which are judgment calls rather than mechanical
+    /// substitutions. On by default here because a `.docx` revision is a
+    /// *proposal*: it lands as a tracked change the author accepts or rejects
+    /// run-by-run in Word, so withholding it costs them the suggestion and
+    /// saves them nothing. Plain text has no such review layer, which is why
+    /// the CLI gates it there.
+    pub include_ai_rewrites: bool,
+    /// Anchor a comment over every finding that has no applicable fix, so a
+    /// rule that can only explain a problem still reaches the author. On by
+    /// default: a review copy that silently omits most of the review is worse
+    /// than one that is merely wordy.
+    pub annotate_findings: bool,
 }
 
 impl Default for ReviseOptions {
@@ -55,15 +69,29 @@ impl Default for ReviseOptions {
         Self {
             author: "lawlint".to_string(),
             date: Some(iso8601_utc_now()),
+            include_ai_rewrites: true,
+            annotate_findings: true,
         }
     }
 }
 
 pub struct ReviseResult {
     pub bytes: Vec<u8>,
-    /// Fixes turned into tracked changes.
+    /// Fixes turned into tracked changes (del+ins+comment).
     pub applied: usize,
-    /// Fixes that could not be applied (span multiple/complex runs).
+    /// Fixes whose text could not be safely rewritten in place — the edit
+    /// crosses a run boundary (redlines never do, see revise.rs), or an
+    /// earlier fix already claimed overlapping text for its own redline —
+    /// but whose message is still surfaced as a comment anchored to the
+    /// original, unchanged span rather than being dropped outright.
+    pub annotated: usize,
+    /// How many of `applied` came from AI rules (`MaybeIncorrect`), so callers
+    /// can tell the author which redlines warrant the closer read.
+    pub ai_applied: usize,
+    /// Edits dropped entirely: no run at all contains the span (e.g. it
+    /// lands in a paragraph gap), or the run(s) it resolved to turned out
+    /// unusable (already inside a revision, or shaped in a way the emitter
+    /// refuses to touch — see revise.rs).
     pub skipped: usize,
 }
 
@@ -89,61 +117,6 @@ pub fn apply_tracked_changes(
         .ok_or(DocxError::MissingPart(DOCUMENT))?;
     let projection = project::project(&xml)?;
 
-    // Collect (edit, message), select non-overlapping in span order (core's rule).
-    let mut candidates: Vec<(usize, usize, String, String)> = Vec::new();
-    for d in diagnostics {
-        let Some(fix) = &d.fix else { continue };
-        if fix.applicability != Applicability::MachineApplicable {
-            continue;
-        }
-        for e in &fix.edits {
-            if e.range.start <= e.range.end && e.range.end <= projection.text.len() {
-                candidates.push((
-                    e.range.start,
-                    e.range.end,
-                    e.replacement.clone(),
-                    d.message.clone(),
-                ));
-            }
-        }
-    }
-    candidates.sort_by_key(|c| (c.0, c.1));
-
-    let mut edits_by_ordinal: HashMap<usize, Vec<RunEdit>> = HashMap::new();
-    let mut skipped = 0usize;
-    let mut guard = 0usize;
-    for (start, end, replacement, message) in candidates {
-        if start < guard {
-            continue; // overlaps an already-selected edit
-        }
-        guard = end;
-        // The whole span must sit inside one run's text.
-        match projection
-            .runs
-            .iter()
-            .find(|r| start >= r.start && end <= r.end)
-        {
-            Some(run) => edits_by_ordinal
-                .entry(run.ordinal)
-                .or_default()
-                .push(RunEdit {
-                    start: start - run.start,
-                    end: end - run.start,
-                    replacement,
-                    message,
-                }),
-            None => skipped += 1,
-        }
-    }
-
-    if edits_by_ordinal.is_empty() {
-        return Ok(ReviseResult {
-            bytes: docx_bytes.to_vec(),
-            applied: 0,
-            skipped,
-        });
-    }
-
     let existing_comments = pkg.get_str(COMMENTS)?;
     let comment_base = existing_comments
         .as_deref()
@@ -155,6 +128,20 @@ pub fn apply_tracked_changes(
         next_comment: comment_base,
     };
 
+    let selection = select_edits(&projection, diagnostics, opts, &mut ids);
+    let edits_by_ordinal = selection.edits_by_ordinal;
+    let mut skipped = selection.skipped;
+
+    if edits_by_ordinal.is_empty() {
+        return Ok(ReviseResult {
+            bytes: docx_bytes.to_vec(),
+            applied: 0,
+            annotated: 0,
+            ai_applied: 0,
+            skipped,
+        });
+    }
+
     let out = revise::apply(
         &xml,
         &edits_by_ordinal,
@@ -163,7 +150,11 @@ pub fn apply_tracked_changes(
         &mut ids,
     )?;
     skipped += out.skipped;
-    let applied = out.comments.len();
+    let annotated = out.annotated;
+    let applied = out.comments.len() - annotated;
+    // The emitter can drop redlines it refuses to touch and does not report
+    // which ones, so cap rather than over-report the AI share.
+    let ai_applied = selection.ai_redlines.min(applied);
 
     pkg.set(DOCUMENT, out.document_xml);
 
@@ -176,8 +167,226 @@ pub fn apply_tracked_changes(
     Ok(ReviseResult {
         bytes: pkg.write()?,
         applied,
+        annotated,
+        ai_applied,
         skipped,
     })
+}
+
+struct EditSelection {
+    edits_by_ordinal: HashMap<usize, Vec<RunEdit>>,
+    skipped: usize,
+    /// Redline pieces originating from an AI rule, before the emitter has had
+    /// its say — capped against the emitter's real count by the caller.
+    ai_redlines: usize,
+}
+
+/// Resolve each MachineApplicable fix's edit to the run(s) it lands in and
+/// decide whether it becomes a full redline or downgrades to a comment-only
+/// anchor, in span order:
+///   - the whole span sits in one run, and no earlier (span-order) redline
+///     already claimed overlapping text → a self-contained redline;
+///   - otherwise, it sits in one run but lost the redline slot to an
+///     earlier overlapping redline → a self-contained comment-only anchor
+///     (the emitter can nest/interleave comment ranges freely; it just
+///     can't apply two conflicting text replacements to the same words);
+///   - the span crosses a run boundary → a comment-only anchor split into
+///     an opens-only piece (start run) and a closes-only piece (end run)
+///     sharing one `comment_id` (redlines never cross runs — see
+///     revise.rs's module doc for why that's a deliberate scope limit, not
+///     an oversight).
+///
+/// A span that isn't contained in any run at all (e.g. it lands in a
+/// paragraph gap) is dropped and counted in `skipped`.
+fn select_edits(
+    projection: &Projection,
+    diagnostics: &[Diagnostic],
+    opts: &ReviseOptions,
+    ids: &mut Ids,
+) -> EditSelection {
+    // A candidate per finding. One with a usable fix wants a redline; every
+    // other finding wants a comment anchored over the text that triggered it,
+    // so a rule that can explain a problem without mechanically repairing it
+    // still leaves a mark in the document — which is most rules.
+    struct Candidate {
+        start: usize,
+        end: usize,
+        replacement: Option<String>,
+        message: String,
+        is_ai: bool,
+    }
+
+    // The comment carries the rule's advice too, not just its complaint: for a
+    // finding with no fix, the suggestion is the only actionable thing there
+    // is.
+    let text_for = |d: &Diagnostic| match &d.suggestion {
+        Some(suggestion) if suggestion != &d.message => {
+            format!("{} — {}", d.message, suggestion)
+        }
+        _ => d.message.clone(),
+    };
+    let in_bounds = |start: usize, end: usize| start <= end && end <= projection.text.len();
+
+    let mut rewrites: Vec<Candidate> = Vec::new();
+    let mut annotations: Vec<Candidate> = Vec::new();
+    for d in diagnostics {
+        let usable_fix = d.fix.as_ref().filter(|fix| match fix.applicability {
+            Applicability::MachineApplicable => true,
+            Applicability::MaybeIncorrect => opts.include_ai_rewrites,
+        });
+        match usable_fix {
+            Some(fix) => {
+                let is_ai = fix.applicability == Applicability::MaybeIncorrect;
+                for e in &fix.edits {
+                    if in_bounds(e.range.start, e.range.end) {
+                        rewrites.push(Candidate {
+                            start: e.range.start,
+                            end: e.range.end,
+                            replacement: Some(e.replacement.clone()),
+                            message: text_for(d),
+                            is_ai,
+                        });
+                    }
+                }
+            }
+            None if opts.annotate_findings
+                && in_bounds(d.span.start, d.span.end)
+                && d.span.start < d.span.end =>
+            {
+                annotations.push(Candidate {
+                    start: d.span.start,
+                    end: d.span.end,
+                    replacement: None,
+                    message: text_for(d),
+                    is_ai: false,
+                });
+            }
+            None => {}
+        }
+    }
+    // Rewrites are resolved first so they get first claim on the redline slot;
+    // comment anchors may overlap anything, including each other.
+    rewrites.sort_by_key(|c| (c.start, c.end));
+    annotations.sort_by_key(|c| (c.start, c.end));
+    let candidates = rewrites.into_iter().chain(annotations);
+
+    let mut edits_by_ordinal: HashMap<usize, Vec<RunEdit>> = HashMap::new();
+    let mut skipped = 0usize;
+    let mut ai_redlines = 0usize;
+    let mut redline_guard = 0usize;
+
+    for candidate in candidates {
+        let Candidate {
+            start,
+            end,
+            replacement,
+            message,
+            is_ai,
+        } = candidate;
+        let Some((start_run, end_run)) = find_runs(projection, start, end) else {
+            skipped += 1;
+            continue;
+        };
+        let same_run = start_run.ordinal == end_run.ordinal;
+        // A redline needs its whole span inside one run and no earlier redline
+        // on the same words. Failing either, the finding is not dropped — it
+        // degrades to a comment over the untouched original, which still tells
+        // the author what and where.
+        let wants_redline = replacement.is_some() && same_run && start >= redline_guard;
+
+        let comment_id = ids.next_comment;
+        ids.next_comment += 1;
+
+        if wants_redline {
+            redline_guard = end;
+            if is_ai {
+                ai_redlines += 1;
+            }
+            edits_by_ordinal
+                .entry(start_run.ordinal)
+                .or_default()
+                .push(RunEdit {
+                    start: start - start_run.start,
+                    end: end - start_run.start,
+                    replacement,
+                    message,
+                    comment_id,
+                    opens_here: true,
+                    closes_here: true,
+                });
+        } else if same_run {
+            edits_by_ordinal
+                .entry(start_run.ordinal)
+                .or_default()
+                .push(RunEdit {
+                    start: start - start_run.start,
+                    end: end - start_run.start,
+                    replacement: None,
+                    message,
+                    comment_id,
+                    opens_here: true,
+                    closes_here: true,
+                });
+        } else {
+            // Split anchor: the two halves share one comment_id so the emitter
+            // can pair them, and `classify` can void them together.
+            edits_by_ordinal
+                .entry(start_run.ordinal)
+                .or_default()
+                .push(RunEdit {
+                    start: start - start_run.start,
+                    end: start_run.end - start_run.start,
+                    replacement: None,
+                    message: message.clone(),
+                    comment_id,
+                    opens_here: true,
+                    closes_here: false,
+                });
+            edits_by_ordinal
+                .entry(end_run.ordinal)
+                .or_default()
+                .push(RunEdit {
+                    start: 0,
+                    end: end - end_run.start,
+                    replacement: None,
+                    message,
+                    comment_id,
+                    opens_here: false,
+                    closes_here: true,
+                });
+        }
+    }
+
+    EditSelection {
+        edits_by_ordinal,
+        skipped,
+        ai_redlines,
+    }
+}
+
+/// Resolve a `[start, end)` span to the run containing its start and the run
+/// containing its end, which may differ. `start == end` (a pure insertion)
+/// is a special case: the asymmetric half-open lookups below would miss a
+/// zero-width span sitting exactly on a run boundary (e.g. an empty
+/// `<w:t/>`), so it instead uses the old combined inclusive-both-ends
+/// predicate against a single run.
+fn find_runs(projection: &Projection, start: usize, end: usize) -> Option<(&RunText, &RunText)> {
+    if start == end {
+        let r = projection
+            .runs
+            .iter()
+            .find(|r| start >= r.start && end <= r.end)?;
+        return Some((r, r));
+    }
+    let start_run = projection
+        .runs
+        .iter()
+        .find(|r| r.start <= start && start < r.end)?;
+    let end_run = projection
+        .runs
+        .iter()
+        .find(|r| r.start < end && end <= r.end)?;
+    Some((start_run, end_run))
 }
 
 fn xml_escape(s: &str) -> String {
@@ -323,4 +532,159 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lawlint_core::{Fix, RuleId, Severity, TextRange, Tier};
+
+    fn diag(start: usize, end: usize, replacement: &str, message: &str) -> Diagnostic {
+        Diagnostic {
+            rule_id: RuleId("core/x".into()),
+            severity: Severity::Warning,
+            tier: Tier::Static,
+            intent: Default::default(),
+            span: TextRange { start, end },
+            message: message.into(),
+            line: 0,
+            column: 0,
+            end_line: None,
+            end_column: None,
+            excerpt: String::new(),
+            suggestion: None,
+            weight: None,
+            confidence: None,
+            fix: Some(Fix {
+                edits: vec![lawlint_core::Edit {
+                    range: TextRange { start, end },
+                    replacement: replacement.into(),
+                }],
+                applicability: Applicability::MachineApplicable,
+            }),
+        }
+    }
+
+    fn ids() -> Ids {
+        Ids {
+            next_rev: 900_000,
+            next_comment: 1,
+        }
+    }
+
+    /// Three contiguous runs: [0,5) [5,10) [10,15).
+    fn three_runs() -> Projection {
+        Projection {
+            text: "x".repeat(15),
+            runs: vec![
+                RunText {
+                    ordinal: 0,
+                    start: 0,
+                    end: 5,
+                },
+                RunText {
+                    ordinal: 1,
+                    start: 5,
+                    end: 10,
+                },
+                RunText {
+                    ordinal: 2,
+                    start: 10,
+                    end: 15,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn select_edits_allows_overlapping_annotations() {
+        // Both spans sit in run 0 and overlap; the first wins the redline,
+        // the second downgrades to a comment-only anchor rather than being
+        // dropped (goal A: the emitter can nest comment ranges now).
+        let projection = three_runs();
+        let diags = vec![diag(0, 3, "A", "first"), diag(1, 4, "B", "second")];
+        let mut ids = ids();
+        let sel = select_edits(&projection, &diags, &ReviseOptions::default(), &mut ids);
+
+        assert_eq!(sel.skipped, 0);
+        let pieces = sel.edits_by_ordinal.get(&0).expect("ordinal 0 has edits");
+        assert_eq!(pieces.len(), 2);
+        assert!(pieces.iter().any(|p| p.replacement.as_deref() == Some("A")));
+        assert!(pieces
+            .iter()
+            .any(|p| p.replacement.is_none() && p.message == "second"));
+        // Distinct comment ids for both pieces.
+        assert_ne!(pieces[0].comment_id, pieces[1].comment_id);
+    }
+
+    #[test]
+    fn select_edits_downgrades_multi_run_fix_to_split_comment() {
+        // Span [2,12) starts in run 0 and ends in run 2: a redline can't
+        // cross runs, so this becomes a two-piece comment-only anchor
+        // instead of being dropped (goal B's explicit escape hatch).
+        let projection = three_runs();
+        let diags = vec![diag(2, 12, "Y", "spans runs")];
+        let mut ids = ids();
+        let sel = select_edits(&projection, &diags, &ReviseOptions::default(), &mut ids);
+
+        assert_eq!(sel.skipped, 0);
+        let opens = &sel.edits_by_ordinal[&0];
+        let closes = &sel.edits_by_ordinal[&2];
+        assert_eq!(opens.len(), 1);
+        assert_eq!(closes.len(), 1);
+        assert!(opens[0].opens_here && !opens[0].closes_here);
+        assert!(!closes[0].opens_here && closes[0].closes_here);
+        assert!(opens[0].replacement.is_none());
+        assert!(closes[0].replacement.is_none());
+        assert_eq!(opens[0].comment_id, closes[0].comment_id);
+        // Run 1 (the middle run) gets no entry at all.
+        assert!(!sel.edits_by_ordinal.contains_key(&1));
+    }
+
+    #[test]
+    fn select_edits_skips_span_not_contained_in_any_run() {
+        let mut projection = three_runs();
+        // Open a gap between run 0 and run 1 (e.g. a tab/paragraph break).
+        projection.runs[1].start = 7;
+        let diags = vec![diag(5, 6, "Z", "in the gap")];
+        let mut ids = ids();
+        let sel = select_edits(&projection, &diags, &ReviseOptions::default(), &mut ids);
+
+        assert_eq!(sel.skipped, 1);
+        assert!(sel.edits_by_ordinal.is_empty());
+    }
+
+    #[test]
+    fn accounting_reconciles_across_overlap_and_multi_run_candidates() {
+        // A mix of: an ordinary single-run fix, an overlap loser downgraded
+        // to a comment, and a multi-run fix downgraded to a split comment.
+        // applied + annotated + skipped must equal the number of candidates
+        // considered, and out.comments.len() must equal applied + annotated.
+        let inner = concat!(
+            r#"<w:p><w:r><w:t>xxxxx</w:t></w:r>"#,
+            r#"<w:r><w:t>xxxxx</w:t></w:r>"#,
+            r#"<w:r><w:t>xxxxx</w:t></w:r></w:p>"#,
+        );
+        let xml = format!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{inner}</w:body></w:document>"#
+        );
+        let projection = three_runs();
+        let diags = vec![
+            diag(0, 3, "A", "ordinary fix"),   // run 0, applied
+            diag(1, 4, "B", "overlap loser"),  // run 0, downgraded
+            diag(2, 12, "Y", "multi-run fix"), // runs 0..2, downgraded (2 pieces)
+        ];
+        let mut ids = ids();
+        let sel = select_edits(&projection, &diags, &ReviseOptions::default(), &mut ids);
+        assert_eq!(sel.skipped, 0);
+
+        let out = revise::apply(&xml, &sel.edits_by_ordinal, "lawlint", None, &mut ids).unwrap();
+        assert_eq!(out.skipped, 0);
+        let applied = out.comments.len() - out.annotated;
+        // One redline applied (the first fix); two comment-only findings
+        // (overlap loser + multi-run fix) annotated.
+        assert_eq!(applied, 1);
+        assert_eq!(out.annotated, 2);
+        assert_eq!(out.comments.len(), applied + out.annotated);
+    }
 }
