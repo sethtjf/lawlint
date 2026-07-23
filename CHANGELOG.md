@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/sethtjf/lawlint/compare/v0.9.0...v0.9.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **ci:** do not fail the commit-message check on a not-yet-created release tag ([#69](https://github.com/sethtjf/lawlint/issues/69)) ([7634a9f](https://github.com/sethtjf/lawlint/commit/7634a9f5d541dcf58441f3cdbdba2b46a2e10e84))
+
 ## [0.9.0](https://github.com/sethtjf/lawlint/compare/v0.8.0...v0.9.0) (2026-07-22)
 
 
