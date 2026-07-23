@@ -8,9 +8,12 @@ version.workspace = true
 [dependencies]
 lawlint-core = { path = "../lawlint-core" }
 # ax is the AI interface for ALL backends (hard product requirement).
-# Pinned: AxJudge is written against the v23.0.1 AxAIClient contract
+# Pinned: AxJudge is written against the v23 AxAIClient contract
 # (`chat(&mut self, Value) -> AxResult<Value>`, blocking transport).
-axllm = "=23.0.1"
+# 23.0.3 fixes an Anthropic "adaptive" model bug (opus-4-8 et al reject a
+# `temperature` field axllm used to send unconditionally); 23.0.1 does not
+# have that fix.
+axllm = "=23.0.3"
 anyhow = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }

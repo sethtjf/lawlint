@@ -184,9 +184,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "axllm"
-version = "23.0.1"
+version = "23.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5324532526c919f314933905f42df6eb4aa63797a6da3d3ab645d9315aef997e"
+checksum = "e7892b40641ab16da26f7b02277c912b006bfd5dfbfb761ba88ebba8aae5189a"
 dependencies = [
  "regex",
  "reqwest 0.12.28",
@@ -2201,7 +2201,7 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
 name = "lawlint-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2231,7 +2231,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "include_dir",
  "pulldown-cmark",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-desktop"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "lawlint-core",
  "lawlint-docx",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-docx"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "lawlint-core",
  "quick-xml 0.36.2",
@@ -2270,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-eval"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "clap",
  "lawlint-core",
@@ -2283,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-judge"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axllm",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-wasm"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "lawlint-core",
  "serde",
