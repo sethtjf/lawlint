@@ -20,6 +20,8 @@ pub struct LintOptions {
     /// AI model preferences (written by `lawlint init`); consumed by
     /// CLI/desktop, ignored by core `lint()`.
     pub ai: Option<AiOptions>,
+    /// `lawlint learn` options; consumed by the CLI, ignored by core `lint()`.
+    pub learn: Option<LearnOptions>,
 }
 
 impl LintOptions {
@@ -77,6 +79,14 @@ pub struct JudgeOptions {
     pub per_rule: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LearnOptions {
+    /// How many mining lenses `lawlint learn` runs concurrently. `None` uses
+    /// the CLI's default (every lens). `--workers` overrides this.
+    pub concurrency: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +101,7 @@ mod tests {
         assert!(o.markdown.is_none());
         assert!(o.rule_dirs.is_none());
         assert!(o.judge.is_none());
+        assert!(o.learn.is_none());
     }
 
     #[test]
