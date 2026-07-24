@@ -1362,12 +1362,12 @@ fn mine_concurrent(jobs: Vec<MiningJob>, progress: &MultiSpinner) -> Vec<MiningO
                     // posture as AxJudge's fetch_parallel, judge.rs) — a
                     // panicking backend must fail this one lens, not tear down
                     // every other concurrent worker.
-                    let result =
-                        std::panic::catch_unwind(AssertUnwindSafe(|| mine(client.as_mut(), &prompt)))
-                            .unwrap_or_else(|_| {
-                                Err("mining worker panicked while evaluating this lens"
-                                    .to_string())
-                            });
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        mine(client.as_mut(), &prompt)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err("mining worker panicked while evaluating this lens".to_string())
+                    });
                     match &result {
                         Ok(rules) => progress.set_done(
                             index,
@@ -1526,7 +1526,10 @@ fn run_learn(
     let spinner_header = format!("Pass 2 (mining agent) -> {model_id}");
     let spinner = MultiSpinner::new(
         &spinner_header,
-        active_lenses.iter().map(|lens| lens.name.to_string()).collect(),
+        active_lenses
+            .iter()
+            .map(|lens| lens.name.to_string())
+            .collect(),
         quiet,
     );
     let jobs: Vec<MiningJob> = clients
@@ -1663,7 +1666,10 @@ fn run_learn(
             .into_iter()
             .filter_map(|(lens_name, items)| {
                 let client = lens_clients.remove(lens_name)?;
-                let lens = active_lenses.iter().copied().find(|lens| lens.name == lens_name)?;
+                let lens = active_lenses
+                    .iter()
+                    .copied()
+                    .find(|lens| lens.name == lens_name)?;
                 let examples: BTreeMap<String, String> = items
                     .iter()
                     .filter_map(|(candidate, _)| {
@@ -1686,7 +1692,10 @@ fn run_learn(
         let repair_header = format!("Refining candidates -> {model_id}");
         let repair_spinner = MultiSpinner::new(
             &repair_header,
-            repair_jobs.iter().map(|job| job.lens.name.to_string()).collect(),
+            repair_jobs
+                .iter()
+                .map(|job| job.lens.name.to_string())
+                .collect(),
             quiet,
         );
         let repair_outcomes = mine_concurrent(repair_jobs, &repair_spinner);
@@ -1712,9 +1721,13 @@ fn run_learn(
             rescued = repair_report.kept.len();
             let rescued_ids: BTreeSet<String> =
                 repair_report.kept.iter().map(|c| c.id.clone()).collect();
-            report.dropped.retain(|(id, _, _)| !rescued_ids.contains(id));
+            report
+                .dropped
+                .retain(|(id, _, _)| !rescued_ids.contains(id));
             for (id, origin, reason) in repair_report.dropped {
-                report.dropped.push((id, origin, format!("{reason} (after one repair attempt)")));
+                report
+                    .dropped
+                    .push((id, origin, format!("{reason} (after one repair attempt)")));
             }
             report.kept.extend(repair_report.kept);
         }
@@ -2480,8 +2493,14 @@ mod tests {
             !transcript.contains("every mining lens was unavailable"),
             "{transcript}"
         );
-        assert!(transcript.contains("kept    personal/no-alpha"), "{transcript}");
-        assert!(transcript.contains("kept    personal/no-beta"), "{transcript}");
+        assert!(
+            transcript.contains("kept    personal/no-alpha"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/no-beta"),
+            "{transcript}"
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -2505,13 +2524,15 @@ mod tests {
         )]);
 
         let mut output = Vec::new();
-        let code =
-            run_learn(&files, "corpus", &out, vec![c0, c1], "m", true, &mut output).unwrap();
+        let code = run_learn(&files, "corpus", &out, vec![c0, c1], "m", true, &mut output).unwrap();
         assert_eq!(code, 0);
         let transcript = String::from_utf8(output).unwrap();
 
         assert!(transcript.contains("1 duplicate merged"), "{transcript}");
-        assert!(transcript.contains("kept    personal/no-gamma-a"), "{transcript}");
+        assert!(
+            transcript.contains("kept    personal/no-gamma-a"),
+            "{transcript}"
+        );
         assert!(!transcript.contains("no-gamma-b"), "{transcript}");
 
         fs::remove_dir_all(&dir).unwrap();
@@ -2548,8 +2569,14 @@ mod tests {
             transcript.contains("Refining 1 candidate that failed the self-consistency gate"),
             "{transcript}"
         );
-        assert!(transcript.contains("Refined: 1 rescued, 0 still dropped"), "{transcript}");
-        assert!(transcript.contains("kept    personal/no-short"), "{transcript}");
+        assert!(
+            transcript.contains("Refined: 1 rescued, 0 still dropped"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/no-short"),
+            "{transcript}"
+        );
         let rescued = fs::read_to_string(out.join("rules/no-short.md")).unwrap();
         assert!(rescued.contains("refined"), "{rescued}");
 
@@ -2578,8 +2605,14 @@ mod tests {
         run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
         assert_eq!(requests.lock().unwrap().len(), 2); // exactly one repair attempt, no loop
         let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("Refined: 0 rescued, 1 still dropped"), "{transcript}");
-        assert!(transcript.contains("dropped personal/no-short"), "{transcript}");
+        assert!(
+            transcript.contains("Refined: 0 rescued, 1 still dropped"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("dropped personal/no-short"),
+            "{transcript}"
+        );
         assert!(!out.join("rules/no-short.md").exists());
 
         fs::remove_dir_all(&dir).unwrap();
@@ -2594,7 +2627,9 @@ mod tests {
         assert_eq!(resolve_concurrency(Some(99), &bare), LENSES.len());
 
         let config = LintOptions {
-            learn: Some(lawlint_core::LearnOptions { concurrency: Some(2) }),
+            learn: Some(lawlint_core::LearnOptions {
+                concurrency: Some(2),
+            }),
             ..Default::default()
         };
         assert_eq!(resolve_concurrency(None, &config), 2);

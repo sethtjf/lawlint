@@ -34,7 +34,9 @@ struct MultiSpinnerState {
 impl MultiSpinnerState {
     fn render_line(frame: usize, label: &str, state: &LineState) -> String {
         match state {
-            LineState::Pending => format!("  {} {label}", SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]),
+            LineState::Pending => {
+                format!("  {} {label}", SPINNER_FRAMES[frame % SPINNER_FRAMES.len()])
+            }
             LineState::Running(status) => format!(
                 "  {} {label}  {status}",
                 SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]
@@ -70,7 +72,10 @@ impl MultiSpinner {
     /// must never receive cursor-movement escapes).
     pub(crate) fn new(header: &str, labels: Vec<String>, quiet: bool) -> Self {
         let state = Arc::new(MultiSpinnerState {
-            lines: labels.iter().map(|_| Mutex::new(LineState::Pending)).collect(),
+            lines: labels
+                .iter()
+                .map(|_| Mutex::new(LineState::Pending))
+                .collect(),
             labels,
             running: AtomicBool::new(false),
         });
