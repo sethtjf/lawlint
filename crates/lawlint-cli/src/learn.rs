@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -32,6 +33,8 @@ use lawlint_judge::AxAIClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use crate::progress::MultiSpinner;
 
 /// Below this many corpus words, "the corpus never does X" is noise, not
 /// signal — pass 1 emits no candidates (pass 2 still runs).
@@ -44,8 +47,11 @@ const MAX_SAMPLE_CHARS: usize = 16_000;
 /// cover the corpus completely, so they are never truncated.
 const PROMPT_PASSAGE_CHARS: usize = 900;
 const GATE_CHUNK_CHARS: usize = 2_000;
-/// At most this many agent candidates are considered per run.
-const MAX_MINED_RULES: usize = 10;
+/// At most this many candidates one lens's agent call may propose. Each lens
+/// covers a narrower slice of style than the old single-call prompt did, so
+/// this is smaller than the old MAX_MINED_RULES (10) was for the whole run —
+/// the merged pool across lenses is what the self-consistency gate filters.
+const MAX_MINED_RULES_PER_LENS: usize = 5;
 
 // ---- corpus ingestion --------------------------------------------------
 
@@ -392,7 +398,7 @@ struct RuleYaml {
 }
 
 /// A generated rule that parsed and validated as a real `RuleDef`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Candidate {
     id: String,
     /// `rules/<id>.md`.
@@ -695,6 +701,35 @@ struct Passage {
     text: String,
 }
 
+/// One stylistic dimension a mining worker focuses on. Every lens sees the
+/// FULL corpus sample + stats — a "never does X" claim needs whole-corpus
+/// evidence to be trustworthy — lenses vary the prompt's focus, not what
+/// evidence it's given. `static` (not `const`) so `&LENSES[i]` is a single
+/// canonical `'static` reference shareable across worker threads.
+struct Lens {
+    name: &'static str,
+    focus: &'static str,
+}
+
+static LENSES: [Lens; 4] = [
+    Lens {
+        name: "punctuation & mechanics",
+        focus: "dash, semicolon, and comma habits; quotation and citation punctuation style",
+    },
+    Lens {
+        name: "phrasing & word choice",
+        focus: "AI-tell terms, hedges, transitions, and filler phrases",
+    },
+    Lens {
+        name: "sentence structure & rhythm",
+        focus: "sentence length distribution, clause and parenthetical shape",
+    },
+    Lens {
+        name: "structural & organizational habits",
+        focus: "sentence openers, closers, paragraph and list shape",
+    },
+];
+
 /// Split text into chunks of roughly `target` chars on paragraph
 /// boundaries. Never drops text: an oversized paragraph becomes its own
 /// chunk (the gate needs full coverage; the prompt truncates separately).
@@ -820,14 +855,19 @@ fn stats_block(stats: &CorpusStats) -> String {
     block
 }
 
-fn mining_prompt(stats: &CorpusStats, sample: &[Passage]) -> String {
+fn mining_prompt(stats: &CorpusStats, sample: &[Passage], lens: &Lens) -> String {
     let mut prompt = String::new();
-    prompt.push_str(
-        "You are lawlint's rule-mining agent. Below are statistics computed over a \
-         writer's FULL body of prior writing, then sample passages from it. Propose \
-         lint rules that capture this writer's personal style so AI-drafted text can \
-         be checked against their voice: patterns the writer NEVER uses (flag them), \
-         and consistent habits (flag deviations).\n\nCorpus statistics:\n",
+    let _ = write!(
+        prompt,
+        "You are lawlint's rule-mining agent, one of several parallel specialists \
+         each mining the same corpus for a different stylistic dimension. Below are \
+         statistics computed over a writer's FULL body of prior writing, then sample \
+         passages from it. Propose lint rules that capture this writer's personal \
+         style so AI-drafted text can be checked against their voice: patterns the \
+         writer NEVER uses (flag them), and consistent habits (flag deviations).\n\n\
+         Your focus this pass is {}: {}. Only propose rules in this lane; other \
+         specialists are covering the rest.\n\nCorpus statistics:\n",
+        lens.name, lens.focus
     );
     prompt.push_str(&stats_block(stats));
     prompt.push_str("\nSample passages:\n");
@@ -843,7 +883,7 @@ fn mining_prompt(stats: &CorpusStats, sample: &[Passage]) -> String {
     }
     let _ = write!(
         prompt,
-        "\nRespond with ONLY a JSON array of at most {MAX_MINED_RULES} rules. Each rule:\n\
+        "\nRespond with ONLY a JSON array of at most {MAX_MINED_RULES_PER_LENS} rules. Each rule:\n\
          {{\"id\": \"kebab-case-name\", \"engine\": \"phrase\" or \"leading\", \
          \"severity\": \"warning\" or \"suggestion\", \"description\": \"...\", \
          \"message\": \"...\", \
@@ -964,6 +1004,7 @@ fn mined_candidate(
     rule: MinedRule,
     index: usize,
     model_id: &str,
+    lens_name: &str,
     used_ids: &BTreeSet<String>,
 ) -> Result<Candidate, (String, String)> {
     let id = sanitize_id(&rule.id, index);
@@ -990,12 +1031,16 @@ fn mined_candidate(
     }
     match &rule.mined_from {
         Some(note) if !note.trim().is_empty() => {
-            let _ = write!(description, " (mined by {model_id} from {}).", note.trim());
+            let _ = write!(
+                description,
+                " (mined by {model_id}, lens: {lens_name}, from {}).",
+                note.trim()
+            );
         }
         _ => {
             let _ = write!(
                 description,
-                " (mined by {model_id} from your corpus sample)."
+                " (mined by {model_id}, lens: {lens_name}, from your corpus sample)."
             );
         }
     }
@@ -1278,12 +1323,158 @@ fn mine(client: &mut dyn AxAIClient, prompt: &str) -> Result<Vec<MinedRule>, Str
     Err(last_error)
 }
 
+/// One pass-2 mining round-trip: which client runs it, which lens it's
+/// mining for, and the prompt already built for that lens.
+struct MiningJob {
+    client: Box<dyn AxAIClient + Send>,
+    lens: &'static Lens,
+    prompt: String,
+}
+
+/// What one job produced. The client comes back too — clients are cheap and
+/// stateless (`lawlint_judge::create_client`'s own doc comment), but a
+/// worker's client is still perfectly usable for a follow-up round (e.g.
+/// self-repair) and reusing it beats building another.
+struct MiningOutcome {
+    client: Box<dyn AxAIClient + Send>,
+    lens: &'static Lens,
+    result: Result<Vec<MinedRule>, String>,
+}
+
+/// Run every job on its own thread concurrently, one client per lens (no
+/// mutex/checkout needed — unlike `AxJudge`'s pool, here #jobs == #clients,
+/// so each thread just owns its client outright for the call's duration).
+/// `progress`'s line index is each job's position in `jobs`.
+fn mine_concurrent(jobs: Vec<MiningJob>, progress: &MultiSpinner) -> Vec<MiningOutcome> {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = jobs
+            .into_iter()
+            .enumerate()
+            .map(|(index, job)| {
+                scope.spawn(move || {
+                    let MiningJob {
+                        mut client,
+                        lens,
+                        prompt,
+                    } = job;
+                    progress.set_running(index, "mining…");
+                    // AxAIClient is a public trait with third-party impls (same
+                    // posture as AxJudge's fetch_parallel, judge.rs) — a
+                    // panicking backend must fail this one lens, not tear down
+                    // every other concurrent worker.
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        mine(client.as_mut(), &prompt)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err("mining worker panicked while evaluating this lens".to_string())
+                    });
+                    match &result {
+                        Ok(rules) => progress.set_done(
+                            index,
+                            format!(
+                                "{} candidate{}",
+                                rules.len(),
+                                if rules.len() == 1 { "" } else { "s" }
+                            ),
+                        ),
+                        Err(error) => progress.set_failed(index, truncate_chars(error, 60)),
+                    }
+                    MiningOutcome {
+                        client,
+                        lens,
+                        result,
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("mining worker panic was already caught inside catch_unwind")
+            })
+            .collect()
+    })
+}
+
+/// Whether a gate-rejection reason is a content problem the agent could
+/// plausibly fix by rewriting the rule. "duplicate rule id" is a naming
+/// collision with an unrelated candidate, not a rule-quality problem — a
+/// rewrite wouldn't touch that and would just burn a round-trip.
+fn is_repairable_reason(reason: &str) -> bool {
+    !reason.contains("duplicate rule id")
+}
+
+/// The first corpus passage a candidate self-fired on, so a repair prompt
+/// can show the model exactly what its pattern over-matched instead of just
+/// a count. Chunked the same way the gate itself chunks (`GATE_CHUNK_CHARS`)
+/// so this is the same evidence the gate used, truncated to prompt size.
+fn self_fire_example(package: &str, candidate: &Candidate, files: &[CorpusFile]) -> Option<String> {
+    let set = RuleSet::from_sources(
+        package,
+        &[(candidate.file_name.clone(), candidate.yaml.clone())],
+    )
+    .ok()?;
+    let full_id = format!("{package}/{}", candidate.id);
+    let options = LintOptions::default();
+    for file in files {
+        for chunk in chunk_paragraphs(&file.text, GATE_CHUNK_CHARS) {
+            let fires = lint_with(&chunk, &options, &set)
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule_id.0 == full_id);
+            if fires {
+                return Some(truncate_chars(&chunk, PROMPT_PASSAGE_CHARS));
+            }
+        }
+    }
+    None
+}
+
+/// One lens's batched follow-up: every candidate from that lens the gate
+/// rejected, why, and (when found) the corpus passage it incorrectly fired
+/// on. Asks for corrected versions keyed by the same `id` so responses can
+/// be matched back to the originals.
+fn repair_prompt(items: &[(&Candidate, &str)], examples: &BTreeMap<String, String>) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(
+        "The following rules you proposed failed lawlint's self-consistency check: \
+         each one fires on the same writer's own corpus it was supposed to describe, \
+         or fails its own bad/good example. For each, the original rule, why it \
+         failed, and (when available) the corpus passage it incorrectly fired on.\n\n",
+    );
+    for (candidate, reason) in items {
+        let _ = write!(
+            prompt,
+            "--- {} ---\n{}\nFailure: {reason}\n",
+            candidate.id, candidate.yaml
+        );
+        if let Some(example) = examples.get(&candidate.id) {
+            let _ = write!(
+                prompt,
+                "Fired on this passage from the writer's own corpus (it must not):\n{example}\n"
+            );
+        }
+        prompt.push('\n');
+    }
+    prompt.push_str(
+        "Fix each rule so it no longer fires on the writer's own text (narrow the \
+         pattern, or fix the failing example) while still describing a real habit. \
+         Respond with ONLY a JSON array of the corrected rules, same schema as \
+         before, one entry per rule above using the SAME \"id\" so it can be matched \
+         back. Omit a rule from the array if it genuinely cannot be fixed.",
+    );
+    prompt
+}
+
 fn run_learn(
     files: &[CorpusFile],
     corpus_label: &str,
     out: &Path,
-    client: &mut dyn AxAIClient,
+    clients: Vec<Box<dyn AxAIClient + Send>>,
     model_id: &str,
+    quiet: bool,
     output: &mut dyn Write,
 ) -> Result<i32, String> {
     let say = |output: &mut dyn Write, line: &str| -> Result<(), String> {
@@ -1314,52 +1505,251 @@ fn run_learn(
     let mut candidates = statistical_candidates(files, &stats);
     let pass1_count = candidates.len();
 
-    // Pass 2: stratified sample → mining agent over the ax boundary.
+    // Pass 2: stratified sample → mining agent over the ax boundary, fanned
+    // out across up to `clients.len()` lenses concurrently (`zip` clamps to
+    // whichever of `clients`/`LENSES` is shorter).
     let sample = stratified_sample(files, MAX_PASSAGES, MAX_SAMPLE_CHARS);
     let sample_chars: usize = sample.iter().map(|passage| passage.text.len()).sum();
+    let active_lenses: Vec<&'static Lens> = LENSES.iter().take(clients.len()).collect();
     say(
         output,
         &format!(
-            "Pass 2 (mining agent): {} passage{} (~{} tokens) -> {model_id}",
+            "Pass 2 (mining agent): {} lens{} over {} passage{} (~{} tokens each) -> {model_id}",
+            active_lenses.len(),
+            if active_lenses.len() == 1 { "" } else { "es" },
             sample.len(),
             if sample.len() == 1 { "" } else { "s" },
             sample_chars / 4
         ),
     )?;
+
+    let spinner_header = format!("Pass 2 (mining agent) -> {model_id}");
+    let spinner = MultiSpinner::new(
+        &spinner_header,
+        active_lenses
+            .iter()
+            .map(|lens| lens.name.to_string())
+            .collect(),
+        quiet,
+    );
+    let jobs: Vec<MiningJob> = clients
+        .into_iter()
+        .zip(active_lenses.iter().copied())
+        .map(|(client, lens)| MiningJob {
+            client,
+            lens,
+            prompt: mining_prompt(&stats, &sample, lens),
+        })
+        .collect();
+    let outcomes = mine_concurrent(jobs, &spinner);
+    spinner.finish();
+
+    let mut used_ids: BTreeSet<String> = candidates.iter().map(|c| c.id.clone()).collect();
+    let mut seen_patterns: BTreeSet<String> = BTreeSet::new();
     let mut invalid: Vec<(String, &'static str, String)> = Vec::new();
-    match mine(client, &mining_prompt(&stats, &sample)) {
-        Ok(mined) => {
-            let mut used_ids: BTreeSet<String> = candidates.iter().map(|c| c.id.clone()).collect();
-            for (index, rule) in mined.into_iter().take(MAX_MINED_RULES).enumerate() {
-                match mined_candidate(rule, index, model_id, &used_ids) {
-                    Ok(candidate) => {
-                        used_ids.insert(candidate.id.clone());
-                        candidates.push(candidate);
+    let mut duplicate_count = 0usize;
+    // Snapshot every merged mined candidate (kept + not-yet-gated), keyed by
+    // id, so a candidate the gate later drops can still be routed to a
+    // repair prompt through the lens that proposed it.
+    let mut mined_snapshot: BTreeMap<String, (Candidate, &'static Lens)> = BTreeMap::new();
+    // Reusable lens clients for a possible repair round — cheap and
+    // stateless, so reusing beats rebuilding (create_client's own posture).
+    let mut lens_clients: BTreeMap<&'static str, Box<dyn AxAIClient + Send>> = BTreeMap::new();
+    let mut lens_errors: Vec<(&'static str, String)> = Vec::new();
+    let mut agent_count = 0usize;
+
+    for outcome in outcomes {
+        lens_clients.insert(outcome.lens.name, outcome.client);
+        match outcome.result {
+            Ok(mined) => {
+                for (index, rule) in mined.into_iter().take(MAX_MINED_RULES_PER_LENS).enumerate() {
+                    agent_count += 1;
+                    match mined_candidate(rule, index, model_id, outcome.lens.name, &used_ids) {
+                        Ok(candidate) => {
+                            let pattern_key = candidate
+                                .def
+                                .patterns
+                                .first()
+                                .map(|pattern| pattern.pattern().trim().to_ascii_lowercase());
+                            if let Some(key) = &pattern_key {
+                                if !seen_patterns.insert(key.clone()) {
+                                    // Another lens already proposed this same
+                                    // habit; first-seen wins, this is not a
+                                    // failure worth reporting as one.
+                                    duplicate_count += 1;
+                                    continue;
+                                }
+                            }
+                            used_ids.insert(candidate.id.clone());
+                            mined_snapshot
+                                .insert(candidate.id.clone(), (candidate.clone(), outcome.lens));
+                            candidates.push(candidate);
+                        }
+                        Err((id, reason)) => invalid.push((id, "pass 2 (mining agent)", reason)),
                     }
-                    Err((id, reason)) => invalid.push((id, "pass 2 (mining agent)", reason)),
                 }
             }
+            Err(error) => lens_errors.push((outcome.lens.name, error)),
         }
-        Err(error) => say(
+    }
+    for (lens_name, error) in &lens_errors {
+        say(
             output,
             &format!(
-                "lawlint: warning: mining agent unavailable ({error}); \
-                 keeping pass-1 candidates only"
+                "lawlint: warning: mining lens {lens_name:?} unavailable ({error}); \
+                 other lenses still ran"
             ),
-        )?,
+        )?;
     }
-    let mined_count = candidates.len() - pass1_count + invalid.len();
+    if lens_errors.len() == active_lenses.len() && !active_lenses.is_empty() {
+        say(
+            output,
+            "lawlint: warning: every mining lens was unavailable; keeping pass-1 candidates only",
+        )?;
+    }
+    let dedup_note = if duplicate_count > 0 {
+        format!(", {duplicate_count} duplicate merged")
+    } else {
+        String::new()
+    };
     say(
         output,
         &format!(
-            "Candidates: {} ({pass1_count} statistical, {mined_count} agent)",
+            "Candidates: {} ({pass1_count} statistical, {agent_count} agent{dedup_note})",
             candidates.len() + invalid.len()
         ),
     )?;
 
     // Self-consistency gate over the full corpus.
     let package = package_name(out);
-    let report = self_consistency_gate(&package, candidates, files)?;
+    let mut report = self_consistency_gate(&package, candidates, files)?;
+
+    // Bounded self-repair: gate-rejected mined candidates get exactly one
+    // chance to fix themselves, routed back through the lens that proposed
+    // them. Duplicate-id rejections (`invalid`) are not content problems, so
+    // they never enter this round.
+    let repairable: Vec<(Candidate, &'static Lens, String)> = report
+        .dropped
+        .iter()
+        .filter(|(_, origin, reason)| {
+            *origin == "pass 2 (mining agent)" && is_repairable_reason(reason)
+        })
+        .filter_map(|(id, _, reason)| {
+            mined_snapshot
+                .get(id)
+                .map(|(candidate, lens)| (candidate.clone(), *lens, reason.clone()))
+        })
+        .collect();
+    let mut rescued = 0usize;
+    if !repairable.is_empty() {
+        say(
+            output,
+            &format!(
+                "Refining {} candidate{} that failed the self-consistency gate…",
+                repairable.len(),
+                if repairable.len() == 1 { "" } else { "s" }
+            ),
+        )?;
+        let repairing_ids: BTreeSet<String> =
+            repairable.iter().map(|(c, _, _)| c.id.clone()).collect();
+        let repair_used_ids: BTreeSet<String> =
+            used_ids.difference(&repairing_ids).cloned().collect();
+
+        let mut by_lens: BTreeMap<&'static str, Vec<(Candidate, String)>> = BTreeMap::new();
+        for (candidate, lens, reason) in &repairable {
+            by_lens
+                .entry(lens.name)
+                .or_default()
+                .push((candidate.clone(), reason.clone()));
+        }
+        let repair_jobs: Vec<MiningJob> = by_lens
+            .into_iter()
+            .filter_map(|(lens_name, items)| {
+                let client = lens_clients.remove(lens_name)?;
+                let lens = active_lenses
+                    .iter()
+                    .copied()
+                    .find(|lens| lens.name == lens_name)?;
+                let examples: BTreeMap<String, String> = items
+                    .iter()
+                    .filter_map(|(candidate, _)| {
+                        self_fire_example(&package, candidate, files)
+                            .map(|example| (candidate.id.clone(), example))
+                    })
+                    .collect();
+                let refs: Vec<(&Candidate, &str)> = items
+                    .iter()
+                    .map(|(candidate, reason)| (candidate, reason.as_str()))
+                    .collect();
+                Some(MiningJob {
+                    client,
+                    lens,
+                    prompt: repair_prompt(&refs, &examples),
+                })
+            })
+            .collect();
+
+        let repair_header = format!("Refining candidates -> {model_id}");
+        let repair_spinner = MultiSpinner::new(
+            &repair_header,
+            repair_jobs
+                .iter()
+                .map(|job| job.lens.name.to_string())
+                .collect(),
+            quiet,
+        );
+        let repair_outcomes = mine_concurrent(repair_jobs, &repair_spinner);
+        repair_spinner.finish();
+
+        let mut repaired_candidates: Vec<Candidate> = Vec::new();
+        for outcome in repair_outcomes {
+            let Ok(mined) = outcome.result else { continue };
+            for (index, rule) in mined.into_iter().enumerate() {
+                let lens_label = format!("{}, refined", outcome.lens.name);
+                if let Ok(candidate) =
+                    mined_candidate(rule, index, model_id, &lens_label, &repair_used_ids)
+                {
+                    if repairing_ids.contains(&candidate.id) {
+                        repaired_candidates.push(candidate);
+                    }
+                }
+            }
+        }
+
+        if !repaired_candidates.is_empty() {
+            let repair_report = self_consistency_gate(&package, repaired_candidates, files)?;
+            rescued = repair_report.kept.len();
+            // Every candidate that went through the repair round must leave
+            // `report.dropped` exactly once: rescued ones move to `kept`,
+            // re-failed ones are re-added below with a note. Retaining a
+            // re-failed candidate's original entry would list (and count) it
+            // twice. Candidates the agent never returned a repair for are
+            // absent from `repair_report` and correctly keep their one entry.
+            let repaired_ids: BTreeSet<String> = repair_report
+                .kept
+                .iter()
+                .map(|c| c.id.clone())
+                .chain(repair_report.dropped.iter().map(|(id, _, _)| id.clone()))
+                .collect();
+            report
+                .dropped
+                .retain(|(id, _, _)| !repaired_ids.contains(id));
+            for (id, origin, reason) in repair_report.dropped {
+                report
+                    .dropped
+                    .push((id, origin, format!("{reason} (after one repair attempt)")));
+            }
+            report.kept.extend(repair_report.kept);
+        }
+        say(
+            output,
+            &format!(
+                "Refined: {rescued} rescued, {} still dropped",
+                repairable.len() - rescued
+            ),
+        )?;
+    }
+
     say(
         output,
         &format!(
@@ -1448,10 +1838,22 @@ fn resolve_model_spec(model_flag: Option<&str>, config: &LintOptions) -> Result<
         })
 }
 
+/// How many of `LENSES` to mine concurrently: `--workers` overrides
+/// `learn.concurrency`, which overrides the default (every lens). Clamped to
+/// `[1, LENSES.len()]` — more workers than lenses buys nothing today, same
+/// posture as `lawlint_judge::concurrency()`.
+fn resolve_concurrency(workers_flag: Option<usize>, config: &LintOptions) -> usize {
+    let configured =
+        workers_flag.or_else(|| config.learn.as_ref().and_then(|learn| learn.concurrency));
+    configured.unwrap_or(LENSES.len()).clamp(1, LENSES.len())
+}
+
 pub(crate) fn learn_command(
     path: &Path,
     out: &Path,
     model_flag: Option<&str>,
+    workers_flag: Option<usize>,
+    quiet: bool,
 ) -> Result<i32, String> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let (config, _) = crate::find_config(cwd)?;
@@ -1467,15 +1869,27 @@ pub(crate) fn learn_command(
     if let Some(notice) = crate::local_notice(&spec) {
         eprintln!("{notice}");
     }
-    let (mut client, model_id) =
-        lawlint_judge::create_client(&spec).map_err(|error| error.to_string())?;
+    let workers = resolve_concurrency(workers_flag, &config);
+    let mut clients: Vec<Box<dyn AxAIClient + Send>> = Vec::with_capacity(workers);
+    let mut model_id = String::new();
+    // Clients are cheap and stateless (lawlint_judge::create_client's own
+    // doc comment: "clients are independent, so this costs a little setup
+    // and no network traffic") — building `workers` of them up front is the
+    // same pattern `create_judge` already uses for the lint judge's pool.
+    for _ in 0..workers {
+        let (client, id) =
+            lawlint_judge::create_client(&spec).map_err(|error| error.to_string())?;
+        model_id = id;
+        clients.push(client);
+    }
     let stdout = io::stdout();
     run_learn(
         &files,
         &path.display().to_string(),
         out,
-        client.as_mut(),
+        clients,
         &model_id,
+        quiet,
         &mut stdout.lock(),
     )
 }
@@ -1488,26 +1902,43 @@ mod tests {
     use lawlint_judge::{AxError, AxResult};
     use serde_json::Value;
     use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
 
     // A scripted mining backend — the mock AxAIClient the whole flow is
-    // tested against. No network, no real model.
+    // tested against. No network, no real model. `requests` is shared via
+    // `Arc<Mutex<..>>` (not owned by the client) so a test can still read it
+    // after the client is moved into `run_learn`'s `Vec<Box<dyn AxAIClient>>`.
     struct FakeClient {
         responses: VecDeque<AxResult<Value>>,
-        requests: Vec<Value>,
+        requests: Arc<Mutex<Vec<Value>>>,
     }
 
     impl FakeClient {
-        fn new(responses: Vec<AxResult<Value>>) -> Self {
-            FakeClient {
-                responses: responses.into(),
-                requests: Vec::new(),
-            }
+        /// A raw client plus a handle to its request log.
+        fn new(responses: Vec<AxResult<Value>>) -> (Self, Arc<Mutex<Vec<Value>>>) {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            (
+                FakeClient {
+                    responses: responses.into(),
+                    requests: requests.clone(),
+                },
+                requests,
+            )
+        }
+
+        /// A boxed client ready to go into `run_learn`'s client pool, plus a
+        /// handle to its request log.
+        fn boxed(
+            responses: Vec<AxResult<Value>>,
+        ) -> (Box<dyn AxAIClient + Send>, Arc<Mutex<Vec<Value>>>) {
+            let (client, requests) = Self::new(responses);
+            (Box::new(client), requests)
         }
     }
 
     impl AxAIClient for FakeClient {
         fn chat(&mut self, request: Value) -> AxResult<Value> {
-            self.requests.push(request);
+            self.requests.lock().unwrap().push(request);
             self.responses
                 .pop_front()
                 .unwrap_or_else(|| Err(AxError::runtime("fake client exhausted")))
@@ -1757,28 +2188,34 @@ mod tests {
     fn mined_candidate_sanitizes_and_restricts() {
         let rule = |json_text: &str| serde_json::from_str::<MinedRule>(json_text).unwrap();
         let none = BTreeSet::new();
+        let lens = "punctuation & mechanics";
 
         // Engine restriction: density is rejected.
         let dense = rule(
             r#"{"id": "x", "engine": "density", "description": "d",
                 "examples": [{"bad": "b", "good": "g"}]}"#,
         );
-        let (_, reason) = mined_candidate(dense, 0, "m", &none).unwrap_err();
+        let (_, reason) = mined_candidate(dense, 0, "m", lens, &none).unwrap_err();
         assert!(reason.contains("not allowed"), "{reason}");
 
-        // Severity clamps below error; provenance lands in the description.
+        // Severity clamps below error; provenance (model + lens) lands in
+        // the description.
         let ok = rule(
             r#"{"id": "No Moreover!", "severity": "error", "description": "Never moreover",
                 "patterns": ["(?i)\\bmoreover\\b"],
                 "examples": [{"bad": "Moreover, yes.", "good": "Yes."}],
                 "mined_from": "passage 3, 0 occurrences"}"#,
         );
-        let candidate = mined_candidate(ok, 0, "local:test", &none).unwrap();
+        let candidate = mined_candidate(ok, 0, "local:test", lens, &none).unwrap();
         assert_eq!(candidate.id, "no-moreover");
         assert_eq!(candidate.def.severity.as_deref(), Some("warning"));
-        assert!(candidate
-            .yaml
-            .contains("mined by local:test from passage 3"));
+        assert!(
+            candidate
+                .yaml
+                .contains("mined by local:test, lens: punctuation & mechanics, from passage 3"),
+            "{}",
+            candidate.yaml
+        );
 
         // Duplicate ids and example-less rules are rejected.
         let mut used = BTreeSet::new();
@@ -1787,12 +2224,12 @@ mod tests {
             r#"{"id": "no-moreover", "description": "d",
                 "patterns": ["x"], "examples": [{"bad": "b", "good": "g"}]}"#,
         );
-        assert!(mined_candidate(dup, 0, "m", &used)
+        assert!(mined_candidate(dup, 0, "m", lens, &used)
             .unwrap_err()
             .1
             .contains("duplicate"));
         let bare = rule(r#"{"id": "x", "description": "d", "patterns": ["x"]}"#);
-        assert!(mined_candidate(bare, 0, "m", &none)
+        assert!(mined_candidate(bare, 0, "m", lens, &none)
             .unwrap_err()
             .1
             .contains("no examples"));
@@ -1805,7 +2242,7 @@ mod tests {
                               "fix": "use"}],
                 "examples": [{"bad": "We utilize it.", "good": "We use it."}]}"#,
         );
-        let candidate = mined_candidate(fixed, 0, "m", &none).unwrap();
+        let candidate = mined_candidate(fixed, 0, "m", lens, &none).unwrap();
         assert!(!candidate.yaml.contains("fix:"), "{}", candidate.yaml);
         assert!(
             candidate.yaml.contains("suggestion: use"),
@@ -1818,7 +2255,7 @@ mod tests {
             r#"{"id": "bad-re", "description": "d", "patterns": ["("],
                 "examples": [{"bad": "b", "good": "g"}]}"#,
         );
-        assert!(mined_candidate(broken, 0, "m", &none)
+        assert!(mined_candidate(broken, 0, "m", lens, &none)
             .unwrap_err()
             .1
             .contains("invalid regex"));
@@ -1912,14 +2349,17 @@ mod tests {
         let out = dir.join("out").join("personal");
 
         let files = ingest(&corpus).unwrap();
-        let mut client = FakeClient::new(vec![choices_response(MINED_JSON)]);
+        // A single client == `--workers 1`: exactly one lens runs, same
+        // one-request shape the mining round-trip has always had.
+        let (client, requests) = FakeClient::boxed(vec![choices_response(MINED_JSON)]);
         let mut output = Vec::new();
         let code = run_learn(
             &files,
             "corpus",
             &out,
-            &mut client,
+            vec![client],
             "local:test-model",
+            true,
             &mut output,
         )
         .unwrap();
@@ -1927,14 +2367,18 @@ mod tests {
         let transcript = String::from_utf8(output).unwrap();
 
         // The request went through the ax boundary with the stats + passages.
-        assert_eq!(client.requests.len(), 1);
-        let prompt = client.requests[0]["messages"][0]["content"]
-            .as_str()
-            .unwrap();
+        // A second request follows: "no-short" self-fires, so the repair
+        // round sends one follow-up attempt through the same (now
+        // exhausted) fake client, which fails — the candidate stays dropped.
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let prompt = sent[0]["messages"][0]["content"].as_str().unwrap();
         assert!(prompt.contains("Corpus statistics"));
         assert!(prompt.contains("memo.txt"));
+        drop(sent);
 
-        // "no-short" self-fires (the corpus says "short") → dropped;
+        // "no-short" self-fires (the corpus says "short") → dropped, and the
+        // repair attempt above fails too (client exhausted) → still dropped;
         // "no-moreover" survives; pass-1 rules survive.
         assert!(
             transcript.contains("kept    personal/no-moreover"),
@@ -1977,13 +2421,13 @@ mod tests {
         let out = dir.join("personal");
 
         let files = ingest(&dir).unwrap();
-        let mut client = FakeClient::new(vec![Err(AxError::runtime("connection refused"))]);
+        let (client, _) = FakeClient::boxed(vec![Err(AxError::runtime("connection refused"))]);
         let mut output = Vec::new();
-        let code = run_learn(&files, "corpus", &out, &mut client, "m", &mut output).unwrap();
+        let code = run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
         assert_eq!(code, 0);
         let transcript = String::from_utf8(output).unwrap();
         assert!(
-            transcript.contains("mining agent unavailable"),
+            transcript.contains("every mining lens was unavailable"),
             "{transcript}"
         );
         assert!(transcript.contains("connection refused"), "{transcript}");
@@ -2000,17 +2444,215 @@ mod tests {
         let out = dir.join("personal");
 
         let files = ingest(&dir).unwrap();
-        let mut client = FakeClient::new(vec![
+        let (client, requests) = FakeClient::boxed(vec![
             choices_response("I could not find any rules, sorry."),
             choices_response("[]"),
         ]);
         let mut output = Vec::new();
-        run_learn(&files, "corpus", &out, &mut client, "m", &mut output).unwrap();
-        assert_eq!(client.requests.len(), 2); // exactly one retry
+        run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2); // exactly one retry
         let transcript = String::from_utf8(output).unwrap();
         assert!(!transcript.contains("unavailable"), "{transcript}");
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_learn_fans_out_across_lenses_concurrently() {
+        let dir = temp_dir("concurrent");
+        fs::write(dir.join("memo.txt"), sample_corpus()).unwrap();
+        let out = dir.join("personal");
+
+        let files = ingest(&dir).unwrap();
+        // 4 clients == 4 lenses: every lens must fire exactly once, and one
+        // lens erroring must not sink the other three.
+        let (c0, r0) = FakeClient::boxed(vec![choices_response(
+            r#"[{"id": "no-alpha", "description": "d", "patterns": ["alpha"],
+                "examples": [{"bad": "alpha text", "good": "clean text"}]}]"#,
+        )]);
+        let (c1, r1) = FakeClient::boxed(vec![choices_response(
+            r#"[{"id": "no-beta", "description": "d", "patterns": ["beta"],
+                "examples": [{"bad": "beta text", "good": "clean text"}]}]"#,
+        )]);
+        let (c2, _r2) = FakeClient::boxed(vec![Err(AxError::runtime("timeout"))]);
+        let (c3, r3) = FakeClient::boxed(vec![choices_response("[]")]);
+
+        let mut output = Vec::new();
+        let code = run_learn(
+            &files,
+            "corpus",
+            &out,
+            vec![c0, c1, c2, c3],
+            "m",
+            true,
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(code, 0);
+        let transcript = String::from_utf8(output).unwrap();
+
+        // Every lens got exactly one request — no work-stealing, no
+        // duplication, no lens skipped because a sibling failed.
+        assert_eq!(r0.lock().unwrap().len(), 1);
+        assert_eq!(r1.lock().unwrap().len(), 1);
+        assert_eq!(r3.lock().unwrap().len(), 1);
+
+        // The failing lens is reported but does not sink the run.
+        assert!(transcript.contains("timeout"), "{transcript}");
+        assert!(
+            !transcript.contains("every mining lens was unavailable"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/no-alpha"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/no-beta"),
+            "{transcript}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_learn_merges_duplicate_patterns_across_lenses() {
+        let dir = temp_dir("dedupe");
+        fs::write(dir.join("memo.txt"), sample_corpus()).unwrap();
+        let out = dir.join("personal");
+
+        let files = ingest(&dir).unwrap();
+        // Two lenses independently notice the same habit under different
+        // ids/wording — same pattern text, so only the first-seen survives.
+        let (c0, _) = FakeClient::boxed(vec![choices_response(
+            r#"[{"id": "no-gamma-a", "description": "d", "patterns": ["gamma"],
+                "examples": [{"bad": "gamma text", "good": "clean text"}]}]"#,
+        )]);
+        let (c1, _) = FakeClient::boxed(vec![choices_response(
+            r#"[{"id": "no-gamma-b", "description": "d", "patterns": ["gamma"],
+                "examples": [{"bad": "gamma text", "good": "clean text"}]}]"#,
+        )]);
+
+        let mut output = Vec::new();
+        let code = run_learn(&files, "corpus", &out, vec![c0, c1], "m", true, &mut output).unwrap();
+        assert_eq!(code, 0);
+        let transcript = String::from_utf8(output).unwrap();
+
+        assert!(transcript.contains("1 duplicate merged"), "{transcript}");
+        assert!(
+            transcript.contains("kept    personal/no-gamma-a"),
+            "{transcript}"
+        );
+        assert!(!transcript.contains("no-gamma-b"), "{transcript}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_learn_repairs_a_self_firing_candidate() {
+        let dir = temp_dir("repair");
+        fs::write(dir.join("memo.txt"), sample_corpus()).unwrap();
+        let out = dir.join("personal");
+
+        let files = ingest(&dir).unwrap();
+        // First response self-fires (the corpus says "short"); the repair
+        // round gets a second response for the same lens with a narrower
+        // pattern that does not.
+        let (client, requests) = FakeClient::boxed(vec![
+            choices_response(
+                r#"[{"id": "no-short", "description": "d", "patterns": ["(?i)\\bshort\\b"],
+                    "examples": [{"bad": "A short one.", "good": "A brief one."}]}]"#,
+            ),
+            choices_response(
+                r#"[{"id": "no-short", "description": "d", "patterns": ["\\bshortish\\b"],
+                    "examples": [{"bad": "A shortish one.", "good": "A brief one."}]}]"#,
+            ),
+        ]);
+        let mut output = Vec::new();
+        let code = run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
+        assert_eq!(code, 0);
+        let transcript = String::from_utf8(output).unwrap();
+
+        // One repair round-trip, on top of the original mining call.
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert!(
+            transcript.contains("Refining 1 candidate that failed the self-consistency gate"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("Refined: 1 rescued, 0 still dropped"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/no-short"),
+            "{transcript}"
+        );
+        let rescued = fs::read_to_string(out.join("rules/no-short.md")).unwrap();
+        assert!(rescued.contains("refined"), "{rescued}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_learn_gives_up_after_one_failed_repair() {
+        let dir = temp_dir("repair-fail");
+        fs::write(dir.join("memo.txt"), sample_corpus()).unwrap();
+        let out = dir.join("personal");
+
+        let files = ingest(&dir).unwrap();
+        // Both the original and the repaired version self-fire.
+        let (client, requests) = FakeClient::boxed(vec![
+            choices_response(
+                r#"[{"id": "no-short", "description": "d", "patterns": ["(?i)\\bshort\\b"],
+                    "examples": [{"bad": "A short one.", "good": "A brief one."}]}]"#,
+            ),
+            choices_response(
+                r#"[{"id": "no-short", "description": "d", "patterns": ["(?i)\\bshort\\b"],
+                    "examples": [{"bad": "A short one.", "good": "A brief one."}]}]"#,
+            ),
+        ]);
+        let mut output = Vec::new();
+        run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2); // exactly one repair attempt, no loop
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(
+            transcript.contains("Refined: 0 rescued, 1 still dropped"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("dropped personal/no-short"),
+            "{transcript}"
+        );
+        // A re-failed candidate must be listed exactly once, not once for the
+        // original gate failure and again after the repair round. The stray
+        // second entry would also inflate the "Kept X of Y" total.
+        assert_eq!(
+            transcript.matches("dropped personal/no-short").count(),
+            1,
+            "{transcript}"
+        );
+        assert!(!out.join("rules/no-short.md").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_concurrency_clamps_to_lens_count() {
+        let bare = LintOptions::default();
+        assert_eq!(resolve_concurrency(None, &bare), LENSES.len());
+        assert_eq!(resolve_concurrency(Some(0), &bare), 1);
+        assert_eq!(resolve_concurrency(Some(2), &bare), 2);
+        assert_eq!(resolve_concurrency(Some(99), &bare), LENSES.len());
+
+        let config = LintOptions {
+            learn: Some(lawlint_core::LearnOptions {
+                concurrency: Some(2),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(resolve_concurrency(None, &config), 2);
+        // The flag still overrides the config.
+        assert_eq!(resolve_concurrency(Some(1), &config), 1);
     }
 
     #[test]
@@ -2058,9 +2700,9 @@ mod tests {
         .unwrap();
 
         let files = ingest(&corpus).unwrap();
-        let mut client = FakeClient::new(vec![choices_response("[]")]);
+        let (client, _) = FakeClient::boxed(vec![choices_response("[]")]);
         let mut output = Vec::new();
-        let code = run_learn(&files, "corpus", &out, &mut client, "m", &mut output).unwrap();
+        let code = run_learn(&files, "corpus", &out, vec![client], "m", true, &mut output).unwrap();
         assert_eq!(code, 0);
         let transcript = String::from_utf8(output).unwrap();
         assert!(

@@ -21,6 +21,7 @@ mod diff;
 mod init;
 mod init_tui;
 mod learn;
+mod progress;
 mod tui;
 mod ui;
 mod update;
@@ -119,6 +120,9 @@ enum Command {
         /// openai:<base-url>#<model>, foundry:<deployment>).
         #[arg(long, value_name = "MODEL")]
         model: Option<String>,
+        /// Concurrent mining lenses (1-4), overriding `learn.concurrency`.
+        #[arg(long, value_name = "N")]
+        workers: Option<usize>,
     },
     /// List rules, or test rule packages.
     Rules {
@@ -270,6 +274,12 @@ fn layer_options(mut base: LintOptions, over: LintOptions) -> LintOptions {
             features: merge_map(base_ai.features, over_ai.features),
         }),
         (base_ai, over_ai) => over_ai.or(base_ai),
+    };
+    base.learn = match (base.learn, over.learn) {
+        (Some(base_learn), Some(over_learn)) => Some(lawlint_core::LearnOptions {
+            concurrency: over_learn.concurrency.or(base_learn.concurrency),
+        }),
+        (base_learn, over_learn) => over_learn.or(base_learn),
     };
     base
 }
@@ -1926,9 +1936,12 @@ fn run(cli: Cli) -> Result<i32, String> {
 
     match &cli.command {
         Some(Command::Init { yes, force, ai }) => init_command(*yes, *force, ai.as_deref()),
-        Some(Command::Learn { path, out, model }) => {
-            learn::learn_command(path, out, model.as_deref())
-        }
+        Some(Command::Learn {
+            path,
+            out,
+            model,
+            workers,
+        }) => learn::learn_command(path, out, model.as_deref(), *workers, cli.quiet),
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
                 path,
