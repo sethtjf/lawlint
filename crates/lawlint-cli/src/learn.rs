@@ -1719,11 +1719,21 @@ fn run_learn(
         if !repaired_candidates.is_empty() {
             let repair_report = self_consistency_gate(&package, repaired_candidates, files)?;
             rescued = repair_report.kept.len();
-            let rescued_ids: BTreeSet<String> =
-                repair_report.kept.iter().map(|c| c.id.clone()).collect();
+            // Every candidate that went through the repair round must leave
+            // `report.dropped` exactly once: rescued ones move to `kept`,
+            // re-failed ones are re-added below with a note. Retaining a
+            // re-failed candidate's original entry would list (and count) it
+            // twice. Candidates the agent never returned a repair for are
+            // absent from `repair_report` and correctly keep their one entry.
+            let repaired_ids: BTreeSet<String> = repair_report
+                .kept
+                .iter()
+                .map(|c| c.id.clone())
+                .chain(repair_report.dropped.iter().map(|(id, _, _)| id.clone()))
+                .collect();
             report
                 .dropped
-                .retain(|(id, _, _)| !rescued_ids.contains(id));
+                .retain(|(id, _, _)| !repaired_ids.contains(id));
             for (id, origin, reason) in repair_report.dropped {
                 report
                     .dropped
@@ -2611,6 +2621,14 @@ mod tests {
         );
         assert!(
             transcript.contains("dropped personal/no-short"),
+            "{transcript}"
+        );
+        // A re-failed candidate must be listed exactly once, not once for the
+        // original gate failure and again after the repair round. The stray
+        // second entry would also inflate the "Kept X of Y" total.
+        assert_eq!(
+            transcript.matches("dropped personal/no-short").count(),
+            1,
             "{transcript}"
         );
         assert!(!out.join("rules/no-short.md").exists());
