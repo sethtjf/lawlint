@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/sethtjf/lawlint/compare/v0.9.1...v0.10.0) (2026-07-24)
+
+
+### Features
+
+* **learn:** mine rules with 4 concurrent lenses, self-repair, live progress ([#73](https://github.com/sethtjf/lawlint/issues/73)) ([4200417](https://github.com/sethtjf/lawlint/commit/4200417b9780e073c5af1c38a433f37d907cb3f3))
+
+
+### Bug Fixes
+
+* **judge:** bump axllm to 23.0.3 to fix Anthropic opus-4-8 400s ([#71](https://github.com/sethtjf/lawlint/issues/71)) ([3314938](https://github.com/sethtjf/lawlint/commit/3314938aab1dfbb2cce94973baa875bcae221444))
+
 ## [0.9.1](https://github.com/sethtjf/lawlint/compare/v0.9.0...v0.9.1) (2026-07-22)
 
 
