@@ -3,6 +3,9 @@ id: no-corrective-negation
 engine: phrase
 scope: text
 severity: warning
+# Train-split check: fires on 0/165 AI and 1/165 human rows; the narrow,
+# low-support pattern has no authorship evidence, so this is a style lint.
+intent: style
 description: "Flags corrective-negation constructions"
 rationale: "State the substantive point without staging a correction."
 message: "State the substantive point directly."

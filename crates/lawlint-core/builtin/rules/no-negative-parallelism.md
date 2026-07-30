@@ -19,4 +19,7 @@ patterns:
   - pattern: '(?i)\bnever\s+[^;.!?]{1,55};\s*never\s+'
     message: "Avoid repeated “Never …” structure."
     suggestion: "State the rule or fact directly."
+allow_context:
+  pattern: '(?i)\b(?:semicolons|dashes|doublets|moreover|markdown|gap\s+for\s+interpretation)\b'
+  window: 80
 ---

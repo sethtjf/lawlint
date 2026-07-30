@@ -3,10 +3,13 @@ id: no-metronomic-cadence
 engine: statistical
 scope: text
 severity: warning
+# Train-split check: cadence-autocorrelation above -0.306 fires on 133/165 AI
+# and 125/165 human rows; train AUC 0.8719 is below the 0.9090 baseline.
+intent: style
 description: "Flags predictable sentence-length cadence"
 message: "Sentence lengths follow a predictable cadence; vary the rhythm."
-# Train grid search: cadence-autocorrelation above -0.306; train AUC was
-# 0.8719 for the added flag (base AUC 0.8922).
+# The metric remains useful as a drafting signal, but not as an authorship
+# signal.
 metric: cadence-autocorrelation
 threshold: -0.306
 direction: above

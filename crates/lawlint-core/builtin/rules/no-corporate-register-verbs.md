@@ -3,6 +3,9 @@ id: no-corporate-register-verbs
 engine: phrase
 scope: text
 severity: warning
+# Train-split check: fires on 1/165 AI and 2/165 human rows; the near-zero
+# support and human hit make this a style lint rather than an authorship signal.
+intent: style
 description: "Flags corporate-register verbs"
 rationale: "Prefer concrete verbs over corporate language that inflates ordinary actions."
 message: "Use a concrete verb instead of corporate-register language."

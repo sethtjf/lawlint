@@ -3,10 +3,11 @@ id: no-paired-phrasing
 engine: statistical
 scope: text
 severity: warning
+# Train-split check: paired-adjective-rate above 4.124 fires on 156/165 AI
+# and 131/165 human rows; train AUC 0.8924 is below the 0.9090 baseline.
+intent: style
 description: "Flags excessive paired phrasing"
 message: "Coordinate and contrasting pairs occur too often; vary the phrasing."
-# Train grid search: paired-adjective-rate above 4.124; train AUC was 0.8924
-# for the added flag (base AUC 0.8922).
 metric: paired-adjective-rate
 threshold: 4.124
 direction: above

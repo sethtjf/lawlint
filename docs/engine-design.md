@@ -416,15 +416,15 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
 | no-filler-intensifiers | phrase | error | filler intensifiers |
-| no-corporate-register-verbs | phrase | warning | corporate-register verbs |
-| no-corrective-negation | phrase | warning | corrective negation |
+| no-corporate-register-verbs | phrase | warning | corporate-register verbs; intent style |
+| no-corrective-negation | phrase | warning | corrective negation; intent style |
 | no-contrasting-pairs | phrase | warning | contrasting pairs |
 | no-negative-parallelism | phrase | warning | repeated negative structures |
-| no-anaphoric-openers | statistical | warning | repeated-opener-density above 0.211 |
-| no-metronomic-cadence | statistical | warning | cadence-autocorrelation below -0.250 |
-| no-paired-phrasing | statistical | warning | paired-adjective-rate above 4.124 |
-| no-nominalization | density | warning | threshold 8 |
-| no-stacked-noun-phrases | density | warning | threshold 4 |
+| no-anaphoric-openers | statistical | warning | repeated-opener-density above 0.211; intent style |
+| no-metronomic-cadence | statistical | warning | cadence-autocorrelation above -0.306; intent style |
+| no-paired-phrasing | statistical | warning | paired-adjective-rate above 4.124; intent style |
+| no-nominalization | density | warning | threshold 1; intent style |
+| no-stacked-noun-phrases | density | warning | threshold 4; intent style |
 | no-performed-enthusiasm | phrase | warning | performed enthusiasm |
 | no-empty-emphasis | density | warning | threshold 12 |
 | no-parenthetical-asides | density | warning | threshold 15 |
@@ -434,6 +434,14 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-throat-clearing | leading | error | |
 | empty-hedge | inferential | warning | granularity sentence — NEW |
 | padded-elaboration | inferential | warning | granularity paragraph — NEW |
+| no-antithesis | inferential | warning | granularity sentence |
+| no-paragraph-pinning | inferential | warning | granularity paragraph |
+| no-parataxis | inferential | warning | granularity paragraph |
+| no-summary-beat | inferential | warning | granularity paragraph |
+| no-landing-sentence | inferential | warning | granularity paragraph |
+| no-setup-payoff | inferential | warning | granularity paragraph |
+| no-parallel-sentence-structure | inferential | warning | granularity paragraph |
+| prefer-spoken-voice | inferential | warning | granularity paragraph; intent style |
 
 Retune (#38): `no-em-dash-overuse` remains the rate-based score signal while
 `no-em-dash` is the hard prohibition; `no-semicolons`, `sentence-length`, `oxford-comma`,

@@ -72,6 +72,12 @@ Independently of kind, every rule declares an `intent`.
 Both kinds are reported, and both are fixable. Intent only governs
 [scoring](/docs/concepts/scoring).
 
+The built-in soft rules include checks for rhetorical habits such as
+antithesis, paragraph pinning, parataxis, summary and landing beats,
+setup/payoff staging, repeated sentence templates, and prose that does not
+read naturally aloud. They run only when the AI judge is enabled; the
+deterministic built-in rules remain available offline.
+
 ## Severity
 
 `error`, `warning`, or `suggestion` — set per rule, overridable per project in

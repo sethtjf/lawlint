@@ -282,9 +282,9 @@ mod tests {
     fn registry() {
         // 20 bespoke rules; +2 inferential, +2 document-level statistical
         // rules (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop
-        // rules, and +12 voice/style rules = 48.
+        // rules, +12 voice/style rules, and +8 inferential voice rules = 56.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 48);
+        assert_eq!(rs.metas().len(), 56);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -400,7 +400,7 @@ mod tests {
         // the old engine's 2: style-intent findings (no-legalese,
         // oxford-comma) still report below but no longer carry points.
         assert_eq!(bad_result.stats.word_count, 70);
-        assert_eq!(bad_result.stats.score, 4);
+        assert_eq!(bad_result.stats.score, 7);
         // sentence_count was 3 under the old `.!?` splitter; legal-aware
         // segmentation counts the heading "Agreement" as its own sentence → 4.
         assert_eq!(bad_result.stats.sentence_count, 4);
@@ -1107,7 +1107,18 @@ mod tests {
             )],
         );
         let o = LintOptions {
-            disable: Some(vec!["empty-hedge".into(), "padded-elaboration".into()]),
+            disable: Some(vec![
+                "empty-hedge".into(),
+                "padded-elaboration".into(),
+                "no-antithesis".into(),
+                "no-paragraph-pinning".into(),
+                "no-parataxis".into(),
+                "no-summary-beat".into(),
+                "no-landing-sentence".into(),
+                "no-setup-payoff".into(),
+                "no-parallel-sentence-structure".into(),
+                "prefer-spoken-voice".into(),
+            ]),
             ..Default::default()
         };
         let result = lint_full(text, &o, built_in_set(), &judge, None);

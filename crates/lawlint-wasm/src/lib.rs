@@ -722,7 +722,7 @@ mod tests {
     #[test]
     fn built_in_meta_serializes_camel_case() {
         let metas = built_in_set().metas();
-        assert_eq!(metas.len(), 48);
+        assert_eq!(metas.len(), 56);
         let json =
             serde_json::to_value(metas.iter().map(|m| meta_js(m)).collect::<Vec<_>>()).unwrap();
         let first = &json[0];
@@ -802,7 +802,18 @@ mod tests {
         let text = "It could perhaps be argued that the claim fails.";
         // Disabling every built-in inferential rule leaves nothing to plan.
         let o = LintOptions {
-            disable: Some(vec!["empty-hedge".into(), "padded-elaboration".into()]),
+            disable: Some(vec![
+                "empty-hedge".into(),
+                "padded-elaboration".into(),
+                "no-antithesis".into(),
+                "no-paragraph-pinning".into(),
+                "no-parataxis".into(),
+                "no-summary-beat".into(),
+                "no-landing-sentence".into(),
+                "no-setup-payoff".into(),
+                "no-parallel-sentence-structure".into(),
+                "prefer-spoken-voice".into(),
+            ]),
             ..Default::default()
         };
         assert!(plan_judge_impl(text, &o, &[]).unwrap().is_empty());
