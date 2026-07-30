@@ -411,7 +411,6 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | oxford-comma | phrase | warning | |
 | no-robotic-transitions | density | warning | threshold 18 |
 | no-em-dash-overuse | density | warning | threshold 8 |
-| no-em-dash | phrase | error | pattern `—`; intent style |
 | no-rule-of-three | density | warning | threshold 12 |
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
