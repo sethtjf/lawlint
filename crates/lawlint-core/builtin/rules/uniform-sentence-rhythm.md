@@ -10,6 +10,6 @@ metric: sentence-length-variance
 threshold: 105
 direction: below
 examples:
-  - bad: "The court reviewed the motion for summary judgment. The parties submitted their briefs on the scheduled date. The record contains several disputed factual questions. The standard requires viewing facts in the light most favorable. The court finds that genuine disputes preclude judgment here. The motion is therefore denied without prejudice to renewal."
-    good: "The court reviewed the motion. Both parties briefed it extensively, and the record — three depositions, two expert reports, and a chain of emails the parties read in incompatible ways — leaves genuine disputes of material fact. Summary judgment is denied."
+  - bad: "The court reviewed the motion for summary judgment. The parties submitted their briefs on the scheduled date. The record contains several disputed factual questions. The governing standard requires viewing facts in the light most favorable to the nonmoving party. The court finds that genuine disputes preclude judgment here. The motion is therefore denied without prejudice to renewal. The clerk shall enter the order. Counsel shall comply with it."
+    good: "The court reviewed the motion. Both parties briefed it extensively, and the record, including three depositions, two expert reports, and a chain of emails read in incompatible ways, leaves genuine disputes of material fact. Summary judgment is denied."
 ---

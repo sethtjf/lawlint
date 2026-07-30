@@ -25,4 +25,19 @@ patterns:
   - pattern: 'before (?:i|we) (?:begin|start|dive in)'
     message: "Cut the throat-clearing and lead with the point."
     suggestion: "Cut the throat-clearing and lead with the point."
+  - pattern: '(?i)\bas we all know\b'
+    message: "Cut the throat-clearing and lead with the point."
+    suggestion: "State the shared fact directly."
+  - pattern: '(?i)\bit goes without saying\b'
+    message: "Cut the throat-clearing and lead with the point."
+    suggestion: "Say the point or omit it."
+  - pattern: '(?i)\bbefore diving in\b'
+    message: "Cut the throat-clearing and lead with the point."
+    suggestion: "Begin with the substance."
+  - pattern: '(?i)\bto set the stage\b'
+    message: "Cut the throat-clearing and lead with the point."
+    suggestion: "Begin with the relevant fact."
+  - pattern: '(?i)\bfirst,\s+some context\b'
+    message: "Cut the throat-clearing and lead with the point."
+    suggestion: "Give the relevant context without a preface."
 ---

@@ -280,12 +280,11 @@ mod tests {
 
     #[test]
     fn registry() {
-        // 20 bespoke rules; +2 inferential, -1 with no-em-dash folded into
-        // no-em-dash-overuse (#38), +2 document-level statistical rules
-        // (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop rules
-        // = 36.
+        // 20 bespoke rules; +2 inferential, +2 document-level statistical
+        // rules (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop
+        // rules, +13 voice/style rules, and +8 inferential voice rules = 57.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 36);
+        assert_eq!(rs.metas().len(), 57);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -330,6 +329,14 @@ mod tests {
         assert!(has(
             "The parties are Alice, Bob and Carol.",
             "core/oxford-comma"
+        ));
+        assert!(has(
+            "The costs were actually incurred, and the loss was truly severe.",
+            "core/no-filler-intensifiers"
+        ));
+        assert!(has(
+            "The claim is actually weak.",
+            "core/no-actually-as-filler"
         ));
         assert!(!has("The range spans 2020–2024.", "core/no-en-dash"));
     }
@@ -413,6 +420,7 @@ mod tests {
                 .map(|d| d.rule_id.0.as_str())
                 .collect::<Vec<_>>(),
             vec![
+                "core/no-paired-phrasing",    // document-wide paired phrasing
                 "core/no-ai-cliches",         // "It is important to note"
                 "core/no-ai-cliches",         // "delve"
                 "core/no-marketing-language", // "delve"
@@ -1107,7 +1115,18 @@ mod tests {
             )],
         );
         let o = LintOptions {
-            disable: Some(vec!["empty-hedge".into(), "padded-elaboration".into()]),
+            disable: Some(vec![
+                "empty-hedge".into(),
+                "padded-elaboration".into(),
+                "no-antithesis".into(),
+                "no-paragraph-pinning".into(),
+                "no-parataxis".into(),
+                "no-summary-beat".into(),
+                "no-landing-sentence".into(),
+                "no-setup-payoff".into(),
+                "no-parallel-sentence-structure".into(),
+                "prefer-spoken-voice".into(),
+            ]),
             ..Default::default()
         };
         let result = lint_full(text, &o, built_in_set(), &judge, None);

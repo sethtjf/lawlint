@@ -405,7 +405,7 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-not-only | phrase | warning | |
 | no-doublets | phrase | suggestion | |
 | no-marketing-language | phrase | error | |
-| no-em-dash | phrase | error | pattern `—` |
+| no-em-dash | phrase | error | pattern `—`; intent style |
 | no-en-dash | phrase | error | pattern `–`, allow_context numeric range |
 | no-semicolons | phrase | error | |
 | oxford-comma | phrase | warning | |
@@ -414,6 +414,18 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-rule-of-three | density | warning | threshold 12 |
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
+| no-filler-intensifiers | phrase | warning | filler intensifiers; intent style |
+| no-actually-as-filler | phrase | warning | filler “actually”; intent style |
+| no-corporate-register-verbs | phrase | warning | corporate-register verbs; intent style |
+| no-corrective-negation | phrase | warning | corrective negation; intent style |
+| no-contrasting-pairs | phrase | warning | contrasting pairs |
+| no-negative-parallelism | phrase | warning | repeated negative structures |
+| no-anaphoric-openers | statistical | warning | repeated-opener-density above 0.211; intent style |
+| no-metronomic-cadence | statistical | suggestion | cadence-autocorrelation above -0.306; intent style |
+| no-paired-phrasing | statistical | suggestion | paired-adjective-rate above 4.124; intent style |
+| no-nominalization | density | warning | threshold 1; intent style |
+| no-stacked-noun-phrases | density | warning | threshold 4; intent style |
+| no-performed-enthusiasm | phrase | warning | performed enthusiasm |
 | no-empty-emphasis | density | warning | threshold 12 |
 | no-parenthetical-asides | density | warning | threshold 15 |
 | sentence-length | statistical | warning | metric sentence-length, max_words 45 |
@@ -422,9 +434,17 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-throat-clearing | leading | error | |
 | empty-hedge | inferential | warning | granularity sentence — NEW |
 | padded-elaboration | inferential | warning | granularity paragraph — NEW |
+| no-antithesis | inferential | warning | granularity sentence; intent style |
+| no-paragraph-pinning | inferential | warning | granularity paragraph; intent style |
+| no-parataxis | inferential | warning | granularity paragraph; intent style |
+| no-summary-beat | inferential | warning | granularity paragraph; intent style |
+| no-landing-sentence | inferential | warning | granularity paragraph; intent style |
+| no-setup-payoff | inferential | warning | granularity paragraph; intent style |
+| no-parallel-sentence-structure | inferential | warning | granularity paragraph; intent style |
+| prefer-spoken-voice | inferential | warning | granularity paragraph; intent style |
 
-Retune (#38): `no-em-dash` was folded into the rate-based `no-em-dash-overuse`
-and removed; `no-semicolons`, `sentence-length`, `oxford-comma`,
+Retune (#38): `no-em-dash-overuse` remains the rate-based score signal while
+`no-em-dash` is the hard prohibition; `no-semicolons`, `sentence-length`, `oxford-comma`,
 `no-parenthetical-asides`, `no-legalese`, and `no-en-dash` carry
 `intent: style` (drafting lint that does not aggregate into the score). See
 docs/eval-corpus.md.
