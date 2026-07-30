@@ -280,12 +280,11 @@ mod tests {
 
     #[test]
     fn registry() {
-        // 20 bespoke rules; +2 inferential, -1 with no-em-dash folded into
-        // no-em-dash-overuse (#38), +2 document-level statistical rules
-        // (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop rules
-        // = 36.
+        // 20 bespoke rules; +2 inferential, +2 document-level statistical
+        // rules (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop
+        // rules, and +12 voice/style rules = 48.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 36);
+        assert_eq!(rs.metas().len(), 48);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -401,7 +400,7 @@ mod tests {
         // the old engine's 2: style-intent findings (no-legalese,
         // oxford-comma) still report below but no longer carry points.
         assert_eq!(bad_result.stats.word_count, 70);
-        assert_eq!(bad_result.stats.score, 7);
+        assert_eq!(bad_result.stats.score, 4);
         // sentence_count was 3 under the old `.!?` splitter; legal-aware
         // segmentation counts the heading "Agreement" as its own sentence → 4.
         assert_eq!(bad_result.stats.sentence_count, 4);
@@ -413,6 +412,7 @@ mod tests {
                 .map(|d| d.rule_id.0.as_str())
                 .collect::<Vec<_>>(),
             vec![
+                "core/no-paired-phrasing",    // document-wide paired phrasing
                 "core/no-ai-cliches",         // "It is important to note"
                 "core/no-ai-cliches",         // "delve"
                 "core/no-marketing-language", // "delve"

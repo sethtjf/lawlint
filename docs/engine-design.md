@@ -411,9 +411,21 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | oxford-comma | phrase | warning | |
 | no-robotic-transitions | density | warning | threshold 18 |
 | no-em-dash-overuse | density | warning | threshold 8 |
+| no-em-dash | phrase | error | pattern `—` |
 | no-rule-of-three | density | warning | threshold 12 |
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
+| no-filler-intensifiers | phrase | error | filler intensifiers |
+| no-corporate-register-verbs | phrase | warning | corporate-register verbs |
+| no-corrective-negation | phrase | warning | corrective negation |
+| no-contrasting-pairs | phrase | warning | contrasting pairs |
+| no-negative-parallelism | phrase | warning | repeated negative structures |
+| no-anaphoric-openers | statistical | warning | repeated-opener-density above 0.211 |
+| no-metronomic-cadence | statistical | warning | cadence-autocorrelation below -0.250 |
+| no-paired-phrasing | statistical | warning | paired-adjective-rate above 4.124 |
+| no-nominalization | density | warning | threshold 8 |
+| no-stacked-noun-phrases | density | warning | threshold 4 |
+| no-performed-enthusiasm | phrase | warning | performed enthusiasm |
 | no-empty-emphasis | density | warning | threshold 12 |
 | no-parenthetical-asides | density | warning | threshold 15 |
 | sentence-length | statistical | warning | metric sentence-length, max_words 45 |
@@ -423,8 +435,8 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | empty-hedge | inferential | warning | granularity sentence — NEW |
 | padded-elaboration | inferential | warning | granularity paragraph — NEW |
 
-Retune (#38): `no-em-dash` was folded into the rate-based `no-em-dash-overuse`
-and removed; `no-semicolons`, `sentence-length`, `oxford-comma`,
+Retune (#38): `no-em-dash-overuse` remains the rate-based score signal while
+`no-em-dash` is the hard prohibition; `no-semicolons`, `sentence-length`, `oxford-comma`,
 `no-parenthetical-asides`, `no-legalese`, and `no-en-dash` carry
 `intent: style` (drafting lint that does not aggregate into the score). See
 docs/eval-corpus.md.

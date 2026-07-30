@@ -1,0 +1,19 @@
+---
+id: no-contrasting-pairs
+engine: phrase
+scope: text
+severity: warning
+description: "Flags formulaic contrasting pairs"
+rationale: "State the quality or limitation directly instead of balancing paired opposites."
+message: "State the point directly instead of using a contrasting pair."
+examples:
+  - bad: "The analysis should be clear without becoming simplistic, balanced without becoming vague."
+    good: "The analysis should be clear and balanced."
+patterns:
+  - pattern: '(?i)\b\w+(?:\s+\w+){0,5}\s+without\s+(?:becoming|being|sounding)\s+\w+'
+    message: "Avoid the formulaic contrasting pair."
+    suggestion: "State the quality and its limit directly."
+  - pattern: '(?i)\b\w+(?:\s+\w+){0,3},\s+not\s+\w+(?:\s+\w+){0,3}\b'
+    message: "Avoid the balanced “X, not Y” pair."
+    suggestion: "State the intended quality directly."
+---

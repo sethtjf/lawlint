@@ -25,4 +25,22 @@ patterns:
   - pattern: '(?i)\bread that again\b'
     message: "Cut the rhetorical setup."
     suggestion: "State the point once."
+  - pattern: '(?i)\bmake no mistake\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the point directly."
+  - pattern: '(?i)\bto be clear\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the clarification directly."
+  - pattern: '(?i)\blet[''’]s be honest\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the relevant fact directly."
+  - pattern: '(?i)\bthe reality is\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the reality directly."
+  - pattern: '(?i)\bhere[''’]s the reality\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the point directly."
+  - pattern: '(?i)\band that[''’]s the point\b'
+    message: "Cut the rhetorical setup."
+    suggestion: "State the point directly."
 ---

@@ -546,8 +546,7 @@ mod tests {
         assert_eq!(intents.get("core/no-semicolons"), Some(&Intent::Style));
         assert_eq!(intents.get("core/sentence-length"), Some(&Intent::Style));
         assert_eq!(intents.get("core/no-hedging"), Some(&Intent::Detection));
-        // no-em-dash is folded into no-em-dash-overuse (#38).
-        assert!(!intents.contains_key("core/no-em-dash"));
+        assert_eq!(intents.get("core/no-em-dash"), Some(&Intent::Style));
         assert_eq!(
             intents.get("core/no-em-dash-overuse"),
             Some(&Intent::Detection)
