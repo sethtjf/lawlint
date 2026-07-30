@@ -3,6 +3,9 @@ id: no-antithesis
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 1 AI row and 0 human rows;
+# too few findings to establish a signal, so this remains a style lint.
+intent: style
 description: "Flags rhetorical antithesis that balances one idea against another."
 rationale: "Balanced opposition can make prose sound staged when it replaces a direct statement with a memorable contrast."
 message: "State the point directly instead of staging a rhetorical opposition."

@@ -414,14 +414,15 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-rule-of-three | density | warning | threshold 12 |
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
-| no-filler-intensifiers | phrase | error | filler intensifiers; intent style |
+| no-filler-intensifiers | phrase | warning | filler intensifiers; intent style |
+| no-actually-as-filler | phrase | warning | filler “actually”; intent style |
 | no-corporate-register-verbs | phrase | warning | corporate-register verbs; intent style |
 | no-corrective-negation | phrase | warning | corrective negation; intent style |
 | no-contrasting-pairs | phrase | warning | contrasting pairs |
 | no-negative-parallelism | phrase | warning | repeated negative structures |
 | no-anaphoric-openers | statistical | warning | repeated-opener-density above 0.211; intent style |
-| no-metronomic-cadence | statistical | warning | cadence-autocorrelation above -0.306; intent style |
-| no-paired-phrasing | statistical | warning | paired-adjective-rate above 4.124; intent style |
+| no-metronomic-cadence | statistical | suggestion | cadence-autocorrelation above -0.306; intent style |
+| no-paired-phrasing | statistical | suggestion | paired-adjective-rate above 4.124; intent style |
 | no-nominalization | density | warning | threshold 1; intent style |
 | no-stacked-noun-phrases | density | warning | threshold 4; intent style |
 | no-performed-enthusiasm | phrase | warning | performed enthusiasm |
@@ -433,13 +434,13 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-throat-clearing | leading | error | |
 | empty-hedge | inferential | warning | granularity sentence — NEW |
 | padded-elaboration | inferential | warning | granularity paragraph — NEW |
-| no-antithesis | inferential | warning | granularity sentence |
-| no-paragraph-pinning | inferential | warning | granularity paragraph |
-| no-parataxis | inferential | warning | granularity paragraph |
-| no-summary-beat | inferential | warning | granularity paragraph |
-| no-landing-sentence | inferential | warning | granularity paragraph |
-| no-setup-payoff | inferential | warning | granularity paragraph |
-| no-parallel-sentence-structure | inferential | warning | granularity paragraph |
+| no-antithesis | inferential | warning | granularity sentence; intent style |
+| no-paragraph-pinning | inferential | warning | granularity paragraph; intent style |
+| no-parataxis | inferential | warning | granularity paragraph; intent style |
+| no-summary-beat | inferential | warning | granularity paragraph; intent style |
+| no-landing-sentence | inferential | warning | granularity paragraph; intent style |
+| no-setup-payoff | inferential | warning | granularity paragraph; intent style |
+| no-parallel-sentence-structure | inferential | warning | granularity paragraph; intent style |
 | prefer-spoken-voice | inferential | warning | granularity paragraph; intent style |
 
 Retune (#38): `no-em-dash-overuse` remains the rate-based score signal while

@@ -3,6 +3,9 @@ id: no-paragraph-pinning
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 0 human rows;
+# unmeasured support, so this remains a style lint.
+intent: style
 description: "Flags paragraphs that open and close by repeating the same theme."
 rationale: "Returning to the opening phrase as a closing beat pins the paragraph instead of moving the analysis forward."
 message: "End the paragraph with its consequence or next point, not its opening theme."

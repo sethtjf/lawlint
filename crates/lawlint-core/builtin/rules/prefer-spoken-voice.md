@@ -3,6 +3,8 @@ id: prefer-spoken-voice
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 2 human rows;
+# human firing makes this a style lint.
 intent: style
 description: "Flags prose that works on the page but not in a spoken explanation."
 rationale: "Clear legal writing can remain precise while using sentences a reader could say aloud."

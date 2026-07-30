@@ -2,7 +2,7 @@
 id: no-paired-phrasing
 engine: statistical
 scope: text
-severity: warning
+severity: suggestion
 # Train-split check: paired-adjective-rate above 4.124 fires on 156/165 AI
 # and 131/165 human rows; train AUC 0.8924 is below the 0.9090 baseline.
 intent: style

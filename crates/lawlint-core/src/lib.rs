@@ -282,9 +282,9 @@ mod tests {
     fn registry() {
         // 20 bespoke rules; +2 inferential, +2 document-level statistical
         // rules (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop
-        // rules, +12 voice/style rules, and +8 inferential voice rules = 56.
+        // rules, +13 voice/style rules, and +8 inferential voice rules = 57.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 56);
+        assert_eq!(rs.metas().len(), 57);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }
@@ -329,6 +329,14 @@ mod tests {
         assert!(has(
             "The parties are Alice, Bob and Carol.",
             "core/oxford-comma"
+        ));
+        assert!(has(
+            "The costs were actually incurred, and the loss was truly severe.",
+            "core/no-filler-intensifiers"
+        ));
+        assert!(has(
+            "The claim is actually weak.",
+            "core/no-actually-as-filler"
         ));
         assert!(!has("The range spans 2020–2024.", "core/no-en-dash"));
     }

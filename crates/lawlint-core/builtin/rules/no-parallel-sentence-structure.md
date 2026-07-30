@@ -3,6 +3,9 @@ id: no-parallel-sentence-structure
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 3 human rows;
+# human firing makes this a style lint.
+intent: style
 description: "Flags repeated syntactic templates across sentences in a paragraph."
 rationale: "Repeated sentence templates can make a paragraph sound metronomic even when its words change."
 message: "Vary the sentence structure within this paragraph."

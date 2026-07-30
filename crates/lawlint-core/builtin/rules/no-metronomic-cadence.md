@@ -2,7 +2,7 @@
 id: no-metronomic-cadence
 engine: statistical
 scope: text
-severity: warning
+severity: suggestion
 # Train-split check: cadence-autocorrelation above -0.306 fires on 133/165 AI
 # and 125/165 human rows; train AUC 0.8719 is below the 0.9090 baseline.
 intent: style

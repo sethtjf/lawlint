@@ -25,12 +25,6 @@ patterns:
   - pattern: 'before (?:i|we) (?:begin|start|dive in)'
     message: "Cut the throat-clearing and lead with the point."
     suggestion: "Cut the throat-clearing and lead with the point."
-  - pattern: '(?i)\bat its core\b'
-    message: "Cut the throat-clearing and lead with the point."
-    suggestion: "State the core point directly."
-  - pattern: '(?i)\bin today[''’]s world\b'
-    message: "Cut the throat-clearing and lead with the point."
-    suggestion: "Name the relevant context directly."
   - pattern: '(?i)\bas we all know\b'
     message: "Cut the throat-clearing and lead with the point."
     suggestion: "State the shared fact directly."

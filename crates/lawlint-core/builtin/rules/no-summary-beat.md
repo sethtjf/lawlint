@@ -3,6 +3,9 @@ id: no-summary-beat
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 0 human rows;
+# unmeasured support, so this remains a style lint.
+intent: style
 description: "Flags closing sentences that recap a paragraph without adding information."
 rationale: "A summary beat announces the paragraph's point after the analysis is complete instead of carrying the analysis forward."
 message: "Remove the closing summary beat or replace it with a consequence."

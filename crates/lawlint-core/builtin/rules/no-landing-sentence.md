@@ -3,6 +3,9 @@ id: no-landing-sentence
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 0 human rows;
+# unmeasured support, so this remains a style lint.
+intent: style
 description: "Flags short closing sentences written for rhetorical effect."
 rationale: "A punchy closer can perform finality without stating a holding or consequence."
 message: "Replace the rhetorical closer with the concrete holding or consequence."

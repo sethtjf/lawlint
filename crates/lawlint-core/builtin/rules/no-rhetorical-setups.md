@@ -34,9 +34,6 @@ patterns:
   - pattern: '(?i)\blet[''’]s be honest\b'
     message: "Cut the rhetorical setup."
     suggestion: "State the relevant fact directly."
-  - pattern: '(?i)\bthe reality is\b'
-    message: "Cut the rhetorical setup."
-    suggestion: "State the reality directly."
   - pattern: '(?i)\bhere[''’]s the reality\b'
     message: "Cut the rhetorical setup."
     suggestion: "State the point directly."

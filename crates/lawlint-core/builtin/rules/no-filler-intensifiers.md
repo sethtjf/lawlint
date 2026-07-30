@@ -2,7 +2,7 @@
 id: no-filler-intensifiers
 engine: phrase
 scope: text
-severity: error
+severity: warning
 # Train-split check: fires on human prose at a comparable rate (13/222 human,
 # 15/222 AI); style lint, not an authorship signal.
 intent: style
@@ -16,8 +16,4 @@ patterns:
   - pattern: '(?i)\b(?:genuinely|really|truly)\b'
     message: "Remove the filler intensifier."
     suggestion: "Delete the intensifier or state the concrete degree."
-  - pattern: '(?i)\bactually\b'
-    message: "Remove the filler intensifier."
-    suggestion: "Delete “actually” unless it marks a legally relevant fact."
-allow_context: { pattern: '(?i)\bactually\s+(?:incurred|knew|received|paid|suffered|occurred)\b', window: 48 }
 ---

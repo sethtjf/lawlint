@@ -3,6 +3,9 @@ id: no-setup-payoff
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 0 human rows;
+# unmeasured support, so this remains a style lint.
+intent: style
 description: "Flags staged questions or tensions resolved by the next sentence."
 rationale: "A setup followed by a manufactured payoff delays a direct point for dramatic effect."
 message: "State the substantive point without staging a question or tension."

@@ -3,6 +3,9 @@ id: no-parataxis
 engine: inferential
 scope: text
 severity: warning
+# Judged train smoke (20 AI / 20 human): flagged 0 AI and 0 human rows;
+# unmeasured support, so this remains a style lint.
+intent: style
 description: "Flags marches of short coordinate clauses and sentences."
 rationale: "A string of equal short clauses can create a mechanical rhythm when the relationships between ideas deserve subordination."
 message: "Join or subordinate these short clauses so their relationship is clear."
