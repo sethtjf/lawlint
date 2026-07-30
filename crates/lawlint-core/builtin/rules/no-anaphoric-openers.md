@@ -3,7 +3,7 @@ id: no-anaphoric-openers
 engine: statistical
 scope: text
 severity: warning
-# Train grid search: repeated-opener-density above 0.211; train AUC was 0.8905
+# Train grid search: repeated-opener-density above 0.211; train AUC was 0.8831
 # for the added flag (base AUC 0.9016).
 description: "Flags repeated sentence openers across a document"
 message: "Sentence openers repeat too often across the document; vary the openings."

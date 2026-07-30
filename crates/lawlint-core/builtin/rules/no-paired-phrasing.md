@@ -5,8 +5,8 @@ scope: text
 severity: warning
 description: "Flags excessive paired phrasing"
 message: "Coordinate and contrasting pairs occur too often; vary the phrasing."
-# Train grid search: paired-adjective-rate above 4.124; train AUC was 0.8974
-# for the added flag (base AUC 0.9016).
+# Train grid search: paired-adjective-rate above 4.124; train AUC was 0.8924
+# for the added flag (base AUC 0.8922).
 metric: paired-adjective-rate
 threshold: 4.124
 direction: above
