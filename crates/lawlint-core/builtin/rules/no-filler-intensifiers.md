@@ -16,7 +16,6 @@ patterns:
   - pattern: '(?i)\b(?:genuinely|really|truly)\b'
     message: "Remove the filler intensifier."
     suggestion: "Delete the intensifier or state the concrete degree."
-    fix: ""
   - pattern: '(?i)\bactually\b'
     message: "Remove the filler intensifier."
     suggestion: "Delete “actually” unless it marks a legally relevant fact."

@@ -10,7 +10,7 @@ examples:
   - bad: "The analysis should be clear without becoming simplistic, balanced without becoming vague."
     good: "The analysis should be clear and balanced."
 patterns:
-  - pattern: '(?i)\b\w+(?:\s+\w+){0,5}\s+without\s+(?:becoming|being|sounding)\s+\w+'
+  - pattern: '(?i)\b\w+(?:\s+\w+){0,5}\s+without\s+(?:becoming|sounding)\s+\w+|\b\w+(?:\s+\w+){0,5}\s+without\s+being\s+(?:too|overly|unduly|excessively)\s+\w+'
     message: "Avoid the formulaic contrasting pair."
     suggestion: "State the quality and its limit directly."
 ---

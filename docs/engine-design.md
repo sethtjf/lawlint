@@ -405,17 +405,17 @@ faithfully — patterns byte-for-byte where possible. All scope `text` unless no
 | no-not-only | phrase | warning | |
 | no-doublets | phrase | suggestion | |
 | no-marketing-language | phrase | error | |
-| no-em-dash | phrase | error | pattern `—` |
+| no-em-dash | phrase | error | pattern `—`; intent style |
 | no-en-dash | phrase | error | pattern `–`, allow_context numeric range |
 | no-semicolons | phrase | error | |
 | oxford-comma | phrase | warning | |
 | no-robotic-transitions | density | warning | threshold 18 |
 | no-em-dash-overuse | density | warning | threshold 8 |
-| no-em-dash | phrase | error | pattern `—` |
+| no-em-dash | phrase | error | pattern `—`; intent style |
 | no-rule-of-three | density | warning | threshold 12 |
 | no-passive-overuse | density | warning | threshold 25 |
 | no-hedging | density | warning | threshold 10 |
-| no-filler-intensifiers | phrase | error | filler intensifiers |
+| no-filler-intensifiers | phrase | error | filler intensifiers; intent style |
 | no-corporate-register-verbs | phrase | warning | corporate-register verbs; intent style |
 | no-corrective-negation | phrase | warning | corrective negation; intent style |
 | no-contrasting-pairs | phrase | warning | contrasting pairs |

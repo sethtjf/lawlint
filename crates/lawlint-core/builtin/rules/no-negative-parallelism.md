@@ -10,16 +10,13 @@ examples:
   - bad: "No delay. No explanation. No remedy."
     good: "The record shows no delay, explanation, or remedy."
 patterns:
-  - pattern: '(?i)\bno\s+[^.!?]{1,70}[.!?]\s*no\s+'
+  - pattern: '(?i)(?:^|[.!?]\s+)no\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*[.!?]\s+no\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*'
     message: "Avoid repeated “No …” openers."
     suggestion: "Combine the points in a direct sentence."
-  - pattern: '(?i)\bnot\s+[^,.;!?]{1,45},\s*not\s+'
+  - pattern: '(?i)(?:^|[.!?]\s+)not\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*,\s*not\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*'
     message: "Avoid repeated “Not …” structure."
     suggestion: "State the positive point directly."
-  - pattern: '(?i)\bnever\s+[^;.!?]{1,55};\s*never\s+'
+  - pattern: '(?i)(?:^|[.!?]\s+)never\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*;\s*never\s+(?:[a-z][a-z-]*\s+){0,4}[a-z][a-z-]*'
     message: "Avoid repeated “Never …” structure."
     suggestion: "State the rule or fact directly."
-allow_context:
-  pattern: '(?i)\b(?:semicolons|dashes|doublets|moreover|markdown|gap\s+for\s+interpretation)\b'
-  window: 80
 ---
