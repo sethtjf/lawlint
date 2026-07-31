@@ -31,7 +31,7 @@ patterns:
     message: "Use “with the aid of”."
     suggestion: "Replace “with the help of” with “with the aid of”."
     fix: "with the aid of"
-  - pattern: '(?i)\btest\s+the\s+(?:[a-z][\w-]*)(?:\s+[a-z][\w-]*)?\b'
+  - pattern: '(?i)\btest\s+the\b'
     message: "Use “do a test of” when “test” is a noun."
     suggestion: "Rewrite this as “do a test of …” if that is the intended meaning."
   - pattern: '(?i)\bfall(?:s|ing)?\s+(?:by|to)\b'

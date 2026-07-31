@@ -23,7 +23,6 @@ patterns:
   - pattern: '(?i)\bgo down\b'
     message: "Replace “go down” with “decrease” or “fail”, as appropriate."
     suggestion: "Choose the precise verb."
----
   - pattern: '(?i)\bgo up\b'
     message: "Replace “go up” with “increase” or “start”, as appropriate."
     suggestion: "Choose the precise verb."
@@ -42,3 +41,4 @@ patterns:
   - pattern: '(?i)\bput in place\b'
     message: "Replace “put in place” with “implement” or “install”, as appropriate."
     suggestion: "Choose the precise verb."
+---

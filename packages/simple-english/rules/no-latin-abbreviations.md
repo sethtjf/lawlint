@@ -28,10 +28,10 @@ patterns:
   - pattern: '(?i)\bviz\.'
     message: "Write “namely” or name the items."
     suggestion: "Use plain English."
----
   - pattern: '(?i)\bcf\.'
     message: "Write “compare” or state the comparison."
     suggestion: "Use plain English."
   - pattern: '(?i)\bn\.b\.'
     message: "Write “note” or state the information directly."
     suggestion: "Use plain English."
+---
