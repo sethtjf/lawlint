@@ -58,6 +58,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo run -p lawlint-cli -- rules test packages/simple-english --offline
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
