@@ -1,0 +1,62 @@
+---
+title: Simple English
+description: Opt-in rules for clear technical prose inspired by ASD-STE100.
+icon: book-open
+---
+
+The repository includes an opt-in `simple-english` rule package for technical
+documentation. It is inspired by the
+[SimpleEnglish skill](https://github.com/AminBlg/SimpleEnglish/tree/main/skills/simple-english):
+short sentences, direct instructions, simple verb forms, plain words, and
+consistent terminology.
+
+The package is external rather than builtin because its limits and modal rules
+are stricter than lawlint's defaults. It is a good fit for READMEs, runbooks,
+API guides, and maintenance instructions. It is not a default style for legal
+or contract drafting.
+
+## Enable it
+
+From the repository root, or with an installed package:
+
+```sh
+lawlint --rule-dir packages/simple-english README.md
+```
+
+To enable it for a project, add the package directory to `.lawlint/config.json`:
+
+```json
+{
+  "ruleDirs": ["packages/simple-english"]
+}
+```
+
+The package uses a **pragmatic** mode by default. It keeps domain terms such
+as `webhook`, `commit`, and `endpoint`, while flagging avoidable ambiguity and
+padding. Use it in **strict** projects that name STE or ASD-STE100 compliance,
+but remember that the official dictionary and a human review are still
+required.
+
+## Core overlap
+
+The package does not duplicate `core/no-semicolons`. Consider disabling
+`core/sentence-length` when you use the package: core allows 45 words, while
+this package uses the STE descriptive limit of 25 words. Procedural text has a
+20-word limit, which the sentence rule cannot classify automatically.
+
+Some plain-word advice can produce related findings from
+`core/prefer-short-words` or `core/prefer-concise-phrases`. Review the combined
+output when both packages are enabled.
+
+## Test the package
+
+```sh
+lawlint rules test packages/simple-english --offline
+```
+
+This validates every hard rule's before/after examples without loading a
+judge. Inferential rules require `--judge` to evaluate their examples.
+
+This package is an unofficial aid. It is not affiliated with or endorsed by
+ASD or STEMG. ASD-STE100 is an ASD trademark. Full compliance requires the
+official dictionary from [asd-ste100.org](https://asd-ste100.org/).
