@@ -37,6 +37,10 @@ jobs:
           node-version: 22
 
       - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run --cwd apps/website check
+      - run: bun run --cwd apps/website validate
       - run: bun run build
 
       - name: Validate Cloudflare credentials
@@ -58,6 +62,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.107.1"
+          wranglerVersion: "4.123.0"
           workingDirectory: apps/website
           command: deploy --config wrangler.jsonc

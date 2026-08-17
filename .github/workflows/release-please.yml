@@ -5,11 +5,11 @@ name: Release Please
 #
 #   feat/fix PRs merge to main
 #     -> release-please maintains a "chore: release X.Y.Z" PR that bumps the
-#        version (Cargo.toml + manifest) and updates CHANGELOG.md
+#        version (Cargo.toml + Cargo.lock + manifest) and updates CHANGELOG.md
 #     -> a human reviews and merges that release PR (a normal PR, so the ruleset
 #        is satisfied — nothing is force-pushed to main and no bypass is needed)
 #     -> on that merge, release-please creates the vX.Y.Z tag + GitHub Release,
-#        and this workflow calls release.yml to build and publish CLI + desktop
+#        and this workflow calls release.yml to build and publish CLI artifacts
 #        artifacts for the tagged commit.
 #
 # A tag created by GITHUB_TOKEN does not itself trigger release.yml's tag push

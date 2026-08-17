@@ -98,25 +98,12 @@ function downloadReport(content: string, filename: string, type: string) {
 }
 
 async function writeClipboard(content: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(content);
-      return true;
-    } catch {
-      // Fall through to the execCommand path below.
-    }
-  }
-
-  const fallback = document.createElement("textarea");
-  fallback.value = content;
-  fallback.style.position = "fixed";
-  fallback.style.opacity = "0";
-  document.body.appendChild(fallback);
-  fallback.select();
+  if (!navigator.clipboard?.writeText) return false;
   try {
-    return document.execCommand("copy");
-  } finally {
-    fallback.remove();
+    await navigator.clipboard.writeText(content);
+    return true;
+  } catch {
+    return false;
   }
 }
 

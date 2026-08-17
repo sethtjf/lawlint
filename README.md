@@ -38,11 +38,10 @@ including from directories that contain no project config. With no model
 configured the soft rules are skipped and the summary says so. `--no-ai` turns
 them off for a run.
 
-The [download page](https://lawlint.com/download) also has the unsigned desktop
-app for macOS and Windows, plus direct CLI archives for every supported
-platform. The installers place the CLI in a user-local bin directory and do
-not send documents anywhere. To build from source: `cargo build --release -p
-lawlint-cli`.
+The [download page](https://lawlint.com/download) has direct CLI archives for
+every supported platform. The installers place the CLI in a user-local bin
+directory and do not send documents anywhere. To build from source:
+`cargo build --release -p lawlint-cli`.
 
 ## Setup & configuration
 
@@ -209,7 +208,7 @@ set both `rubric` and `skill`.
 
 ### File formats
 
-The CLI and desktop app lint plain text, Markdown (`.md`), and Word documents
+The CLI lints plain text, Markdown (`.md`), and Word documents
 (`.docx`). For `.docx`, text is projected out of the document for linting; with
 `--fix`, fixes are written back as native Word **tracked changes** with a
 review **comment** per fix, so every change can be accepted or rejected in
@@ -244,8 +243,9 @@ compiled to WebAssembly.
 - `crates/lawlint-docx` — read `.docx` into the text model and write fixes back as tracked changes + comments.
 - `crates/lawlint-wasm` — browser binding used by the playground.
 - `apps/website` — the website and documentation, built with [Blume](https://useblume.dev).
+- `apps/desktop` — archived Tauri prototype, retained for possible future reintroduction and not built or distributed.
 - `.github/workflows/ci.yml` — Rust checks plus the Bun/Blume website build.
-- `.github/workflows/release.yml` — tagged CLI/desktop builds, R2 uploads, and release notes.
+- `.github/workflows/release.yml` — tagged CLI builds, R2 uploads, and release notes.
 
 To work on the website locally: `bun install && bun run --cwd apps/website dev`
 (needs Node 22.12+). The site is one Blume project:

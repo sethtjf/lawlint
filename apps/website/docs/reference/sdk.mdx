@@ -4,7 +4,7 @@ description: Embedding the lawlint engine — lawlint-core, LintOptions, and the
 icon: package
 ---
 
-`lawlint-core` is the engine the CLI, the desktop app, and the
+`lawlint-core` is the engine the CLI and the
 <a href="/playground">playground</a> all run on. It is pure Rust, and performs no file or
 stdin I/O of its own — you hand it a string.
 
@@ -37,9 +37,9 @@ lawlint-core = { git = "https://github.com/sethtjf/lawlint" }
   severity: { type: "Option<HashMap<String, Severity>>", description: "Per-rule severity overrides." },
   thresholds: { type: "Option<HashMap<String, f64>>", description: "Per-rule threshold overrides." },
   markdown: { type: "Option<bool>", description: "Strip fenced code blocks before linting." },
-  rule_dirs: { type: "Option<Vec<String>>", description: "Consumed by the CLI and desktop app. Ignored by core `lint()`." },
+  rule_dirs: { type: "Option<Vec<String>>", description: "Consumed by the CLI. Ignored by core `lint()`." },
   judge: { type: "Option<JudgeOptions>", description: "Soft-rule judging. Requires a judge implementation." },
-  ai: { type: "Option<AiOptions>", description: "Model preferences written by `lawlint init`. Consumed by the CLI and desktop app; ignored by core `lint()`." },
+  ai: { type: "Option<AiOptions>", description: "Model preferences written by `lawlint init`. Consumed by the CLI; ignored by core `lint()`." },
 }} />
 
 ```rust
@@ -60,9 +60,8 @@ representation documented in
 [Configuration](/docs/reference/configuration).
 :::
 
-Two fields are carried on `LintOptions` purely so one deserialized config
-covers every consumer: `rule_dirs` and `ai` are read by the CLI and desktop app,
-and ignored by `lint()`.
+Two fields are carried on `LintOptions` so one deserialized config covers the
+CLI; they are ignored by `lint()`.
 
 ## `LintResult`
 

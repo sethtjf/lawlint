@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "apps/desktop/src-tauri",
     "crates/lawlint-core",
     "crates/lawlint-cli",
     "crates/lawlint-docx",
@@ -9,6 +8,7 @@ members = [
     "crates/lawlint-wasm",
 ]
 resolver = "2"
+exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2021"

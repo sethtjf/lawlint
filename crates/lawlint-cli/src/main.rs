@@ -2341,7 +2341,7 @@ mod tests {
     fn excerpt_tolerates_spans_past_the_end_of_text() {
         let text = "short";
         assert!(!excerpt_window(text, TextRange { start: 0, end: 999 }, false).is_empty());
-        assert!(
+        assert_eq!(
             excerpt_window(
                 text,
                 TextRange {
@@ -2349,9 +2349,8 @@ mod tests {
                     end: 999
                 },
                 false
-            )
-            .is_empty()
-                || true
+            ),
+            vec!["    short".to_string()]
         );
     }
 

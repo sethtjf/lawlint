@@ -8,5 +8,5 @@
     "resolveJsonModule": true
   },
   "include": [".blume/.astro/types.d.ts", ".blume/src/env.d.ts", "**/*"],
-  "exclude": ["dist", ".blume/src/pages", ".blume/src/generated", ".blume/cache"]
+  "exclude": ["dist", "src/generated", ".blume/src/pages", ".blume/src/generated", ".blume/cache"]
 }

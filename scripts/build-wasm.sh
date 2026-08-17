@@ -13,4 +13,5 @@ fi
 
 wasm-pack build crates/lawlint-wasm \
   --target web \
-  --out-dir ../../apps/website/src/generated/wasm
+  --out-dir ../../apps/website/src/generated/wasm \
+  --locked
