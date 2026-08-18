@@ -144,7 +144,10 @@
           if (!response.ok) { let message = `Request failed (${response.status})`; try { message = (await response.json()).error || message; } catch {} throw new Error(message); }
           return response;
         };
-        const fileHeaders = (name) => ({ "Content-Type": "application/octet-stream", "X-Lawlint-Filename": name, ...(noAi.checked ? { "X-Lawlint-No-Ai": "1" } : {}) });
+        // Fetch headers are byte strings in browsers. Encode the user-provided
+        // filename so names such as "résumé.docx" cannot make the request fail
+        // before it reaches the local server.
+        const fileHeaders = (name) => ({ "Content-Type": "application/octet-stream", "X-Lawlint-Filename": encodeURIComponent(name), ...(noAi.checked ? { "X-Lawlint-No-Ai": "1" } : {}) });
         const setStatus = (value, kind = "") => { status.textContent = value; status.className = `status ${kind}`; };
         const wordCount = (value) => value.trim() ? value.trim().split(/\s+/u).length : 0;
         const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));

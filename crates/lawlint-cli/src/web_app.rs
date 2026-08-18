@@ -207,11 +207,7 @@ fn json_lint_response(state: &AppState, body: &[u8]) -> Response {
 }
 
 fn file_lint_response(state: &AppState, request: &Request) -> Response {
-    let filename = request
-        .headers
-        .get("x-lawlint-filename")
-        .cloned()
-        .unwrap_or_else(|| "document.txt".to_string());
+    let filename = request_filename(request);
     let no_ai = request
         .headers
         .get("x-lawlint-no-ai")
@@ -226,11 +222,7 @@ fn file_lint_response(state: &AppState, request: &Request) -> Response {
 }
 
 fn file_fix_response(state: &AppState, request: &Request) -> Response {
-    let filename = request
-        .headers
-        .get("x-lawlint-filename")
-        .cloned()
-        .unwrap_or_else(|| "document.txt".to_string());
+    let filename = request_filename(request);
     let is_docx = is_docx(&filename);
     let (text, markdown) = match decode_document(&filename, &request.body) {
         Ok(document) => document,
@@ -332,6 +324,40 @@ fn decode_document(filename: &str, bytes: &[u8]) -> Result<(String, bool), Strin
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md")),
     ))
+}
+
+fn request_filename(request: &Request) -> String {
+    request.headers.get("x-lawlint-filename").map_or_else(
+        || "document.txt".to_string(),
+        |value| percent_decode(value).unwrap_or_else(|| value.clone()),
+    )
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes.get(index + 1).and_then(|byte| hex_value(*byte))?;
+            let low = bytes.get(index + 2).and_then(|byte| hex_value(*byte))?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn is_docx(filename: &str) -> bool {
@@ -579,6 +605,15 @@ mod tests {
     }
 
     #[test]
+    fn percent_encoded_filenames_decode_for_browser_uploads() {
+        assert_eq!(
+            percent_decode("r%C3%A9sum%C3%A9%20draft.docx").as_deref(),
+            Some("résumé draft.docx")
+        );
+        assert_eq!(percent_decode("draft%ZZ.docx"), None);
+    }
+
+    #[test]
     fn api_requires_the_launch_token() {
         let state = test_state();
         let request = Request {
@@ -610,5 +645,23 @@ mod tests {
             "core/no-ai-cliches"
         );
         assert_eq!(value["aiStatus"], "AI review skipped: disabled");
+    }
+
+    #[test]
+    fn file_lint_api_decodes_the_browser_filename_header() {
+        let state = test_state();
+        let request = Request {
+            method: "POST".into(),
+            target: "/api/lint-file".into(),
+            headers: HashMap::from([
+                ("x-lawlint-token".into(), "test-token".into()),
+                ("x-lawlint-filename".into(), "r%C3%A9sum%C3%A9.md".into()),
+            ]),
+            body: b"This is a short draft.".to_vec(),
+        };
+        let response = route(request, &state);
+        assert_eq!(response.status, "200 OK");
+        let value: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(value["sourceName"], "résumé.md");
     }
 }
