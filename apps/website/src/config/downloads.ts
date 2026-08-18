@@ -4,8 +4,9 @@ import { resolve } from "node:path";
 export const DOWNLOAD_BASE_URL =
   import.meta.env.PUBLIC_DOWNLOAD_BASE_URL || "https://assets.lawlint.com/downloads";
 
-// Astro evaluates this module from its generated build directory, so resolve
-// Cargo.toml from the working directory instead of relying on import.meta.url.
+// Production deploys provide PUBLIC_DOWNLOAD_VERSION from the last published
+// release. Local/PR builds fall back to Cargo.toml; resolve it from the working
+// directory because Astro evaluates this module from its generated build dir.
 const cargoTomlPath = [
   resolve(process.cwd(), "Cargo.toml"),
   resolve(process.cwd(), "../../Cargo.toml"),

@@ -36,6 +36,20 @@ jobs:
         with:
           node-version: 22
 
+      - name: Pin website downloads to the published release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(curl --fail --location --silent --show-error \
+            https://assets.lawlint.com/downloads/latest/VERSION | tr -d '\r\n')"
+          case "$version" in
+            ""|*[!A-Za-z0-9._+-]*)
+              echo "::error::Published download version is invalid."
+              exit 1
+              ;;
+          esac
+          echo "PUBLIC_DOWNLOAD_VERSION=$version" >> "$GITHUB_ENV"
+
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
