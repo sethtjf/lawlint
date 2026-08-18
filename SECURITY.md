@@ -20,3 +20,9 @@ release as of this policy.
 
 Review the exception list whenever Blume or the website toolchain changes. A
 new fixed release should be adopted and its exception removed before merging.
+
+The root Bun manifest intentionally overrides `ip-address` to `10.5.0`. Some
+Blume build tooling still requests the older `^9` range, but the release build
+and website checks exercise the pinned graph successfully. Revisit this
+override when those consumers support the current major cleanly, and remove it
+only after the lockfile and the full website build remain green.

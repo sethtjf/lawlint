@@ -137,12 +137,20 @@ jobs:
           # self-update can look up "lawlint-<target>.<ext>" directly.
           ( cd release-assets && sha256sum lawlint-* > SHA256SUMS )
           printf '%s' "$version" > release-assets/VERSION
-          for file in release-assets/*; do
-            [ -f "$file" ] || continue
+          upload_asset() {
+            file="$1"
+            [ -f "$file" ] || return 0
             name="$(basename "$file")"
             aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/releases/v${version}/${name}" --endpoint-url "$endpoint"
             aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
+          }
+          # Publish archives before the manifest and version marker. Installers
+          # can then never observe a new checksum list paired with old archives.
+          for file in release-assets/lawlint-*; do
+            upload_asset "$file"
           done
+          upload_asset release-assets/SHA256SUMS
+          upload_asset release-assets/VERSION
       - name: Write release notes
         env:
           VERSION_INPUT: ${{ inputs.version }}
