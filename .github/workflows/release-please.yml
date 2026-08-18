@@ -86,12 +86,19 @@ jobs:
         with:
           ref: ${{ steps.release-pr.outputs.branch }}
           fetch-depth: 0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        with:
+          toolchain: stable
       - name: Synchronize Cargo.lock release versions
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: node scripts/sync-cargo-lock-version.mjs
       - name: Verify locked Cargo metadata
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
-        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+        run: cargo metadata --locked --format-version 1 > /dev/null
+      - name: Test synchronized release workspace
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        run: cargo test --workspace --locked
       - name: Commit synchronized Cargo.lock
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: |

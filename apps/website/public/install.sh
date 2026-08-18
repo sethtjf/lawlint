@@ -14,12 +14,22 @@ case "$os:$arch" in
 esac
 
 archive="lawlint-$target.tar.gz"
-url="$DOWNLOAD_BASE_URL/latest/$archive"
-checksums_url="$DOWNLOAD_BASE_URL/latest/SHA256SUMS"
 tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t lawlint)"
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 echo "Downloading lawlint for $target..."
+curl --fail --location --silent --show-error \
+  "$DOWNLOAD_BASE_URL/latest/VERSION" --output "$tmp_dir/VERSION"
+version="$(tr -d '\r\n' < "$tmp_dir/VERSION")"
+case "$version" in
+  ""|*[!A-Za-z0-9._+-]*)
+    echo "The published lawlint version is invalid." >&2
+    exit 1
+    ;;
+esac
+release_base="$DOWNLOAD_BASE_URL/releases/v$version"
+url="$release_base/$archive"
+checksums_url="$release_base/SHA256SUMS"
 curl --fail --location --silent --show-error "$url" --output "$tmp_dir/$archive"
 curl --fail --location --silent --show-error "$checksums_url" --output "$tmp_dir/SHA256SUMS"
 expected="$(awk -v file="$archive" '$2 == file { print $1; exit }' "$tmp_dir/SHA256SUMS")"
