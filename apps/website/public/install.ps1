@@ -26,6 +26,10 @@ try {
   $url = "$releaseBase/$archive"
   $checksumsUrl = "$releaseBase/SHA256SUMS"
   Invoke-WebRequest -Uri $url -OutFile $zipPath
+  # SHA256SUMS comes from the same distribution source as the archive. This
+  # detects transit corruption and mixed publication windows, but it is not a
+  # cryptographic anti-rollback guarantee; TLS and bucket access remain part
+  # of the trust boundary (see SECURITY.md).
   Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath
   $expected = (Get-Content $checksumsPath |
     Where-Object { $_ -match "^([0-9a-fA-F]{64})\s+\*?$([regex]::Escape($archive))$" } |

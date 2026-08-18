@@ -61,6 +61,8 @@ jobs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
+      prs_created: ${{ steps.rp.outputs.prs_created }}
+      pr: ${{ steps.rp.outputs.pr }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: rp
@@ -69,38 +71,37 @@ jobs:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-      # The generic release-please updater cannot safely rewrite Cargo.lock:
-      # Cargo regenerates that file and removes generic version annotations.
-      # Synchronize the workspace package entries on the release PR branch
-      # instead, then prove the result is accepted by Cargo's locked resolver.
+  # Keep release-PR maintenance independent from artifact publication. A
+  # release-please invocation may create a tag/release and open the next
+  # release PR in the same run; a failure while synchronizing that PR must not
+  # suppress publishing artifacts for the tag that was already created.
+  sync-release-pr:
+    name: Synchronize release PR Cargo.lock
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Find release PR branch
         id: release-pr
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         env:
-          RELEASE_PR: ${{ steps.rp.outputs.pr }}
+          RELEASE_PR: ${{ needs.release-please.outputs.pr }}
         run: |
           branch=$(node -e 'process.stdout.write(JSON.parse(process.env.RELEASE_PR).headBranchName)')
           printf 'branch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         with:
           ref: ${{ steps.release-pr.outputs.branch }}
           fetch-depth: 0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         with:
           toolchain: stable
       - name: Synchronize Cargo.lock release versions
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: node scripts/sync-cargo-lock-version.mjs
       - name: Verify locked Cargo metadata
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Test synchronized release workspace
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: cargo test --workspace --locked
       - name: Commit synchronized Cargo.lock
-        if: ${{ steps.rp.outputs.prs_created == 'true' }}
         run: |
           if git diff --quiet -- Cargo.lock; then
             echo "Cargo.lock is already synchronized."
