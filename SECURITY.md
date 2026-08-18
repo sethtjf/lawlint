@@ -26,3 +26,9 @@ Blume build tooling still requests the older `^9` range, but the release build
 and website checks exercise the pinned graph successfully. Revisit this
 override when those consumers support the current major cleanly, and remove it
 only after the lockfile and the full website build remain green.
+
+Native installers use the unsigned `latest/VERSION` object as a release
+pointer, then verify the selected immutable archive against that release's
+`SHA256SUMS`. This protects downloads from transit corruption and mixed-release
+publication windows, but it is not a cryptographic anti-rollback guarantee:
+TLS and control of the distribution bucket remain part of the trust boundary.
