@@ -1906,8 +1906,8 @@ fn run(cli: Cli) -> Result<i32, String> {
     // A bare `lawlint` in an interactive terminal opens the local browser
     // workspace instead of blocking on stdin. Scripted invocations retain the
     // line-oriented stdin linter below.
-    if std::env::args().len() == 1 && io::stdin().is_terminal() {
-        return web_app::run(None);
+    if cli.command.is_none() && cli.file == "-" && io::stdin().is_terminal() {
+        return web_app::run(None, &cli.rule_dir);
     }
 
     match &cli.command {
@@ -1931,7 +1931,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             force,
             version,
         }) => update::self_update(env!("CARGO_PKG_VERSION"), *check, *force, version.clone()),
-        Some(Command::App { file }) => web_app::run(file.clone()),
+        Some(Command::App { file }) => web_app::run(file.clone(), &cli.rule_dir),
         None => {
             let code = lint_command(&cli)?;
             // At the very END of a normal lint run, after output is written:

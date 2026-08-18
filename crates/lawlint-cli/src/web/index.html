@@ -132,7 +132,11 @@
     </main>
     <script>
       (() => {
-        const token = new URLSearchParams(location.search).get("token") || "";
+        // The server launch credential lives in the fragment, so the browser
+        // never sends it in the initial request or a Referer header. Remove
+        // it from the visible URL/history immediately after reading it.
+        const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+        if (token) history.replaceState(null, document.title, location.pathname);
         const $ = (id) => document.getElementById(id);
         const text = $("text"), status = $("status"), file = $("file"), check = $("check");
         const download = $("download"), source = $("source"), editorSource = $("editor-source");
@@ -156,6 +160,18 @@
         const setStatus = (value, kind = "") => { status.textContent = value; status.className = `status ${kind}`; };
         const wordCount = (value) => value.trim() ? value.trim().split(/\s+/u).length : 0;
         const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
+        function resetReview() {
+          lastResponse = null;
+          $("score").innerHTML = "–<small>/100</small>";
+          $("words").textContent = 0;
+          $("sentences").textContent = 0;
+          $("issues").textContent = 0;
+          $("review-state").textContent = "Review not run";
+          $("review-state").className = "status";
+          $("ai-note").textContent = "";
+          $("findings").innerHTML = '<div class="empty">Run a review to see findings, explanations, and suggested rewrites.</div>';
+          download.disabled = true;
+        }
         function render(response) {
           lastResponse = response;
           const result = response.result || {};
@@ -189,27 +205,57 @@
         }
         file.addEventListener("change", async () => {
           const selected = file.files && file.files[0]; if (!selected) return;
-          currentName = selected.name; source.textContent = currentName; editorSource.textContent = currentName; currentBytes = new Uint8Array(await selected.arrayBuffer()); dirty = false; lastResponse = null; download.disabled = true;
+          currentName = selected.name; source.textContent = currentName; editorSource.textContent = currentName; currentBytes = new Uint8Array(await selected.arrayBuffer()); dirty = false; resetReview();
           if (/\.docx$/iu.test(currentName)) {
             setStatus("Opening Word document…");
             try { const response = await (await api("/api/lint-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes })).json(); text.value = response.text || response.fixedText || ""; render(response); setStatus("Document opened", "good"); }
             catch (error) { setStatus(error.message || "Could not open document", "error"); }
-          } else { markdown.checked = /\.md$/iu.test(currentName); text.value = await selected.text(); render({ result: { stats: {}, diagnostics: [] }, fixedText: "" }); setStatus("Document opened", "good"); }
+          } else { markdown.checked = /\.md$/iu.test(currentName); text.value = await selected.text(); resetReview(); setStatus("Document opened", "good"); }
           $("count").textContent = `${wordCount(text.value)} words`;
         });
-        text.addEventListener("input", () => { dirty = true; currentBytes = null; $("count").textContent = `${wordCount(text.value)} words`; download.disabled = true; });
+        text.addEventListener("input", () => { dirty = true; currentBytes = null; resetReview(); $("count").textContent = `${wordCount(text.value)} words`; });
+        markdown.addEventListener("change", resetReview);
+        noAi.addEventListener("change", resetReview);
         check.addEventListener("click", lint);
         text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void lint(); } });
         ["dragenter", "dragover"].forEach((eventName) => editorCard.addEventListener(eventName, (event) => { event.preventDefault(); editorCard.classList.add("drop"); }));
         ["dragleave", "drop"].forEach((eventName) => editorCard.addEventListener(eventName, (event) => { event.preventDefault(); editorCard.classList.remove("drop"); }));
         editorCard.addEventListener("drop", (event) => { const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]; if (dropped) { const transfer = new DataTransfer(); transfer.items.add(dropped); file.files = transfer.files; file.dispatchEvent(new Event("change")); } });
+        const startDownload = (blob, filename) => {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          link.click();
+          // The browser may not start the download until after click() returns.
+          // Keep the object URL alive for that navigation, then release it.
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
         download.addEventListener("click", async () => {
           if (!lastResponse || !canDownload(lastResponse)) return;
           if (isDocxUpload()) {
-            try { const response = await api("/api/fix-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes }); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `lawlint-fixed-${currentName}`; link.click(); URL.revokeObjectURL(url); } catch (error) { setStatus(error.message || "Could not create fixed document", "error"); }
-          } else { const blob = new Blob([lastResponse.fixedText], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `lawlint-fixed-${currentName.replace(/\.[^.]+$/u, "")}.txt`; link.click(); URL.revokeObjectURL(url); }
+            try { const response = await api("/api/fix-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes }); const blob = await response.blob(); startDownload(blob, `lawlint-fixed-${currentName}`); } catch (error) { setStatus(error.message || "Could not create fixed document", "error"); }
+          } else { const blob = new Blob([lastResponse.fixedText], { type: "text/plain;charset=utf-8" }); startDownload(blob, `lawlint-fixed-${currentName.replace(/\.[^.]+$/u, "")}.txt`); }
         });
-        (async () => { try { const response = await (await api("/api/session")).json(); if (response.initialText) { text.value = response.initialText; currentName = response.sourceName || currentName; source.textContent = currentName; editorSource.textContent = currentName; markdown.checked = Boolean(response.markdown); $("count").textContent = `${wordCount(text.value)} words`; } setStatus(`Ready · ${response.ruleCount} rules loaded`, "good"); } catch (error) { setStatus(error.message || "Could not start workspace", "error"); } })();
+        (async () => {
+          try {
+            const response = await (await api("/api/session")).json();
+            if (response.sourceName && response.sourceName !== "Untitled document") {
+              currentName = response.sourceName;
+              source.textContent = currentName;
+              editorSource.textContent = currentName;
+            }
+            if (response.initialText) text.value = response.initialText;
+            markdown.checked = Boolean(response.markdown);
+            if (response.initialDocx) {
+              const initialFile = await api("/api/initial-file");
+              currentBytes = new Uint8Array(await initialFile.arrayBuffer());
+              dirty = false;
+            }
+            $("count").textContent = `${wordCount(text.value)} words`;
+            setStatus(`Ready · ${response.ruleCount} rules loaded`, "good");
+          } catch (error) { setStatus(error.message || "Could not start workspace", "error"); }
+        })();
       })();
     </script>
   </body>

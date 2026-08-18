@@ -3,7 +3,7 @@
 //! The UI is deliberately embedded and the HTTP server is deliberately small:
 //! a release binary needs no Node runtime, async executor, desktop webview, or
 //! certificate. It binds to loopback only and every API request carries the
-//! random token from the launch URL.
+//! random token from the launch URL fragment.
 
 use crate::{ai_decision, build_rule_set, find_config, lint_text, merge_options, AiOff};
 use lawlint_core::{apply_fixes, LintOptions, LintResult, RuleSet};
@@ -43,6 +43,10 @@ struct InitialDocument {
     source_name: String,
     text: String,
     markdown: bool,
+    /// Keep the original Word package available so the browser can request a
+    /// tracked-review download when the workspace was launched with a path.
+    #[serde(skip)]
+    bytes: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,10 +86,10 @@ struct Request {
     body: Vec<u8>,
 }
 
-pub fn run(initial_path: Option<PathBuf>) -> Result<i32, String> {
+pub fn run(initial_path: Option<PathBuf>, cli_rule_dirs: &[PathBuf]) -> Result<i32, String> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let (config, config_dir) = find_config(cwd.clone())?;
-    let rules = build_rule_set(&config, config_dir.as_deref(), &[])?;
+    let rules = build_rule_set(&config, config_dir.as_deref(), cli_rule_dirs)?;
     let initial = initial_path.map(|path| load_document(&path)).transpose()?;
 
     let listener = TcpListener::bind(("127.0.0.1", 0))
@@ -99,21 +103,29 @@ pub fn run(initial_path: Option<PathBuf>) -> Result<i32, String> {
         .port();
     let token = session_token()?;
     let origin = format!("http://127.0.0.1:{port}");
-    let url = format!("{origin}/?token={token}");
+    // Keep the credential in the URL fragment. Browsers do not send fragments
+    // in HTTP requests or Referer headers, and the page removes it from the
+    // visible URL as soon as it boots. The normal terminal output therefore
+    // contains only the unauthenticated loopback address; if opening the
+    // browser fails, print the one-time fallback URL so the user can recover.
+    let url = workspace_url(&origin, &token);
     let state = Arc::new(AppState {
         config,
         rules,
         initial,
         token,
-        origin,
+        origin: origin.clone(),
         shutdown: Arc::new(AtomicBool::new(false)),
     });
 
-    println!("lawlint workspace: {url}");
+    println!("lawlint workspace: {origin}/");
     println!(
         "Keep this command running while you use the browser workspace. Press Ctrl-C to stop."
     );
-    open_browser(&url);
+    if !open_browser(&url) {
+        eprintln!("lawlint: could not open your browser automatically; copy this one-time URL:");
+        eprintln!("{url}");
+    }
 
     while !state.shutdown.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -154,10 +166,10 @@ fn handle_connection(mut stream: TcpStream, state: Arc<AppState>) {
 }
 
 fn route(request: Request, state: &AppState) -> Response {
-    let (path, query) = request
+    let path = request
         .target
         .split_once('?')
-        .map_or((request.target.as_str(), ""), |(path, query)| (path, query));
+        .map_or(request.target.as_str(), |(path, _)| path);
 
     if !origin_allowed(&request, state) {
         return error_response(
@@ -167,9 +179,9 @@ fn route(request: Request, state: &AppState) -> Response {
     }
 
     if path == "/" || path == "/index.html" {
-        if query_token(query) != Some(state.token.as_str()) {
-            return error_response(401, "This workspace link has expired. Run lawlint again.");
-        }
+        // The token arrives in the URL fragment, which is intentionally not
+        // included in the HTTP request target. The page is safe to serve
+        // without credentials because all document APIs remain authenticated.
         return html_response(INDEX_HTML);
     }
 
@@ -179,6 +191,7 @@ fn route(request: Request, state: &AppState) -> Response {
 
     match (request.method.as_str(), path) {
         ("GET", "/api/session") => session_response(state),
+        ("GET", "/api/initial-file") => initial_file_response(state),
         ("POST", "/api/lint") => json_lint_response(state, &request.body),
         ("POST", "/api/lint-file") => file_lint_response(state, &request),
         ("POST", "/api/fix-file") => file_fix_response(state, &request),
@@ -206,7 +219,23 @@ fn session_response(state: &AppState) -> Response {
             "initialText": initial.map(|document| document.text.as_str()).unwrap_or(""),
             "sourceName": initial.map(|document| document.source_name.as_str()).unwrap_or("Untitled document"),
             "markdown": initial.map(|document| document.markdown).unwrap_or(false),
+            "initialDocx": initial.is_some_and(|document| document.bytes.is_some()),
         }),
+    )
+}
+
+fn initial_file_response(state: &AppState) -> Response {
+    let Some(initial) = state.initial.as_ref() else {
+        return error_response(404, "No document was provided when the workspace started.");
+    };
+    let Some(bytes) = initial.bytes.clone() else {
+        return error_response(404, "The initial document is not a Word document.");
+    };
+    binary_response(
+        200,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        bytes,
+        safe_filename(&initial.source_name),
     )
 }
 
@@ -324,10 +353,16 @@ fn load_document(path: &Path) -> Result<InitialDocument, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let (text, markdown) = decode_document(&path.display().to_string(), &bytes)?;
+    let source_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document")
+        .to_string();
     Ok(InitialDocument {
-        source_name: path.display().to_string(),
+        source_name: source_name.clone(),
         text,
         markdown,
+        bytes: is_docx(&source_name).then_some(bytes),
     })
 }
 
@@ -531,7 +566,22 @@ fn authorized(request: &Request, state: &AppState) -> bool {
     request
         .headers
         .get("x-lawlint-token")
-        .is_some_and(|token| token == &state.token)
+        .is_some_and(|token| constant_time_token_eq(token.as_bytes(), state.token.as_bytes()))
+}
+
+/// Compare a request credential without returning early on a matching prefix.
+///
+/// Workspace tokens have a fixed 48-byte hex representation. Iterating over
+/// the expected length even when the candidate is shorter keeps malformed and
+/// prefix-matching guesses on the same comparison path; the length mismatch
+/// is folded into the result rather than used as an early return.
+fn constant_time_token_eq(candidate: &[u8], expected: &[u8]) -> bool {
+    let mut difference = (candidate.len() != expected.len()) as u8;
+    for (index, expected_byte) in expected.iter().enumerate() {
+        let candidate_byte = candidate.get(index).copied().unwrap_or_default();
+        difference |= candidate_byte ^ expected_byte;
+    }
+    difference == 0
 }
 
 fn origin_allowed(request: &Request, state: &AppState) -> bool {
@@ -566,17 +616,15 @@ fn referer_matches_origin(referer: &str, origin: &str) -> bool {
         .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
 }
 
-fn query_token(query: &str) -> Option<&str> {
-    query
-        .split('&')
-        .find_map(|part| part.strip_prefix("token="))
-}
-
 fn session_token() -> Result<String, String> {
     let mut bytes = [0_u8; 24];
     getrandom::getrandom(&mut bytes)
         .map_err(|error| format!("could not create a secure workspace token: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn workspace_url(origin: &str, token: &str) -> String {
+    format!("{origin}/#token={token}")
 }
 
 fn safe_filename(filename: &str) -> String {
@@ -603,16 +651,14 @@ fn safe_stem(filename: &str) -> String {
         .to_string()
 }
 
-fn open_browser(url: &str) {
+fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(url).spawn();
     #[cfg(target_os = "windows")]
     let result = Command::new("cmd").args(["/C", "start", "", url]).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = Command::new("xdg-open").arg(url).spawn();
-    if result.is_err() {
-        eprintln!("lawlint: could not open your browser automatically; copy the URL above.");
-    }
+    result.is_ok()
 }
 
 #[cfg(test)]
@@ -645,6 +691,21 @@ mod tests {
     }
 
     #[test]
+    fn workspace_url_keeps_the_token_in_a_fragment() {
+        let url = workspace_url("http://127.0.0.1:12345", "test-token");
+        assert_eq!(url, "http://127.0.0.1:12345/#token=test-token");
+        assert!(!url.contains("?token="));
+    }
+
+    #[test]
+    fn token_comparison_checks_the_complete_candidate() {
+        assert!(constant_time_token_eq(b"test-token", b"test-token"));
+        assert!(!constant_time_token_eq(b"test-toke", b"test-token"));
+        assert!(!constant_time_token_eq(b"test-token-x", b"test-token"));
+        assert!(!constant_time_token_eq(b"test-tokeX", b"test-token"));
+    }
+
+    #[test]
     fn accepted_connections_use_blocking_io_with_bounded_timeouts() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -671,6 +732,105 @@ mod tests {
     }
 
     #[test]
+    fn command_line_docx_keeps_a_basename_and_original_bytes() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../lawlint-docx/tests/fixtures/sample.docx");
+        let expected = fs::read(&path).unwrap();
+        let document = load_document(&path).unwrap();
+
+        assert_eq!(document.source_name, "sample.docx");
+        assert!(!document.text.is_empty());
+        assert_eq!(document.bytes.as_deref(), Some(expected.as_slice()));
+    }
+
+    #[test]
+    fn initial_docx_session_exposes_a_download_endpoint() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../lawlint-docx/tests/fixtures/sample.docx");
+        let document = load_document(&path).unwrap();
+        let expected = document.bytes.clone().unwrap();
+        let mut state = test_state();
+        state.initial = Some(document);
+
+        let session = route(
+            Request {
+                method: "GET".into(),
+                target: "/api/session".into(),
+                headers: HashMap::from([
+                    ("x-lawlint-token".into(), "test-token".into()),
+                    ("origin".into(), "http://127.0.0.1:12345".into()),
+                ]),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(session.status, "200 OK");
+        let value: serde_json::Value = serde_json::from_slice(&session.body).unwrap();
+        assert_eq!(value["initialDocx"], true);
+        assert_eq!(value["sourceName"], "sample.docx");
+
+        let file = route(
+            Request {
+                method: "GET".into(),
+                target: "/api/initial-file".into(),
+                headers: HashMap::from([
+                    ("x-lawlint-token".into(), "test-token".into()),
+                    ("origin".into(), "http://127.0.0.1:12345".into()),
+                ]),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(file.status, "200 OK");
+        assert_eq!(file.body, expected);
+        assert_eq!(
+            file.content_type,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert!(file
+            .extra_headers
+            .iter()
+            .any(|(name, value)| name == "Content-Disposition" && value.contains("sample.docx")));
+    }
+
+    #[test]
+    fn cli_rule_dirs_are_merged_into_workspace_rules() {
+        let package = tempfile::tempdir().unwrap();
+        fs::create_dir_all(package.path().join("rules")).unwrap();
+        fs::write(
+            package.path().join("style.yaml"),
+            "name: firm\nversion: 1.0.0\n",
+        )
+        .unwrap();
+        fs::write(
+            package.path().join("rules/use-plain.md"),
+            concat!(
+                "---\n",
+                "id: use-plain\n",
+                "engine: phrase\n",
+                "severity: error\n",
+                "description: Prefer plain words.\n",
+                "patterns:\n",
+                "  - pattern: \\\"\\\\butilize\\\\b\\\"\n",
+                "    message: Prefer use\n",
+                "---\n",
+            ),
+        )
+        .unwrap();
+
+        let rules = build_rule_set(
+            &LintOptions::default(),
+            None,
+            &[package.path().to_path_buf()],
+        )
+        .unwrap();
+        assert!(rules
+            .metas()
+            .iter()
+            .any(|meta| meta.id.0 == "firm/use-plain"));
+    }
+
+    #[test]
     fn percent_encoded_filenames_decode_for_browser_uploads() {
         assert_eq!(
             percent_decode("r%C3%A9sum%C3%A9%20draft.docx").as_deref(),
@@ -685,6 +845,18 @@ mod tests {
         let request = Request {
             method: "GET".into(),
             target: "/api/session".into(),
+            headers: HashMap::from([("sec-fetch-site".into(), "same-origin".into())]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "401 Unauthorized");
+    }
+
+    #[test]
+    fn query_tokens_cannot_authorize_api_requests() {
+        let state = test_state();
+        let request = Request {
+            method: "GET".into(),
+            target: "/api/session?token=test-token".into(),
             headers: HashMap::from([("sec-fetch-site".into(), "same-origin".into())]),
             body: Vec::new(),
         };
@@ -726,10 +898,7 @@ mod tests {
             target: "/api/session".into(),
             headers: HashMap::from([
                 ("x-lawlint-token".into(), "test-token".into()),
-                (
-                    "referer".into(),
-                    "http://127.0.0.1:12345/?token=test-token".into(),
-                ),
+                ("referer".into(), "http://127.0.0.1:12345/".into()),
             ]),
             body: Vec::new(),
         };
@@ -737,11 +906,11 @@ mod tests {
     }
 
     #[test]
-    fn tokenized_top_level_page_load_does_not_need_browser_metadata() {
+    fn top_level_page_load_does_not_send_fragment_credentials() {
         let state = test_state();
         let request = Request {
             method: "GET".into(),
-            target: "/?token=test-token".into(),
+            target: "/".into(),
             headers: HashMap::new(),
             body: Vec::new(),
         };
