@@ -79,7 +79,10 @@ jobs:
   sync-release-pr:
     name: Synchronize release PR Cargo.lock
     needs: release-please
-    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    # `pr` is returned for both a newly opened and an updated release PR. Use
+    # it instead of `prs_created`, otherwise a refresh can leave Cargo.lock
+    # stale after release-please rewrites the branch.
+    if: ${{ needs.release-please.outputs.pr != '' && needs.release-please.outputs.pr != 'null' }}
     runs-on: ubuntu-latest
     steps:
       - name: Find release PR branch
@@ -108,15 +111,39 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_PR_BRANCH: ${{ steps.release-pr.outputs.branch }}
         run: |
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock is already synchronized."
-            exit 0
-          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Cargo.lock
-          git commit -m "chore: sync Cargo.lock release version"
-          git push origin "HEAD:${RELEASE_PR_BRANCH}"
+          pushed=false
+          for attempt in 1 2 3; do
+            # release-please may force-push this branch while this job runs.
+            # Rebase the generated lockfile onto the newest remote tip and use
+            # force-with-lease so a concurrent refresh is never overwritten.
+            git fetch origin "$RELEASE_PR_BRANCH"
+            git reset --hard FETCH_HEAD
+            node scripts/sync-cargo-lock-version.mjs
+            cargo metadata --locked --format-version 1 > /dev/null
+            cargo test --workspace --locked
+            if git diff --quiet -- Cargo.lock; then
+              echo "Cargo.lock is already synchronized."
+              pushed=true
+              break
+            fi
+            git add Cargo.lock
+            git commit -m "chore: sync Cargo.lock release version"
+            expected=$(git rev-parse FETCH_HEAD)
+            if git push --force-with-lease="refs/heads/${RELEASE_PR_BRANCH}:${expected}" \
+              origin "HEAD:${RELEASE_PR_BRANCH}"; then
+              pushed=true
+              break
+            fi
+            echo "Release PR changed during sync; retrying (attempt $((attempt + 1))/3)."
+          done
+          if [ "$pushed" != true ]; then
+            echo "::error::Could not synchronize Cargo.lock after three attempts."
+            exit 1
+          fi
+          # A GITHUB_TOKEN push does not start pull_request CI. Always dispatch
+          # it, including when the lockfile was already current.
           gh workflow run ci.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "$RELEASE_PR_BRANCH"
@@ -131,14 +158,4 @@ jobs:
     with:
       version: ${{ needs.release-please.outputs.version }}
       ref: ${{ needs.release-please.outputs.tag_name }}
-    secrets: inherit
-
-  # The main push also starts deploy.yml, but that deployment can race the
-  # artifact upload and pin the site to the previous release. Re-run it after
-  # publish completes so the direct-download links resolve to this release.
-  deploy-site:
-    name: Deploy website after release
-    needs: [release-please, publish]
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    uses: ./.github/workflows/deploy.yml
     secrets: inherit

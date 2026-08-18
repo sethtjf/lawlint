@@ -185,3 +185,12 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
+
+  # This covers tag pushes, manual releases, and release-please's reusable
+  # invocation. It runs only after the immutable artifacts and latest pointer
+  # have been uploaded, so the website's pinned links cannot lead the release.
+  deploy-site:
+    name: Deploy website after release
+    needs: publish
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

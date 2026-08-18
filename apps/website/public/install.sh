@@ -19,6 +19,8 @@ trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 echo "Downloading lawlint for $target..."
 # VERSION is an unsigned pointer; the selected release prefix is immutable.
+# SHA256SUMS detects transit corruption and mixed publication windows, but TLS
+# and control of the distribution bucket remain part of the trust boundary.
 curl --fail --location --silent --show-error \
   "$DOWNLOAD_BASE_URL/latest/VERSION" --output "$tmp_dir/VERSION"
 version="$(tr -d '\r\n' < "$tmp_dir/VERSION")"

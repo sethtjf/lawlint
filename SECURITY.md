@@ -5,9 +5,14 @@ opening a public issue with exploit details.
 
 ## Dependency audits
 
-The active Rust workspace is checked with `cargo audit --deny warnings`. The
-archived Tauri prototype is deliberately outside that workspace, so its GTK
-dependency tree cannot affect the CLI, WASM, or website release artifacts.
+The active Rust workspace is checked with `cargo audit --deny warnings`. This
+intentionally gates on informational RustSec advisories (unmaintained,
+unsound, and yanked crates) as well as vulnerabilities; there is no Rust
+advisory exception list. A newly reported advisory therefore stops merges
+until the dependency is upgraded, removed, or the policy is deliberately
+revisited. The archived Tauri prototype is deliberately outside that
+workspace, so its GTK dependency tree cannot affect the CLI, WASM, or website
+release artifacts.
 
 The website uses Blume for documentation generation. `bun run audit:security`
 runs Bun's high-severity audit (`--audit-level=high`), so moderate and low
@@ -32,5 +37,7 @@ only after the lockfile and the full website build remain green.
 Native installers use the unsigned `latest/VERSION` object as a release
 pointer, then verify the selected immutable archive against that release's
 `SHA256SUMS`. This protects downloads from transit corruption and mixed-release
-publication windows, but it is not a cryptographic anti-rollback guarantee:
-TLS and control of the distribution bucket remain part of the trust boundary.
+publication windows, but it is not a cryptographic authenticity or
+anti-rollback guarantee: TLS and control of the distribution bucket remain
+part of the trust boundary. Signed release metadata is a separate future
+hardening project, not a property claimed by these installers.
