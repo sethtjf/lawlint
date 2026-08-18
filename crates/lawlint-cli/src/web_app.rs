@@ -16,10 +16,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const INDEX_HTML: &str = include_str!("web/index.html");
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+// The listener is nonblocking so the main loop can observe the shutdown flag,
+// but accepted connections must use bounded blocking I/O. Without these
+// limits a client that sends an incomplete request, or stops reading a large
+// response, could keep a worker thread alive indefinitely.
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const CONNECTION_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct AppState {
@@ -91,7 +97,7 @@ pub fn run(initial_path: Option<PathBuf>) -> Result<i32, String> {
         .local_addr()
         .map_err(|error| format!("could not determine workspace port: {error}"))?
         .port();
-    let token = session_token();
+    let token = session_token()?;
     let origin = format!("http://127.0.0.1:{port}");
     let url = format!("{origin}/?token={token}");
     let state = Arc::new(AppState {
@@ -112,6 +118,10 @@ pub fn run(initial_path: Option<PathBuf>) -> Result<i32, String> {
     while !state.shutdown.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
+                if let Err(error) = configure_connection(&stream) {
+                    eprintln!("lawlint: could not configure browser connection: {error}");
+                    continue;
+                }
                 let state = Arc::clone(&state);
                 std::thread::spawn(move || handle_connection(stream, state));
             }
@@ -122,6 +132,17 @@ pub fn run(initial_path: Option<PathBuf>) -> Result<i32, String> {
         }
     }
     Ok(0)
+}
+
+fn configure_connection(stream: &TcpStream) -> Result<(), std::io::Error> {
+    // TcpListener is deliberately nonblocking in `run`, and on some
+    // platforms accepted sockets inherit that mode. Set the mode explicitly
+    // before handing the stream to the request parser, which uses blocking
+    // reads for the request body.
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(CONNECTION_WRITE_TIMEOUT))?;
+    Ok(())
 }
 
 fn handle_connection(mut stream: TcpStream, state: Arc<AppState>) {
@@ -514,10 +535,35 @@ fn authorized(request: &Request, state: &AppState) -> bool {
 }
 
 fn origin_allowed(request: &Request, state: &AppState) -> bool {
+    let path = request
+        .target
+        .split_once('?')
+        .map_or(request.target.as_str(), |(path, _)| path);
+    match request.headers.get("origin") {
+        Some(origin) => origin == &state.origin,
+        // Browsers do not consistently send Origin on top-level navigation or
+        // same-origin fetches. Keep the page load usable, but require browser
+        // provenance on every API request so another local web page cannot
+        // drive the workspace with only the launch token.
+        None => !path.starts_with("/api/") || same_origin_provenance(request, state),
+    }
+}
+
+fn same_origin_provenance(request: &Request, state: &AppState) -> bool {
     request
         .headers
-        .get("origin")
-        .is_none_or(|origin| origin == &state.origin)
+        .get("sec-fetch-site")
+        .is_some_and(|value| value.eq_ignore_ascii_case("same-origin"))
+        || request
+            .headers
+            .get("referer")
+            .is_some_and(|value| referer_matches_origin(value, &state.origin))
+}
+
+fn referer_matches_origin(referer: &str, origin: &str) -> bool {
+    referer
+        .strip_prefix(origin)
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
 }
 
 fn query_token(query: &str) -> Option<&str> {
@@ -526,19 +572,11 @@ fn query_token(query: &str) -> Option<&str> {
         .find_map(|part| part.strip_prefix("token="))
 }
 
-fn session_token() -> String {
+fn session_token() -> Result<String, String> {
     let mut bytes = [0_u8; 24];
-    if let Ok(mut file) = fs::File::open("/dev/urandom") {
-        if file.read_exact(&mut bytes).is_ok() {
-            return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-        }
-    }
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        ^ u128::from(std::process::id());
-    format!("{seed:032x}")
+    getrandom::getrandom(&mut bytes)
+        .map_err(|error| format!("could not create a secure workspace token: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn safe_filename(filename: &str) -> String {
@@ -594,7 +632,35 @@ mod tests {
 
     #[test]
     fn token_is_unguessable_shaped() {
-        assert_eq!(session_token().len(), 48);
+        let token = session_token().expect("OS randomness should be available in tests");
+        assert_eq!(token.len(), 48);
+        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn session_tokens_are_not_reused() {
+        let first = session_token().expect("OS randomness should be available in tests");
+        let second = session_token().expect("OS randomness should be available in tests");
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn accepted_connections_use_blocking_io_with_bounded_timeouts() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+
+        configure_connection(&server).unwrap();
+
+        assert_eq!(
+            server.read_timeout().unwrap(),
+            Some(CONNECTION_READ_TIMEOUT)
+        );
+        assert_eq!(
+            server.write_timeout().unwrap(),
+            Some(CONNECTION_WRITE_TIMEOUT)
+        );
+        drop(client);
     }
 
     #[test]
@@ -619,10 +685,94 @@ mod tests {
         let request = Request {
             method: "GET".into(),
             target: "/api/session".into(),
-            headers: HashMap::new(),
+            headers: HashMap::from([("sec-fetch-site".into(), "same-origin".into())]),
             body: Vec::new(),
         };
         assert_eq!(route(request, &state).status, "401 Unauthorized");
+    }
+
+    #[test]
+    fn api_rejects_missing_browser_provenance() {
+        let state = test_state();
+        let request = Request {
+            method: "GET".into(),
+            target: "/api/session".into(),
+            headers: HashMap::from([("x-lawlint-token".into(), "test-token".into())]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "403 Forbidden");
+    }
+
+    #[test]
+    fn api_accepts_same_origin_browser_metadata() {
+        let state = test_state();
+        let request = Request {
+            method: "GET".into(),
+            target: "/api/session".into(),
+            headers: HashMap::from([
+                ("x-lawlint-token".into(), "test-token".into()),
+                ("sec-fetch-site".into(), "same-origin".into()),
+            ]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "200 OK");
+    }
+
+    #[test]
+    fn api_accepts_a_same_origin_referer_without_origin() {
+        let state = test_state();
+        let request = Request {
+            method: "GET".into(),
+            target: "/api/session".into(),
+            headers: HashMap::from([
+                ("x-lawlint-token".into(), "test-token".into()),
+                (
+                    "referer".into(),
+                    "http://127.0.0.1:12345/?token=test-token".into(),
+                ),
+            ]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "200 OK");
+    }
+
+    #[test]
+    fn tokenized_top_level_page_load_does_not_need_browser_metadata() {
+        let state = test_state();
+        let request = Request {
+            method: "GET".into(),
+            target: "/?token=test-token".into(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "200 OK");
+    }
+
+    #[test]
+    fn mutating_api_requires_the_local_origin() {
+        let state = test_state();
+        let request = Request {
+            method: "POST".into(),
+            target: "/api/shutdown".into(),
+            headers: HashMap::from([("x-lawlint-token".into(), "test-token".into())]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "403 Forbidden");
+    }
+
+    #[test]
+    fn api_rejects_a_foreign_origin_even_with_the_launch_token() {
+        let state = test_state();
+        let request = Request {
+            method: "POST".into(),
+            target: "/api/shutdown".into(),
+            headers: HashMap::from([
+                ("x-lawlint-token".into(), "test-token".into()),
+                ("origin".into(), "http://127.0.0.1:54321".into()),
+            ]),
+            body: Vec::new(),
+        };
+        assert_eq!(route(request, &state).status, "403 Forbidden");
     }
 
     #[test]
@@ -656,6 +806,7 @@ mod tests {
             headers: HashMap::from([
                 ("x-lawlint-token".into(), "test-token".into()),
                 ("x-lawlint-filename".into(), "r%C3%A9sum%C3%A9.md".into()),
+                ("origin".into(), "http://127.0.0.1:12345".into()),
             ]),
             body: b"This is a short draft.".to_vec(),
         };

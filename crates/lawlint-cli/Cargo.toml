@@ -25,6 +25,7 @@ serde_yaml.workspace = true
 ureq = "2"           # blocking HTTP, rustls TLS — no async runtime pulled in
 semver = "1"         # version comparison
 dirs = "5"           # cache dir for the update-check gate
+getrandom = "0.2"    # cross-platform OS randomness for local workspace tokens
 sha2.workspace = true
 flate2 = "1"         # tar.gz extraction
 tar = "0.4"

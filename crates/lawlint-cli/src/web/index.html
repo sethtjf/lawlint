@@ -148,6 +148,11 @@
         // filename so names such as "résumé.docx" cannot make the request fail
         // before it reaches the local server.
         const fileHeaders = (name) => ({ "Content-Type": "application/octet-stream", "X-Lawlint-Filename": encodeURIComponent(name), ...(noAi.checked ? { "X-Lawlint-No-Ai": "1" } : {}) });
+        const isDocxUpload = () => Boolean(currentBytes && !dirty && /\.docx$/iu.test(currentName));
+        const canDownload = (response) => {
+          const diagnostics = (response.result && response.result.diagnostics) || [];
+          return isDocxUpload() ? diagnostics.length > 0 : Boolean(response.fixedText) && response.fixedText !== text.value;
+        };
         const setStatus = (value, kind = "") => { status.textContent = value; status.className = `status ${kind}`; };
         const wordCount = (value) => value.trim() ? value.trim().split(/\s+/u).length : 0;
         const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
@@ -165,7 +170,7 @@
           const findings = $("findings");
           if (!(result.diagnostics || []).length) { findings.innerHTML = '<div class="empty">✓ No issues found in this draft.</div>'; }
           else { findings.innerHTML = result.diagnostics.map((item) => `<div class="finding ${esc(String(item.severity || "").toLowerCase())}"><div class="finding-meta"><span class="severity ${esc(String(item.severity || "").toLowerCase())}">${esc(item.severity || "")}</span><span>${esc(item.ruleId || "")}</span><span>line ${esc(item.line || "?")}:${esc(item.column || "?")}</span></div><div class="finding-message">${esc(item.message || "")}</div>${item.suggestion ? `<div class="finding-suggestion">→ ${esc(item.suggestion)}</div>` : ""}</div>`).join(""); }
-          download.disabled = !response.fixedText || response.fixedText === text.value;
+          download.disabled = !canDownload(response);
         }
         async function lint() {
           const value = text.value;
@@ -173,7 +178,7 @@
           check.disabled = true; setStatus("Reviewing…"); $("review-state").textContent = "Reviewing…";
           try {
             let response;
-            if (currentBytes && !dirty && /\.docx$/iu.test(currentName)) {
+            if (isDocxUpload()) {
               response = await (await api("/api/lint-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes })).json();
             } else {
               response = await (await api("/api/lint", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: value, markdown: markdown.checked, noAi: noAi.checked }) })).json();
@@ -184,13 +189,13 @@
         }
         file.addEventListener("change", async () => {
           const selected = file.files && file.files[0]; if (!selected) return;
-          currentName = selected.name; source.textContent = currentName; editorSource.textContent = currentName; currentBytes = new Uint8Array(await selected.arrayBuffer()); dirty = false;
+          currentName = selected.name; source.textContent = currentName; editorSource.textContent = currentName; currentBytes = new Uint8Array(await selected.arrayBuffer()); dirty = false; lastResponse = null; download.disabled = true;
           if (/\.docx$/iu.test(currentName)) {
             setStatus("Opening Word document…");
             try { const response = await (await api("/api/lint-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes })).json(); text.value = response.text || response.fixedText || ""; render(response); setStatus("Document opened", "good"); }
             catch (error) { setStatus(error.message || "Could not open document", "error"); }
           } else { markdown.checked = /\.md$/iu.test(currentName); text.value = await selected.text(); render({ result: { stats: {}, diagnostics: [] }, fixedText: "" }); setStatus("Document opened", "good"); }
-          $("count").textContent = `${wordCount(text.value)} words`; download.disabled = true;
+          $("count").textContent = `${wordCount(text.value)} words`;
         });
         text.addEventListener("input", () => { dirty = true; currentBytes = null; $("count").textContent = `${wordCount(text.value)} words`; download.disabled = true; });
         check.addEventListener("click", lint);
@@ -199,8 +204,8 @@
         ["dragleave", "drop"].forEach((eventName) => editorCard.addEventListener(eventName, (event) => { event.preventDefault(); editorCard.classList.remove("drop"); }));
         editorCard.addEventListener("drop", (event) => { const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]; if (dropped) { const transfer = new DataTransfer(); transfer.items.add(dropped); file.files = transfer.files; file.dispatchEvent(new Event("change")); } });
         download.addEventListener("click", async () => {
-          if (!lastResponse || !lastResponse.fixedText) return;
-          if (currentBytes && !dirty && /\.docx$/iu.test(currentName)) {
+          if (!lastResponse || !canDownload(lastResponse)) return;
+          if (isDocxUpload()) {
             try { const response = await api("/api/fix-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes }); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `lawlint-fixed-${currentName}`; link.click(); URL.revokeObjectURL(url); } catch (error) { setStatus(error.message || "Could not create fixed document", "error"); }
           } else { const blob = new Blob([lastResponse.fixedText], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `lawlint-fixed-${currentName.replace(/\.[^.]+$/u, "")}.txt`; link.click(); URL.revokeObjectURL(url); }
         });
