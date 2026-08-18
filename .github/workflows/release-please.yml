@@ -24,6 +24,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
   issues: write
@@ -103,6 +104,8 @@ jobs:
         run: cargo test --workspace --locked
       - name: Commit synchronized Cargo.lock
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_PR_BRANCH: ${{ steps.release-pr.outputs.branch }}
         run: |
           if git diff --quiet -- Cargo.lock; then
@@ -114,6 +117,9 @@ jobs:
           git add Cargo.lock
           git commit -m "chore: sync Cargo.lock release version"
           git push origin "HEAD:${RELEASE_PR_BRANCH}"
+          gh workflow run ci.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_PR_BRANCH"
 
   publish:
     name: Publish artifacts
