@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "include_dir",
  "pulldown-cmark",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-docx"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "lawlint-core",
  "quick-xml",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-eval"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "clap",
  "lawlint-core",
@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-judge"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "axllm",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "lawlint-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "lawlint-core",
  "serde",

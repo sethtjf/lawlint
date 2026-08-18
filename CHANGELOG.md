@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/sethtjf/lawlint/compare/v0.10.0...v0.11.0) (2026-08-18)
+
+
+### Features
+
+* **rules:** add the opt-in simple-english (ASD-STE100) rule package ([#76](https://github.com/sethtjf/lawlint/issues/76)) ([11e4cf5](https://github.com/sethtjf/lawlint/commit/11e4cf5e24f1e4dc0ceb9dc8a28ca631a46b3652))
+* **rules:** add the voice rule set (20 built-in rules) ([#74](https://github.com/sethtjf/lawlint/issues/74)) ([50f8e71](https://github.com/sethtjf/lawlint/commit/50f8e71434154aceb0ed436f1a6840afdf972816))
+
 ## [0.10.0](https://github.com/sethtjf/lawlint/compare/v0.9.1...v0.10.0) (2026-07-24)
 
 
