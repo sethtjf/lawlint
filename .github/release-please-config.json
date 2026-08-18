@@ -8,8 +8,7 @@
     ".": {
       "component": "lawlint",
       "extra-files": [
-        "Cargo.toml",
-        "Cargo.lock"
+        "Cargo.toml"
       ]
     }
   },

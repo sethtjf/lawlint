@@ -69,6 +69,42 @@ jobs:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
+      # The generic release-please updater cannot safely rewrite Cargo.lock:
+      # Cargo regenerates that file and removes generic version annotations.
+      # Synchronize the workspace package entries on the release PR branch
+      # instead, then prove the result is accepted by Cargo's locked resolver.
+      - name: Find release PR branch
+        id: release-pr
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        env:
+          RELEASE_PR: ${{ steps.rp.outputs.pr }}
+        run: |
+          branch=$(node -e 'process.stdout.write(JSON.parse(process.env.RELEASE_PR).headBranchName)')
+          printf 'branch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        with:
+          ref: ${{ steps.release-pr.outputs.branch }}
+          fetch-depth: 0
+      - name: Synchronize Cargo.lock release versions
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        run: node scripts/sync-cargo-lock-version.mjs
+      - name: Verify locked Cargo metadata
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Commit synchronized Cargo.lock
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already synchronized."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Cargo.lock
+          git commit -m "chore: sync Cargo.lock release version"
+          git push origin "HEAD:${{ steps.release-pr.outputs.branch }}"
+
   publish:
     name: Publish artifacts
     needs: release-please

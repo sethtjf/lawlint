@@ -98,12 +98,34 @@ function downloadReport(content: string, filename: string, type: string) {
 }
 
 async function writeClipboard(content: string) {
-  if (!navigator.clipboard?.writeText) return false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content);
+      return true;
+    } catch {
+      // Fall through to the legacy path for restricted clipboard permissions.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = content;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+
   try {
-    await navigator.clipboard.writeText(content);
-    return true;
+    // Keep the legacy fallback for non-secure/restricted contexts. The DOM
+    // declaration is deprecated, but the API remains the compatibility path.
+    const execCommand = (document as unknown as { execCommand(command: string): boolean })
+      .execCommand;
+    return execCommand.call(document, "copy");
   } catch {
     return false;
+  } finally {
+    textarea.remove();
   }
 }
 

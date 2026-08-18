@@ -8,7 +8,7 @@
     "dev": "bun run prepare:content && blume dev",
     "build": "bun run prepare:content && blume build",
     "preview": "blume preview",
-    "check": "blume check",
+    "check": "bun run prepare:content && blume check",
     "validate": "bun run prepare:content && blume validate",
     "doctor": "blume doctor"
   },

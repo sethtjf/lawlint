@@ -5,8 +5,12 @@
     "paths": {
       "@/*": ["src/*"]
     },
+    "allowJs": false,
+    "checkJs": false,
     "resolveJsonModule": true
   },
   "include": [".blume/.astro/types.d.ts", ".blume/src/env.d.ts", "**/*"],
+  // The generated wasm JavaScript is runtime output; its generated .d.ts
+  // sibling supplies the imported API types and the JS itself is not checked.
   "exclude": ["dist", "src/generated", ".blume/src/pages", ".blume/src/generated", ".blume/cache"]
 }
