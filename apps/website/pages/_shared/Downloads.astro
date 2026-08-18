@@ -2,8 +2,9 @@
 // The per-platform CLI archive table, registered as an MDX component in
 // `components.ts` so `docs/installation.mdx` can drop in `<Downloads />` without
 // an import. The URLs come from src/config/downloads.ts, which is also the
-// single place the release workflow and install scripts read the distribution
-// base from — so changing hosts stays a one-file edit.
+// single place that defines the distribution base and pins the website to the
+// Cargo release version — so changing hosts stays a one-file edit and direct
+// downloads do not follow the mutable `latest/` prefix.
 import { downloadUrl } from "@/config/downloads";
 
 const platforms = [
@@ -52,3 +53,7 @@ const platforms = [
     }
   </tbody>
 </table>
+
+<p>
+  Verify an archive against the pinned release's <a href={downloadUrl("SHA256SUMS")}>SHA256SUMS</a> manifest.
+</p>
