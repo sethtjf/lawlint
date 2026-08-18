@@ -23,6 +23,12 @@ You get a summary of which rules ran, what they found, and a human-likeness
 score; `--list` prints the findings themselves. `--fix` applies the fixes (for
 `.docx`, as native Word tracked changes).
 
+For a guided experience, run `lawlint` by itself in a terminal. It opens a
+local browser workspace with a document editor, findings, scores, and fix
+downloads. Use `lawlint app contract.docx` to open a document immediately;
+keep the command running while the workspace is open. The terminal CLI remains
+available for scripts, pipes, and automation.
+
 **3. Set up AI features** (optional — the soft-rule AI judge and `lawlint learn`):
 
 ```sh
@@ -47,7 +53,9 @@ directory and do not send documents anywhere. To build from source:
 
 `lawlint init` walks through AI-model, judge, Markdown, and custom-rule
 choices and writes `.lawlint/config.json` (plus an optional starter rules
-package in `.lawlint/rules/`). The CLI discovers `.lawlint/config.json` — or
+package in `.lawlint/rules/`). The browser workspace is the primary
+interactive surface; this line-oriented setup command remains useful for
+headless and scripted configuration. The CLI discovers `.lawlint/config.json` — or
 the legacy `lawlint.config.json` — from the current directory upward, then
 falls back to a user-level `~/.lawlint/config.json` (`$LAWLINT_HOME`
 honoured), beside the credential store — the same `.lawlint` name at both

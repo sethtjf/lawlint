@@ -19,12 +19,11 @@ use std::sync::{Arc, Mutex};
 
 mod diff;
 mod init;
-mod init_tui;
 mod learn;
 mod progress;
-mod tui;
 mod ui;
 mod update;
+mod web_app;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -142,6 +141,12 @@ enum Command {
         /// Install this specific version instead of the latest.
         #[arg(long, value_name = "X")]
         version: Option<String>,
+    },
+    /// Open the local browser workspace for linting and reviewing documents.
+    App {
+        /// An optional document to open when the workspace starts.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
     },
 }
 
@@ -1207,8 +1212,7 @@ pub(crate) fn format_coverage(cov: &Coverage, color: bool) -> String {
     lines.join("\n")
 }
 
-/// Legacy flat rendering, kept for `--format full` and the TUI transcript,
-/// which shows one short snippet at a time and has no summary to anchor.
+/// Legacy flat rendering, kept for callers that still use `--format full`.
 pub(crate) fn format_pretty(result: &LintResult, quiet: bool, color: bool) -> String {
     if quiet {
         return String::new();
@@ -1891,47 +1895,19 @@ fn rules_test(path: &Path, judge_flag: &Option<String>, offline: bool) -> Result
 
 // ---- entry -------------------------------------------------------------
 
-/// Bare `lawlint`: if the project has no discoverable config, offer the setup
-/// wizard first (with a skip), then open the TUI. A completed wizard writes
-/// `.lawlint/config.json`, which the TUI's own `find_config` then picks up.
-fn launch_tui() -> Result<i32, String> {
-    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    let (_, config_dir) = find_config(cwd)?;
-    if config_dir.is_none() {
-        match init_tui::run_setup(init_tui::SetupContext::FirstRun)? {
-            init_tui::SetupOutcome::Aborted => return Ok(0),
-            init_tui::SetupOutcome::Completed | init_tui::SetupOutcome::Skipped => {}
-        }
-    }
-    tui::run_tui()
-}
-
-/// `lawlint init`: an interactive terminal gets the ratatui wizard and then
-/// drops into the TUI; anything scripted (`--yes`, a pipe, CI) takes the
-/// line-oriented walkthrough and exits, unchanged.
+/// `lawlint init` uses the same line-oriented walkthrough for terminals and
+/// scripts. The browser workspace is the primary interactive experience; this
+/// command remains useful for headless setup and automation.
 fn init_command(yes: bool, force: bool, ai: Option<&str>) -> Result<i32, String> {
-    let interactive = !yes && io::stdin().is_terminal() && io::stdout().is_terminal();
-    if interactive {
-        match init_tui::run_setup(init_tui::SetupContext::Explicit {
-            force,
-            ai: ai.map(str::to_string),
-        })? {
-            init_tui::SetupOutcome::Completed => tui::run_tui(),
-            // Explicit init has no "skip"; a user who bailed out gets a
-            // non-zero exit and no TUI.
-            init_tui::SetupOutcome::Aborted | init_tui::SetupOutcome::Skipped => Ok(1),
-        }
-    } else {
-        init::init_command(yes, force, ai)
-    }
+    init::init_command(yes, force, ai)
 }
 
 fn run(cli: Cli) -> Result<i32, String> {
-    // A bare `lawlint` in an interactive terminal launches the TUI instead of
-    // blocking on stdin — running the setup wizard first if this project has no
-    // config yet.
-    if std::env::args().len() == 1 && io::stdin().is_terminal() {
-        return launch_tui();
+    // A bare `lawlint` in an interactive terminal opens the local browser
+    // workspace instead of blocking on stdin. Scripted invocations retain the
+    // line-oriented stdin linter below.
+    if cli.command.is_none() && cli.file == "-" && io::stdin().is_terminal() {
+        return web_app::run(None, &cli.rule_dir);
     }
 
     match &cli.command {
@@ -1955,6 +1931,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             force,
             version,
         }) => update::self_update(env!("CARGO_PKG_VERSION"), *check, *force, version.clone()),
+        Some(Command::App { file }) => web_app::run(file.clone(), &cli.rule_dir),
         None => {
             let code = lint_command(&cli)?;
             // At the very END of a normal lint run, after output is written:

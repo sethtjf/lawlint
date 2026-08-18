@@ -1,4 +1,4 @@
-//! Line-level diff shared by the CLI `--diff` flag and the TUI `/fix` view.
+//! Line-level diff shared by the CLI `--diff` flag and the browser workspace.
 //!
 //! A plain LCS over lines; fix diffs are small (a handful of changed lines in
 //! a document), so the quadratic table is bounded by trimming the common

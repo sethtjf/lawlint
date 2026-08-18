@@ -36,9 +36,7 @@ pub(crate) const DEFAULT_COMPAT_MODEL: &str = "llama3.2";
 pub(crate) const RULES_DIR: &str = ".lawlint/rules";
 
 // ---- shared prompt copy ------------------------------------------------
-// The catalog and local-constraints wording is shared verbatim between the
-// non-interactive line walkthrough (`ask_ai`/`ask_local`) and the ratatui
-// setup wizard (`init_tui`), so the two front-ends never drift.
+// The setup flow stays line-oriented so it also works over pipes and in CI.
 
 /// The AI-catalog question stem (hosted providers first, #50).
 pub(crate) const AI_CATALOG_PROMPT: &str =
@@ -680,8 +678,7 @@ pub(crate) struct Applied {
 /// Apply `answers` over `base`: write `.lawlint/config.json`, scaffold the
 /// starter rules package if requested, and store any API credentials in the
 /// user-level file. Front-end-agnostic — legacy-file removal and the on-screen
-/// summary stay with each caller. Both the line walkthrough and the ratatui
-/// wizard funnel through here so they write identical config.
+/// summary stay with the line walkthrough.
 /// Everything `init` may touch *outside* the project directory.
 ///
 /// `Default` is inert — no explicit credential path, no migration — so a
@@ -697,7 +694,7 @@ pub(crate) struct UserScope<'a> {
 }
 
 /// The real user-level directories, `(legacy, current)`, resolved from the
-/// environment. Only the interactive entry points call this: everything else
+/// environment. Only the interactive setup entry point calls this: everything else
 /// takes the directories as arguments so it cannot touch a developer's home.
 /// `None` when `$LAWLINT_CREDENTIALS` pins the file somewhere explicit, or no
 /// home directory can be determined — in both cases there is nothing to

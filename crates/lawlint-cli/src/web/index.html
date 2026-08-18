@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>lawlint workspace</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #2b2826;
+        --muted: #756c64;
+        --paper: #f7f4ef;
+        --card: #fffdfa;
+        --line: #ded7cf;
+        --brand: #7e2528;
+        --brand-dark: #5f1b1e;
+        --soft: #eee7df;
+        --good: #557b59;
+        --warn: #9a6b18;
+        --error: #a73737;
+        --shadow: 0 20px 70px rgba(43, 40, 38, 0.1);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --ink: #f3eee7;
+          --muted: #b7aaa0;
+          --paper: #211e1c;
+          --card: #2b2724;
+          --line: #4a423c;
+          --soft: #3b342f;
+          --shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: radial-gradient(circle at top left, color-mix(in srgb, var(--brand) 10%, transparent), transparent 32rem), var(--paper);
+        color: var(--ink);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      button, textarea, input { font: inherit; }
+      button { cursor: pointer; }
+      .shell { width: min(1400px, calc(100% - 2rem)); margin: 0 auto; padding: 1.25rem 0 2rem; }
+      header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+      .mark { color: var(--brand); font: 800 1.15rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+      .subtitle { color: var(--muted); font-size: .88rem; }
+      .header-actions { margin-left: auto; display: flex; gap: .55rem; flex-wrap: wrap; justify-content: flex-end; }
+      .card { background: color-mix(in srgb, var(--card) 94%, transparent); border: 1px solid var(--line); border-radius: 1rem; box-shadow: var(--shadow); }
+      .toolbar { display: flex; align-items: center; gap: .75rem; padding: .8rem; flex-wrap: wrap; }
+      .button { border: 1px solid var(--line); border-radius: .55rem; background: var(--card); color: var(--ink); padding: .55rem .8rem; font-size: .82rem; }
+      .button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+      .button.primary { border-color: var(--brand); background: var(--brand); color: white; font-weight: 700; }
+      .button.primary:hover:not(:disabled) { background: var(--brand-dark); }
+      .button:disabled { cursor: not-allowed; opacity: .45; }
+      .file-label { display: inline-flex; align-items: center; gap: .45rem; }
+      .file-label input { display: none; }
+      .status { color: var(--muted); font-size: .78rem; min-height: 1.1rem; }
+      .status.error { color: var(--error); }
+      .status.good { color: var(--good); }
+      .workspace { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(19rem, .72fr); gap: 1rem; }
+      .editor-card { min-width: 0; overflow: hidden; }
+      .editor-head, .review-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 1rem 1.1rem; border-bottom: 1px solid var(--line); }
+      .eyebrow { color: var(--muted); font: 700 .7rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
+      .source { max-width: 16rem; overflow: hidden; color: var(--muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+      textarea { display: block; width: 100%; min-height: 31rem; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--ink); padding: 1.15rem; font: .95rem/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      textarea:focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent); }
+      .editor-foot { display: flex; align-items: center; gap: 1rem; border-top: 1px solid var(--line); padding: .75rem 1rem; flex-wrap: wrap; }
+      .check { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .78rem; }
+      .check input { accent-color: var(--brand); }
+      .review-card { min-width: 0; overflow: hidden; }
+      .score-row { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding: 1.1rem; border-bottom: 1px solid var(--line); }
+      .score { color: var(--brand); font: 700 3.6rem/.9 ui-serif, Georgia, serif; letter-spacing: -.06em; }
+      .score small { color: var(--muted); font: 500 1rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0; }
+      .stats { display: flex; gap: 1rem; text-align: right; }
+      .stat strong { display: block; font: 700 1.2rem/1.1 ui-serif, Georgia, serif; }
+      .stat span { color: var(--muted); font: .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+      .ai-note { margin: .8rem 1.1rem 0; color: var(--muted); font-size: .75rem; }
+      .findings { max-height: 29rem; overflow: auto; padding: .8rem 1.1rem 1.1rem; }
+      .empty { color: var(--muted); font-size: .85rem; line-height: 1.6; padding: 1rem 0; }
+      .finding { border-left: 3px solid var(--line); border-bottom: 1px solid var(--line); padding: .85rem 0 .85rem .8rem; }
+      .finding:last-child { border-bottom: 0; }
+      .finding.error { border-left-color: var(--error); }
+      .finding.warning { border-left-color: var(--warn); }
+      .finding.suggestion { border-left-color: var(--good); }
+      .finding-meta { display: flex; align-items: center; gap: .5rem; color: var(--muted); font: .67rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+      .severity { font-weight: 800; }
+      .severity.error { color: var(--error); }
+      .severity.warning { color: var(--warn); }
+      .severity.suggestion { color: var(--good); }
+      .finding-message { margin-top: .38rem; font-size: .88rem; line-height: 1.45; }
+      .finding-suggestion { margin-top: .32rem; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+      footer { color: var(--muted); font-size: .72rem; line-height: 1.5; margin-top: 1rem; }
+      .drop { outline: 2px dashed var(--brand); outline-offset: -8px; background: color-mix(in srgb, var(--brand) 5%, transparent); }
+      @media (max-width: 850px) { .workspace { grid-template-columns: 1fr; } textarea { min-height: 23rem; } .findings { max-height: none; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div><div class="mark">LAWLINT</div><div class="subtitle">Your local writing review workspace</div></div>
+        <div class="header-actions">
+          <label class="button file-label">Open document<input id="file" type="file" accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
+          <button id="download" class="button" disabled>Download fixed text</button>
+          <button id="check" class="button primary">Check document</button>
+        </div>
+      </header>
+      <section class="card toolbar" aria-label="Workspace status">
+        <span id="status" class="status">Starting local workspace…</span>
+        <span id="source" class="source">Untitled document</span>
+      </section>
+      <section class="workspace" style="margin-top:1rem">
+        <article id="editor-card" class="card editor-card">
+          <div class="editor-head"><span class="eyebrow">Draft</span><span class="source" id="editor-source">Untitled document</span></div>
+          <textarea id="text" spellcheck="false" aria-label="Document text" placeholder="Paste a draft here, or open a .docx, .md, or .txt document…"></textarea>
+          <div class="editor-foot">
+            <label class="check"><input id="markdown" type="checkbox" /> Treat as Markdown</label>
+            <label class="check"><input id="no-ai" type="checkbox" /> Static review only</label>
+            <span id="count" class="status">0 words</span>
+          </div>
+        </article>
+        <article class="card review-card">
+          <div class="review-head"><span class="eyebrow">Review</span><span id="review-state" class="status">Waiting for a draft</span></div>
+          <div class="score-row"><div><div class="eyebrow">Human-likeness</div><div id="score" class="score">–<small>/100</small></div></div><div class="stats"><div class="stat"><strong id="words">0</strong><span>words</span></div><div class="stat"><strong id="sentences">0</strong><span>sentences</span></div><div class="stat"><strong id="issues">0</strong><span>issues</span></div></div></div>
+          <div id="ai-note" class="ai-note"></div>
+          <div id="findings" class="findings"><div class="empty">Your review will appear here. Findings include locations, explanations, and suggested rewrites.</div></div>
+        </article>
+      </section>
+      <footer>Everything stays on this computer. The local server is provided by the lawlint command; close that command when you are finished.</footer>
+    </main>
+    <script>
+      (() => {
+        // The server launch credential lives in the fragment, so the browser
+        // never sends it in the initial request or a Referer header. Remove
+        // it from the visible URL/history immediately after reading it.
+        const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+        if (token) history.replaceState(null, document.title, location.pathname);
+        const $ = (id) => document.getElementById(id);
+        const text = $("text"), status = $("status"), file = $("file"), check = $("check");
+        const download = $("download"), source = $("source"), editorSource = $("editor-source");
+        const markdown = $("markdown"), noAi = $("no-ai"), editorCard = $("editor-card");
+        let lastResponse = null, currentBytes = null, currentName = "Untitled document", dirty = false;
+        const api = async (path, options = {}) => {
+          const headers = Object.assign({ "X-Lawlint-Token": token }, options.headers || {});
+          const response = await fetch(path, Object.assign({}, options, { headers }));
+          if (!response.ok) { let message = `Request failed (${response.status})`; try { message = (await response.json()).error || message; } catch {} throw new Error(message); }
+          return response;
+        };
+        // Fetch headers are byte strings in browsers. Encode the user-provided
+        // filename so names such as "résumé.docx" cannot make the request fail
+        // before it reaches the local server.
+        const fileHeaders = (name) => ({ "Content-Type": "application/octet-stream", "X-Lawlint-Filename": encodeURIComponent(name), ...(noAi.checked ? { "X-Lawlint-No-Ai": "1" } : {}) });
+        const isDocxUpload = () => Boolean(currentBytes && !dirty && /\.docx$/iu.test(currentName));
+        const canDownload = (response) => {
+          const diagnostics = (response.result && response.result.diagnostics) || [];
+          return isDocxUpload() ? diagnostics.length > 0 : Boolean(response.fixedText) && response.fixedText !== text.value;
+        };
+        const setStatus = (value, kind = "") => { status.textContent = value; status.className = `status ${kind}`; };
+        const wordCount = (value) => value.trim() ? value.trim().split(/\s+/u).length : 0;
+        const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
+        function resetReview() {
+          lastResponse = null;
+          $("score").innerHTML = "–<small>/100</small>";
+          $("words").textContent = 0;
+          $("sentences").textContent = 0;
+          $("issues").textContent = 0;
+          $("review-state").textContent = "Review not run";
+          $("review-state").className = "status";
+          $("ai-note").textContent = "";
+          $("findings").innerHTML = '<div class="empty">Run a review to see findings, explanations, and suggested rewrites.</div>';
+          download.disabled = true;
+        }
+        function render(response) {
+          lastResponse = response;
+          const result = response.result || {};
+          const stats = result.stats || {};
+          $("score").innerHTML = `${stats.score ?? "–"}<small>/100</small>`;
+          $("words").textContent = stats.wordCount ?? 0;
+          $("sentences").textContent = stats.sentenceCount ?? 0;
+          $("issues").textContent = (result.diagnostics || []).length;
+          $("review-state").textContent = (result.diagnostics || []).length ? "Review complete" : "No issues found";
+          $("review-state").className = `status ${(result.diagnostics || []).length ? "" : "good"}`;
+          $("ai-note").textContent = response.aiStatus || "";
+          const findings = $("findings");
+          if (!(result.diagnostics || []).length) { findings.innerHTML = '<div class="empty">✓ No issues found in this draft.</div>'; }
+          else { findings.innerHTML = result.diagnostics.map((item) => `<div class="finding ${esc(String(item.severity || "").toLowerCase())}"><div class="finding-meta"><span class="severity ${esc(String(item.severity || "").toLowerCase())}">${esc(item.severity || "")}</span><span>${esc(item.ruleId || "")}</span><span>line ${esc(item.line || "?")}:${esc(item.column || "?")}</span></div><div class="finding-message">${esc(item.message || "")}</div>${item.suggestion ? `<div class="finding-suggestion">→ ${esc(item.suggestion)}</div>` : ""}</div>`).join(""); }
+          download.disabled = !canDownload(response);
+        }
+        async function lint() {
+          const value = text.value;
+          if (!value.trim()) { setStatus("Add some text first"); return; }
+          check.disabled = true; setStatus("Reviewing…"); $("review-state").textContent = "Reviewing…";
+          try {
+            let response;
+            if (isDocxUpload()) {
+              response = await (await api("/api/lint-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes })).json();
+            } else {
+              response = await (await api("/api/lint", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: value, markdown: markdown.checked, noAi: noAi.checked }) })).json();
+            }
+            render(response); setStatus("Review complete", "good");
+          } catch (error) { setStatus(error.message || "Review failed", "error"); $("review-state").textContent = "Review failed"; }
+          finally { check.disabled = false; }
+        }
+        file.addEventListener("change", async () => {
+          const selected = file.files && file.files[0]; if (!selected) return;
+          currentName = selected.name; source.textContent = currentName; editorSource.textContent = currentName; currentBytes = new Uint8Array(await selected.arrayBuffer()); dirty = false; resetReview();
+          if (/\.docx$/iu.test(currentName)) {
+            setStatus("Opening Word document…");
+            try { const response = await (await api("/api/lint-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes })).json(); text.value = response.text || response.fixedText || ""; render(response); setStatus("Document opened", "good"); }
+            catch (error) { setStatus(error.message || "Could not open document", "error"); }
+          } else { markdown.checked = /\.md$/iu.test(currentName); text.value = await selected.text(); resetReview(); setStatus("Document opened", "good"); }
+          $("count").textContent = `${wordCount(text.value)} words`;
+        });
+        text.addEventListener("input", () => { dirty = true; currentBytes = null; resetReview(); $("count").textContent = `${wordCount(text.value)} words`; });
+        markdown.addEventListener("change", resetReview);
+        noAi.addEventListener("change", resetReview);
+        check.addEventListener("click", lint);
+        text.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void lint(); } });
+        ["dragenter", "dragover"].forEach((eventName) => editorCard.addEventListener(eventName, (event) => { event.preventDefault(); editorCard.classList.add("drop"); }));
+        ["dragleave", "drop"].forEach((eventName) => editorCard.addEventListener(eventName, (event) => { event.preventDefault(); editorCard.classList.remove("drop"); }));
+        editorCard.addEventListener("drop", (event) => { const dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]; if (dropped) { const transfer = new DataTransfer(); transfer.items.add(dropped); file.files = transfer.files; file.dispatchEvent(new Event("change")); } });
+        const startDownload = (blob, filename) => {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          link.click();
+          // The browser may not start the download until after click() returns.
+          // Keep the object URL alive for that navigation, then release it.
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+        download.addEventListener("click", async () => {
+          if (!lastResponse || !canDownload(lastResponse)) return;
+          if (isDocxUpload()) {
+            try { const response = await api("/api/fix-file", { method: "POST", headers: fileHeaders(currentName), body: currentBytes }); const blob = await response.blob(); startDownload(blob, `lawlint-fixed-${currentName}`); } catch (error) { setStatus(error.message || "Could not create fixed document", "error"); }
+          } else { const blob = new Blob([lastResponse.fixedText], { type: "text/plain;charset=utf-8" }); startDownload(blob, `lawlint-fixed-${currentName.replace(/\.[^.]+$/u, "")}.txt`); }
+        });
+        (async () => {
+          try {
+            const response = await (await api("/api/session")).json();
+            if (response.sourceName && response.sourceName !== "Untitled document") {
+              currentName = response.sourceName;
+              source.textContent = currentName;
+              editorSource.textContent = currentName;
+            }
+            if (response.initialText) text.value = response.initialText;
+            markdown.checked = Boolean(response.markdown);
+            if (response.initialDocx) {
+              const initialFile = await api("/api/initial-file");
+              currentBytes = new Uint8Array(await initialFile.arrayBuffer());
+              dirty = false;
+            }
+            $("count").textContent = `${wordCount(text.value)} words`;
+            setStatus(`Ready · ${response.ruleCount} rules loaded`, "good");
+          } catch (error) { setStatus(error.message || "Could not start workspace", "error"); }
+        })();
+      })();
+    </script>
+  </body>
+</html>
