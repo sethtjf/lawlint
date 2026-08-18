@@ -21,8 +21,8 @@ use crate::RuleSet;
 /// Where the linted document lives, which decides how the brief hands it to
 /// the model.
 pub enum PromptSource<'a> {
-    /// Inline text (stdin, a TUI buffer, the playground). The brief embeds
-    /// the document so it is self-contained.
+    /// Inline text (stdin, the local browser workspace, the playground). The
+    /// brief embeds the document so it is self-contained.
     Text(&'a str),
     /// A file on disk. The brief references the path and instructs the model
     /// to edit the file in place — embedding a large document would blow up

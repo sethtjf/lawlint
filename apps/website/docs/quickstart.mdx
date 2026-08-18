@@ -38,11 +38,16 @@ lawlint contract.docx
 ```
 
 Pass a `.txt`, `.md`, or `.docx` file, or `-` to read stdin. With no argument
-at all, lawlint reads stdin.
+from a terminal, lawlint opens the local browser workspace instead. Use
+`lawlint app contract.docx` to open the workspace with a document already
+loaded.
 
 ```sh
 cat memo.txt | lawlint
 ```
+
+Pipes remain a normal CLI path; only an interactive terminal with no arguments
+opens the browser workspace.
 
 </Step>
 

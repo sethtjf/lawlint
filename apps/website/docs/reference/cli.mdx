@@ -11,9 +11,21 @@ lawlint learn <path> [options]
 lawlint rules [--json]
 lawlint rules test <path> [options]
 lawlint self-update [options]
+lawlint app [file]
 ```
 
-The file argument defaults to `-` (stdin), so a bare `lawlint` reads a pipe.
+When run with no arguments from a terminal, `lawlint` opens the local browser
+workspace and starts reviewing there. Use `lawlint app [file]` to open it with
+a document already loaded. A piped `lawlint` invocation still reads stdin, and
+the ordinary file command remains the scriptable CLI surface.
+
+## `lawlint app [file]`
+
+Starts the local browser workspace on a loopback-only address and opens it in
+the default browser. The workspace uses the native lawlint engine, so it can
+review text and Markdown, extract Word documents, apply fixes, and download a
+reviewable Word document without a desktop app or a separate runtime. Keep the
+command running while the browser workspace is open; press Ctrl-C when done.
 
 ## Linting options
 

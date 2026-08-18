@@ -5,9 +5,11 @@ description: Runtime-test the lawlint Rust rewrite end-to-end (CLI, website WASM
 
 # Testing lawlint (Rust core + CLI + WASM playground)
 
-The CLI and website playground (WASM) call the **same**
+The CLI, local browser workspace, and website playground (WASM) call the **same**
 `lawlint_core::lint`. So the fastest way to get hard pass/fail values is to run the native CLI
-and assert the UIs match it.
+and assert the UIs match it. The local browser workspace is the primary
+interactive native surface; the website playground remains the zero-install
+WASM surface.
 
 The former Tauri desktop app under `apps/desktop` is an archived prototype, not an active
 workspace or release surface. Do not include it in runtime verification unless deliberately
@@ -21,6 +23,9 @@ cargo run -q -p lawlint-cli -- --format json <file> \
 Compare `score`, `wordCount`, `sentenceCount`, and diagnostic count / rule IDs against what the UI shows.
 
 ## Run the surfaces locally
+- **Local browser workspace:** `CARGO_TARGET_DIR=/tmp/lawlint-target cargo run -p lawlint-cli -- app`
+  (or pass a `.docx`, `.md`, or `.txt` path). It binds to loopback, prints a tokenized URL,
+  and opens the default browser. Keep the process running while testing.
 - **Website (playground + download page):** `bun run dev` from repo root → http://localhost:4321
   (`/playground`, `/download`). This runs `wasm-pack build` + generates `rules.json` before astro dev,
   so first start takes ~15-30s.
