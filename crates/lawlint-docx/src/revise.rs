@@ -53,6 +53,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use quick_xml::escape::{resolve_predefined_entity, unescape};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::QName;
 use quick_xml::{Reader, Writer};
@@ -168,8 +169,18 @@ fn analyze_run(buffer: &[Event<'static>]) -> RunInfo {
                         let mut text = String::new();
                         for ev in &inner[i + 1..j] {
                             if let Event::Text(t) = ev {
-                                if let Ok(s) = t.unescape() {
-                                    text.push_str(&s);
+                                if let Ok(decoded) = t.decode() {
+                                    if let Ok(s) = unescape(&decoded) {
+                                        text.push_str(&s);
+                                    }
+                                }
+                            } else if let Event::GeneralRef(r) = ev {
+                                if let Ok(name) = r.decode() {
+                                    if let Ok(Some(ch)) = r.resolve_char_ref() {
+                                        text.push(ch);
+                                    } else if let Some(value) = resolve_predefined_entity(&name) {
+                                        text.push_str(value);
+                                    }
                                 }
                             }
                         }

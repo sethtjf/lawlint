@@ -14,12 +14,41 @@ case "$os:$arch" in
 esac
 
 archive="lawlint-$target.tar.gz"
-url="$DOWNLOAD_BASE_URL/latest/$archive"
 tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t lawlint)"
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 echo "Downloading lawlint for $target..."
+# VERSION is an unsigned pointer; the selected release prefix is immutable.
+# SHA256SUMS detects transit corruption and mixed publication windows, but TLS
+# and control of the distribution bucket remain part of the trust boundary.
+curl --fail --location --silent --show-error \
+  "$DOWNLOAD_BASE_URL/latest/VERSION" --output "$tmp_dir/VERSION"
+version="$(tr -d '\r\n' < "$tmp_dir/VERSION")"
+case "$version" in
+  ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._+-]*|*..*)
+    echo "The published lawlint version is invalid." >&2
+    exit 1
+    ;;
+esac
+release_base="$DOWNLOAD_BASE_URL/releases/v$version"
+url="$release_base/$archive"
+checksums_url="$release_base/SHA256SUMS"
 curl --fail --location --silent --show-error "$url" --output "$tmp_dir/$archive"
+curl --fail --location --silent --show-error "$checksums_url" --output "$tmp_dir/SHA256SUMS"
+expected="$(awk -v file="$archive" '$2 == file { print $1; exit }' "$tmp_dir/SHA256SUMS")"
+if [ -z "$expected" ]; then
+  echo "No checksum was published for $archive." >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "$tmp_dir/$archive" | awk '{print $1}')"
+else
+  actual="$(shasum -a 256 "$tmp_dir/$archive" | awk '{print $1}')"
+fi
+if [ "$actual" != "$expected" ]; then
+  echo "Checksum mismatch for $archive." >&2
+  exit 1
+fi
 tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
 
 install_dir="${LAWLINT_INSTALL_DIR:-$HOME/.local/bin}"

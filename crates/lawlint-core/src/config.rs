@@ -14,11 +14,11 @@ pub struct LintOptions {
     pub severity: Option<HashMap<String, Severity>>,
     pub thresholds: Option<HashMap<String, f64>>,
     pub markdown: Option<bool>,
-    /// Consumed by CLI/desktop, ignored by core `lint()`.
+    /// Consumed by the CLI (and the archived desktop prototype), ignored by core `lint()`.
     pub rule_dirs: Option<Vec<String>>,
     pub judge: Option<JudgeOptions>,
     /// AI model preferences (written by `lawlint init`); consumed by
-    /// CLI/desktop, ignored by core `lint()`.
+    /// The CLI (and archived desktop prototype), ignored by core `lint()`.
     pub ai: Option<AiOptions>,
     /// `lawlint learn` options; consumed by the CLI, ignored by core `lint()`.
     pub learn: Option<LearnOptions>,

@@ -62,7 +62,7 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target }}
       - name: Build CLI
-        run: cargo build --release -p lawlint-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p lawlint-cli --target ${{ matrix.target }}
       - name: Package Unix CLI
         if: runner.os != 'Windows'
         shell: bash
@@ -90,60 +90,9 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  desktop:
-    name: Desktop ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: macos-14
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - run: bun install --frozen-lockfile
-      - name: Build and stage desktop bundles
-        uses: tauri-apps/tauri-action@v0
-        with:
-          projectPath: apps/desktop
-          args: --target ${{ matrix.target }}
-      - name: Collect macOS bundles
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          find "target/${{ matrix.target }}/release/bundle/dmg" -type f -name '*.dmg' -exec cp {} "dist/lawlint-desktop-${{ matrix.target }}.dmg" \;
-      - name: Collect Windows bundles
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $nsis = Get-ChildItem "target/${{ matrix.target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
-          $msi = Get-ChildItem "target/${{ matrix.target }}/release/bundle/msi/*.msi" | Select-Object -First 1
-          Copy-Item $nsis.FullName "dist/lawlint-desktop-${{ matrix.target }}.exe"
-          Copy-Item $msi.FullName "dist/lawlint-desktop-${{ matrix.target }}.msi"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.target }}
-          path: dist/*
-          if-no-files-found: error
-
   publish:
     name: Publish R2 assets and GitHub Release
-    needs: [cli, desktop]
+    needs: [cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -188,12 +137,21 @@ jobs:
           # self-update can look up "lawlint-<target>.<ext>" directly.
           ( cd release-assets && sha256sum lawlint-* > SHA256SUMS )
           printf '%s' "$version" > release-assets/VERSION
-          for file in release-assets/*; do
-            [ -f "$file" ] || continue
+          upload_asset() {
+            file="$1"
+            [ -f "$file" ] || return 0
             name="$(basename "$file")"
             aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/releases/v${version}/${name}" --endpoint-url "$endpoint"
             aws s3 cp "$file" "s3://${R2_BUCKET}/downloads/latest/${name}" --cache-control "no-cache" --endpoint-url "$endpoint"
+          }
+          # Publish archives before the latest VERSION pointer. Installers read
+          # that pointer and then use the immutable versioned prefix, so a
+          # release is visible only after its complete artifact set is present.
+          for file in release-assets/lawlint-*; do
+            upload_asset "$file"
           done
+          upload_asset release-assets/SHA256SUMS
+          upload_asset release-assets/VERSION
       - name: Write release notes
         env:
           VERSION_INPUT: ${{ inputs.version }}
@@ -213,13 +171,6 @@ jobs:
               name="$(basename "$file")"
               echo "- [$name](${base}/releases/v${version}/${name})"
             done
-            echo
-            echo "## Desktop"
-            for file in release-assets/lawlint-desktop-*; do
-              [ -f "$file" ] || continue
-              name="$(basename "$file")"
-              echo "- [$name](${base}/releases/v${version}/${name})"
-            done
           } > release-notes.md
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -234,3 +185,12 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
+
+  # This covers tag pushes, manual releases, and release-please's reusable
+  # invocation. It runs only after the immutable artifacts and latest pointer
+  # have been uploaded, so the website's pinned links cannot lead the release.
+  deploy-site:
+    name: Deploy website after release
+    needs: publish
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

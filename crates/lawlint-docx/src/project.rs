@@ -13,6 +13,7 @@
 //! - Every `</w:p>` appends a `\n\n` paragraph separator, so blank-line block
 //!   segmentation in the core engine sees paragraph boundaries.
 
+use quick_xml::escape::{resolve_predefined_entity, unescape};
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use quick_xml::Reader;
@@ -88,10 +89,31 @@ pub fn project(document_xml: &str) -> Result<Projection, DocxError> {
             },
             Ok(Event::Text(e)) => {
                 if in_t {
-                    let unescaped = e
-                        .unescape()
+                    let decoded = e
+                        .decode()
                         .map_err(|err| DocxError::Malformed(err.to_string()))?;
+                    let unescaped =
+                        unescape(&decoded).map_err(|err| DocxError::Malformed(err.to_string()))?;
                     text.push_str(&unescaped);
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                if in_t {
+                    let name = e
+                        .decode()
+                        .map_err(|err| DocxError::Malformed(err.to_string()))?;
+                    if let Some(ch) = e
+                        .resolve_char_ref()
+                        .map_err(|err| DocxError::Malformed(err.to_string()))?
+                    {
+                        text.push(ch);
+                    } else if let Some(value) = resolve_predefined_entity(&name) {
+                        text.push_str(value);
+                    } else {
+                        return Err(DocxError::Malformed(format!(
+                            "unsupported XML entity &{name};"
+                        )));
+                    }
                 }
             }
             Ok(Event::CData(e)) => {

@@ -53,6 +53,10 @@ export default defineConfig({
   seo: {
     og: {
       enabled: true,
+      // Keep OG cards on Takumi's built-in font. Its Linux renderer rejects
+      // the spaced family token derived from Source Serif 4, while the site
+      // itself continues to use the configured theme fonts.
+      fonts: [],
       // Custom-page OG cards only; docs pages take their card title from the
       // page itself. `/download` and `/changelog` are redirect stubs now.
       titles: {

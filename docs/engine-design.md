@@ -17,7 +17,9 @@ disagree, the skeleton files in the repo are the source of truth.
 
 ## 1. Workspace
 
-Existing: `crates/lawlint-core`, `crates/lawlint-cli`, `crates/lawlint-wasm`, `apps/desktop/src-tauri`.
+Existing: `crates/lawlint-core`, `crates/lawlint-cli`, and `crates/lawlint-wasm`.
+The Tauri prototype in `apps/desktop/src-tauri` is archived and is not part of
+the active build or release graph.
 New (phase 2): `crates/lawlint-judge`.
 
 Workspace deps to add to root `Cargo.toml`: `serde_yaml = "0.9"`, `thiserror = "2"`, `strsim = "0.11"`, `sha2 = "0.10"`, `include_dir = "0.7"`, `pulldown-cmark = { version = "0.12", default-features = false }`. Core also gains runtime `serde_json` (judge JSON parsing).
@@ -383,7 +385,7 @@ pub struct LintOptions {
     pub severity: Option<HashMap<String, Severity>>,
     pub thresholds: Option<HashMap<String, f64>>,
     pub markdown: Option<bool>,
-    pub rule_dirs: Option<Vec<String>>,   // consumed by CLI/desktop, ignored by core lint()
+    pub rule_dirs: Option<Vec<String>>,   // consumed by CLI (archived desktop prototype), ignored by core lint()
     pub judge: Option<JudgeOptions>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -489,7 +491,8 @@ Disk cache (`~/.cache/lawlint/judge/`) implementing `JudgeCache` lives here or i
 
 - **CLI**: new API; config `.lawlint/config.json` (or legacy `lawlint.config.json`; walk-up discovery, `.lawlint` wins with a warning when both exist in one directory, `ruleDirs` relative to the project root either way) → `LintOptions` (+ `ruleDirs`); flags `--rules/--disable/--markdown/--format/--max-warnings/--quiet` as today, plus `--judge`, `--fix`, `rules` (list, `--json`), **`rules test <file-or-dir>`** — runs each Markdown rule's own examples (`patterns` vs `examples.bad/good`; inferential: flag/pass via judge or `--offline` skip) and reports pass/fail per example. Exit codes: 1 findings-over-limit, 2 I/O or config error.
 - **WASM**: `lint(text, options)`, `builtInRulesMeta()` (now `RuleSet::metas()`), `loadRules(markdownFiles)` for playground-authored rules. Tier-3 **inference** is a host concern in the browser: wasm exports the host-driven pair `planJudge(text, options, extraRules?) -> JudgeRequest[]` and `applyJudgeFindings(text, options, requests, findingsPerRequest, extraRules?) -> LintResult` (grounding, hallucination counters, confidence floor, Warning cap all enforced inside wasm — the core invariant holds in-browser). The JS host runs inference however it likes (transformers.js/WebLLM on WebGPU, or cloud). In-process candle-wasm is a possible later addition, not the browser default.
-- **Desktop**: keep compiling against new `lint`.
+- **Desktop**: archived Tauri prototype; reintroduce only as a separately
+  hardened product with its own dependency, signing, and runtime-test gates.
 
 ### CLI `init` (added post-v0.3.0)
 

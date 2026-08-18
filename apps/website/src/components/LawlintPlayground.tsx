@@ -103,20 +103,29 @@ async function writeClipboard(content: string) {
       await navigator.clipboard.writeText(content);
       return true;
     } catch {
-      // Fall through to the execCommand path below.
+      // Fall through to the legacy path for restricted clipboard permissions.
     }
   }
 
-  const fallback = document.createElement("textarea");
-  fallback.value = content;
-  fallback.style.position = "fixed";
-  fallback.style.opacity = "0";
-  document.body.appendChild(fallback);
-  fallback.select();
+  const textarea = document.createElement("textarea");
+  textarea.value = content;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+
   try {
-    return document.execCommand("copy");
+    // Keep the legacy fallback for non-secure/restricted contexts. The DOM
+    // declaration is deprecated, but the API remains the compatibility path.
+    const execCommand = (document as unknown as { execCommand(command: string): boolean })
+      .execCommand;
+    return execCommand.call(document, "copy");
+  } catch {
+    return false;
   } finally {
-    fallback.remove();
+    textarea.remove();
   }
 }
 

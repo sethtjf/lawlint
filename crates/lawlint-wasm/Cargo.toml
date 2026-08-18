@@ -3,6 +3,8 @@ name = "lawlint-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "WebAssembly bindings for the lawlint linting engine"
+repository = "https://github.com/sethtjf/lawlint"
 
 [lib]
 # rlib so native unit tests (`cargo test -p lawlint-wasm`) can link the crate.
