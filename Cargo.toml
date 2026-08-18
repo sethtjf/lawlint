@@ -13,7 +13,7 @@ exclude = ["apps/desktop/src-tauri"]
 [workspace.package]
 edition = "2021"
 license = "MIT"
-version = "0.10.0" # x-release-please-version
+version = "0.11.0" # x-release-please-version
 
 [workspace.dependencies]
 regex = "1.11"
