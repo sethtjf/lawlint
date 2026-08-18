@@ -9,7 +9,7 @@
     "build": "bun run prepare:content && blume build",
     "preview": "blume preview",
     "check": "blume check",
-    "validate": "blume validate",
+    "validate": "bun run prepare:content && blume validate",
     "doctor": "blume doctor"
   },
   "dependencies": {
