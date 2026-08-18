@@ -16,6 +16,7 @@ $installDir = if ($env:LAWLINT_INSTALL_DIR) { $env:LAWLINT_INSTALL_DIR } else { 
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 try {
   Write-Host "Downloading lawlint for Windows x64..."
+  # VERSION is an unsigned pointer; the selected release prefix is immutable.
   Invoke-WebRequest -Uri "$DownloadBaseUrl/latest/VERSION" -OutFile $versionPath
   $version = (Get-Content -Raw -Path $versionPath).Trim()
   if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {

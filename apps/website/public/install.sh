@@ -18,6 +18,7 @@ tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t lawlint)"
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 echo "Downloading lawlint for $target..."
+# VERSION is an unsigned pointer; the selected release prefix is immutable.
 curl --fail --location --silent --show-error \
   "$DOWNLOAD_BASE_URL/latest/VERSION" --output "$tmp_dir/VERSION"
 version="$(tr -d '\r\n' < "$tmp_dir/VERSION")"
