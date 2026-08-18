@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: deploy-website
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -43,7 +48,7 @@ jobs:
           version="$(curl --fail --location --silent --show-error \
             https://assets.lawlint.com/downloads/latest/VERSION | tr -d '\r\n')"
           case "$version" in
-            ""|*[!A-Za-z0-9._+-]*)
+            ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._+-]*|*..*)
               echo "::error::Published download version is invalid."
               exit 1
               ;;

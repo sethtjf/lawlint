@@ -19,7 +19,7 @@ try {
   # VERSION is an unsigned pointer; the selected release prefix is immutable.
   Invoke-WebRequest -Uri "$DownloadBaseUrl/latest/VERSION" -OutFile $versionPath
   $version = (Get-Content -Raw -Path $versionPath).Trim()
-  if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
+  if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._+-]*$') {
     throw "The published lawlint version is invalid."
   }
   $releaseBase = "$DownloadBaseUrl/releases/v$version"

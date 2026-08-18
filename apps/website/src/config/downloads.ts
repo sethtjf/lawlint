@@ -16,7 +16,7 @@ const cargoVersion = cargoTomlPath
   : undefined;
 export const DOWNLOAD_VERSION = import.meta.env.PUBLIC_DOWNLOAD_VERSION || cargoVersion;
 
-if (!DOWNLOAD_VERSION || !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(DOWNLOAD_VERSION)) {
+if (!DOWNLOAD_VERSION || !/^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(DOWNLOAD_VERSION)) {
   throw new Error("Could not determine a valid lawlint download version.");
 }
 

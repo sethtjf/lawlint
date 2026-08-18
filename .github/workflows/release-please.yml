@@ -126,3 +126,13 @@ jobs:
       version: ${{ needs.release-please.outputs.version }}
       ref: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
+
+  # The main push also starts deploy.yml, but that deployment can race the
+  # artifact upload and pin the site to the previous release. Re-run it after
+  # publish completes so the direct-download links resolve to this release.
+  deploy-site:
+    name: Deploy website after release
+    needs: [release-please, publish]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

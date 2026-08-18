@@ -23,7 +23,7 @@ curl --fail --location --silent --show-error \
   "$DOWNLOAD_BASE_URL/latest/VERSION" --output "$tmp_dir/VERSION"
 version="$(tr -d '\r\n' < "$tmp_dir/VERSION")"
 case "$version" in
-  ""|*[!A-Za-z0-9._+-]*)
+  ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._+-]*|*..*)
     echo "The published lawlint version is invalid." >&2
     exit 1
     ;;
