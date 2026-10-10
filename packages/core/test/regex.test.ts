@@ -103,11 +103,17 @@ describe("translation semantics", () => {
     expect(() => compileRustRegex("(?i:a)b")).toThrow(InvalidRegexError);
     expect(() => compileRustRegex(String.raw`[^\D]`)).toThrow(InvalidRegexError);
   });
-  test("mid-pattern flag-sets apply globally (Rust scopes them to the group)", () => {
-    // Rust accepts a bare (?i) mid-pattern; leading-rule needles carry them.
-    const re = compileRustRegex("a(?i)b");
-    expect(re.test("AB")).toBe(true);
+  test("mid-pattern flag-sets only when every flag is already active", () => {
+    // Redundant (?i) inside an (?i)-flagged pattern is fine — the
+    // `(?i)^(?:(?i)needle)` wrap leading-rule validation produces.
+    const re = compileRustRegex(String.raw`(?i)^(?:x(?i)y)`);
+    expect(re.test("XY")).toBe(true);
+    // A flag that is not already active would silently widen the match.
+    expect(() => compileRustRegex("foo(?i)bar")).toThrow(
+      "mid-pattern flag changes are not supported",
+    );
     expect(() => compileRustRegex("a(?-i)b")).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex("a(?s)b")).toThrow("mid-pattern flag changes are not supported");
   });
   test("leading flag group at position zero only", () => {
     const re = compileRustRegex(String.raw`(?im)^a+$`);
@@ -149,6 +155,8 @@ describe("translation semantics", () => {
   test("(?x) verbose mode throws", () => {
     expect(() => compileRustRegex("(?x)a b")).toThrow(InvalidRegexError);
     expect(() => compileRustRegex("(?ix)a b")).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex("a(?x)b")).toThrow("verbose mode is not supported");
+    expect(() => compileRustRegex("a(?x:b)")).toThrow(InvalidRegexError);
   });
   test("nested classes and set operations throw", () => {
     expect(() => compileRustRegex(String.raw`[[a]]`)).toThrow(InvalidRegexError);
