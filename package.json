@@ -15,7 +15,7 @@
     "dev": "bun run --cwd apps/website dev",
     "check:commits": "bun run scripts/check-commit-messages.mjs",
     "lint": "bunx biome check apps/website packages/core",
-    "typecheck": "bun run wasm:build && bunx tsc --noEmit -p apps/website/tsconfig.json && bunx tsc --noEmit -p packages/core/tsconfig.json",
+    "typecheck": "bunx tsc --noEmit -p apps/website/tsconfig.json && bunx tsc --noEmit -p packages/core/tsconfig.json",
     "test:ts": "bun test --cwd packages/core",
     "test": "cargo test --workspace"
   },

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prepare:content": "bun run --cwd ../../ wasm:build && bun run scripts/generate-rule-docs.ts && bun run scripts/generate-changelog.ts",
+    "prepare:content": "bun run scripts/generate-rule-docs.ts && bun run scripts/generate-changelog.ts",
     "dev": "bun run prepare:content && blume dev",
     "build": "bun run prepare:content && blume build",
     "preview": "blume preview",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@astrojs/mdx": "^7.0.5",
+    "@lawlint/core": "workspace:*",
     "@astrojs/react": "^6.0.2",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.2",
