@@ -477,7 +477,7 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
     fixtures.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, text) in &fixtures {
         let id = format!("fixture-{name}");
-        let md = name == "markdown.md";
+        let md = name.ends_with(".md");
         add_four(
             &mut files,
             &id,
@@ -554,7 +554,7 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
         if md {
             add_four(
                 &mut files,
-                "fixture-markdown.md-markdown-false",
+                &format!("fixture-{name}-markdown-false"),
                 source_obj("fixture", &format!("text/{name}")),
                 text,
                 serde_json::json!({"markdown":false}),
