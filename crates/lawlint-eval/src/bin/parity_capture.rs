@@ -419,6 +419,24 @@ fn docx_surface(
             &text,
             serde_json::json!({"extract": text, "applied": revised.applied, "annotated": revised.annotated, "skipped": revised.skipped, "sha256": hash, "outputFile": format!("golden/docx/{id}.docx")}),
         );
+
+        // End-to-end variant: real diagnostics from the default lint run.
+        let linted = lawlint_core::lint(&text, &LintOptions::default());
+        let revised =
+            lawlint_docx::apply_tracked_changes(&bytes, &linted.diagnostics, &options).unwrap();
+        outputs.insert(
+            PathBuf::from(format!("parity/golden/docx/{id}-linted.docx")),
+            revised.bytes.clone(),
+        );
+        add(
+            files,
+            "docx",
+            format!("docx-{id}-linted"),
+            source_obj("fixture", &fixture_path),
+            serde_json::json!({"author":"lawlint parity","date":"2020-01-02T03:04:05Z","includeAiRewrites":true,"annotateFindings":true,"diagnostics":"lint-default"}),
+            &text,
+            serde_json::json!({"diagnosticCount": linted.diagnostics.len(), "applied": revised.applied, "annotated": revised.annotated, "skipped": revised.skipped, "sha256": format!("{:x}", Sha256::digest(&revised.bytes)), "outputFile": format!("golden/docx/{id}-linted.docx")}),
+        );
     }
 }
 
@@ -472,7 +490,7 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
         for (suffix, options) in [
             (
                 "enable",
-                serde_json::json!({"enable":["no-ai-cliches"],"markdown":md}),
+                serde_json::json!({"enable":["core/no-ai-cliches"],"markdown":md}),
             ),
             (
                 "disable",
@@ -548,7 +566,10 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
     for (n, sample) in samples.iter().take(10).enumerate() {
         let id = format!("options-corpus-{:02}-{}", n + 1, sample.id);
         for (suffix, options) in [
-            ("enable", serde_json::json!({"enable":["no-ai-cliches"]})),
+            (
+                "enable",
+                serde_json::json!({"enable":["core/no-ai-cliches"]}),
+            ),
             ("disable", serde_json::json!({"disable":["no-ai-cliches"]})),
             (
                 "severity",
@@ -624,14 +645,29 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
             let fragment = rule_instances
                 .iter()
                 .find_map(|rule| rule.rubric().cloned());
-            let mut examples: Vec<(String, String)> = meta
+            // (label, group, kind, index, text): `example` labels come from
+            // metadata bad/good pairs, `rubric` labels from the inferential
+            // flag/pass lists — the groups must not share id space.
+            let mut examples: Vec<(String, &'static str, &'static str, usize, String)> = meta
                 .examples
                 .iter()
                 .enumerate()
                 .flat_map(|(i, ex)| {
                     vec![
-                        (format!("flag-{i}"), ex.bad.clone()),
-                        (format!("pass-{i}"), ex.good.clone()),
+                        (
+                            format!("example-flag-{i}"),
+                            "example",
+                            "flag",
+                            i,
+                            ex.bad.clone(),
+                        ),
+                        (
+                            format!("example-pass-{i}"),
+                            "example",
+                            "pass",
+                            i,
+                            ex.good.clone(),
+                        ),
                     ]
                 })
                 .collect();
@@ -640,22 +676,22 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
                     f.flag_examples
                         .iter()
                         .enumerate()
-                        .map(|(i, s)| (format!("flag-{i}"), s.clone())),
+                        .map(|(i, s)| (format!("rubric-flag-{i}"), "rubric", "flag", i, s.clone())),
                 );
                 examples.extend(
                     f.pass_examples
                         .iter()
                         .enumerate()
-                        .map(|(i, s)| (format!("pass-{i}"), s.clone())),
+                        .map(|(i, s)| (format!("rubric-pass-{i}"), "rubric", "pass", i, s.clone())),
                 );
             }
-            for (example, text) in examples {
+            for (label, group, kind, index, text) in examples {
                 let options_value = serde_json::json!({"enable":[meta.id.0]});
                 let id = format!(
-                    "rule-{package}-{}-{example}",
+                    "rule-{package}-{}-{label}",
                     meta.id.0.split('/').next_back().unwrap()
                 );
-                let source = serde_json::json!({"rule":meta.id.0,"example":example.split('-').next().unwrap(),"index":example.split('-').next_back().unwrap().parse::<usize>().unwrap()});
+                let source = serde_json::json!({"rule":meta.id.0,"example":kind,"index":index,"group":group});
                 add_four(
                     &mut files,
                     &id,
@@ -693,10 +729,13 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
     for entry in fs::read_dir(&invalid_dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let result = lawlint_core::loader::parse_rule_file(&path)
+        // Parse with the repo-relative name so error messages stay
+        // checkout-independent — parse_rule_file would embed the absolute path.
+        let relative = format!("parity/fixtures/invalid-rules/{name}");
+        let text = fs::read_to_string(&path).unwrap();
+        let result = lawlint_core::loader::parse_rule(&relative, &text)
             .map(|_| Value::Null)
             .unwrap_or_else(|err| serde_json::json!({"error":err.to_string()}));
-        let text = fs::read_to_string(&path).unwrap();
         add(
             &mut files,
             "loader_errors",
@@ -740,6 +779,10 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
     let mut counts = BTreeMap::new();
     for (file, mut cases) in files {
         cases.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut seen = HashSet::new();
+        for (id, _) in &cases {
+            assert!(seen.insert(id.clone()), "duplicate case id {id} in {file}");
+        }
         counts.insert(file.trim_end_matches(".jsonl").to_string(), cases.len());
         let contents = cases
             .into_iter()
@@ -836,30 +879,33 @@ fn main() {
             fs::write(&path, bytes).expect("write golden JSONL");
         }
     }
-    if check {
-        // Any golden file on disk the generator no longer produces is stale.
-        let golden_dir = root.join("parity/golden");
-        let mut on_disk: Vec<PathBuf> = Vec::new();
-        if let Ok(entries) = fs::read_dir(&golden_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    for nested in fs::read_dir(&path).into_iter().flatten().flatten() {
-                        on_disk.push(nested.path());
-                    }
-                } else {
-                    on_disk.push(path);
+    // Any golden file on disk the generator no longer produces is stale:
+    // report it in check mode, delete it when writing.
+    let golden_dir = root.join("parity/golden");
+    let mut on_disk: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&golden_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                for nested in fs::read_dir(&path).into_iter().flatten().flatten() {
+                    on_disk.push(nested.path());
                 }
+            } else {
+                on_disk.push(path);
             }
         }
-        for path in on_disk {
-            let relative = path
-                .strip_prefix(&root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            if !expected.contains_key(relative.as_str()) {
+    }
+    for path in on_disk {
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        if !expected.contains_key(relative.as_str()) {
+            if check {
                 differences.push(format!("{}: stale golden not generated", path.display()));
+            } else {
+                fs::remove_file(&path).expect("remove stale golden");
             }
         }
     }
