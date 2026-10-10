@@ -101,8 +101,13 @@ describe("translation semantics", () => {
     expect(() => compileRustRegex("a(?!b)")).toThrow(InvalidRegexError);
     expect(() => compileRustRegex("(a)\\1")).toThrow(InvalidRegexError);
     expect(() => compileRustRegex("(?i:a)b")).toThrow(InvalidRegexError);
-    expect(() => compileRustRegex("a(?i)b")).toThrow(InvalidRegexError);
     expect(() => compileRustRegex(String.raw`[^\D]`)).toThrow(InvalidRegexError);
+  });
+  test("mid-pattern flag-sets apply globally (Rust scopes them to the group)", () => {
+    // Rust accepts a bare (?i) mid-pattern; leading-rule needles carry them.
+    const re = compileRustRegex("a(?i)b");
+    expect(re.test("AB")).toBe(true);
+    expect(() => compileRustRegex("a(?-i)b")).toThrow(InvalidRegexError);
   });
   test("leading flag group at position zero only", () => {
     const re = compileRustRegex(String.raw`(?im)^a+$`);

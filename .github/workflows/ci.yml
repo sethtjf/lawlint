@@ -60,6 +60,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
+      - run: bun run --cwd packages/core gen:builtin --check
+      - run: bun run test:ts
       - run: bun run --cwd apps/website check
       - run: bun run --cwd apps/website validate
       - run: bun run build

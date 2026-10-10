@@ -207,6 +207,22 @@ export function translateRustRegex(pattern: string): { source: string; flags: st
         i = nameEnd + 1;
         continue;
       }
+      // Bare mid-pattern flag-set `(?flags)` — Rust applies it to the rest
+      // of the enclosing group; we approximate by applying it globally.
+      const flagSet = body.slice(i).match(/^\(\?([imsu]+)\)/);
+      if (flagSet) {
+        for (const f of flagSet[1]) {
+          if (f === "i") flags.i = true;
+          else if (f === "m") flags.m = true;
+          else if (f === "s") flags.s = true;
+          else if (f === "u") {
+            // Rust default; already emulated.
+          }
+        }
+        i += flagSet[0].length;
+        continue;
+      }
+      if (body[i] === "?x") fail("verbose mode is not supported");
       fail("unsupported group syntax");
     }
 
