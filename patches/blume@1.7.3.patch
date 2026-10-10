@@ -1,0 +1,20 @@
+diff --git a/src/search/orama-index.ts b/src/search/orama-index.ts
+index 4b303ecd0bfa3697b8c905e849ad34d31a0bfdf7..309978c3249005a024e9621d8fa67e4ae85e1e55 100644
+--- a/src/search/orama-index.ts
++++ b/src/search/orama-index.ts
+@@ -100,8 +100,13 @@ const parseLocale = (tag: string): Intl.Locale | undefined => {
+  * salvage; a well-formed tag ICU knows nothing about keeps an `undefined`
+  * script instead.
+  */
+-const resolveLocale = (tag: string): Intl.Locale | undefined =>
+-  parseLocale(tag)?.maximize();
++const resolveLocale = (tag: string): Intl.Locale | undefined => {
++  try {
++    return parseLocale(tag)?.maximize();
++  } catch {
++    return undefined;
++  }
++};
+ 
+ /**
+  * Indexes whose language maximizes to one of these scripts are built as
