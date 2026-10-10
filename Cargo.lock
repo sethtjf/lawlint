@@ -1266,7 +1266,6 @@ name = "lawlint-eval"
 version = "0.11.0"
 dependencies = [
  "clap",
- "flate2",
  "lawlint-core",
  "lawlint-docx",
  "lawlint-judge",

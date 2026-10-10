@@ -1,7 +1,17 @@
 # Rust parity goldens
 
-The JSONL files freeze parse ranges and tokens, lint results, applied fixes, remediation prompts, judge planning and grounding, rule metadata, loader errors, and DOCX extraction/revisions. Each case stores its input text so the snapshot remains usable after Rust and its corpus loader are removed.
+These files record what the Rust engine does today. The TypeScript port must reproduce them.
 
-Regenerate with `cargo run -p lawlint-eval --bin parity_capture`. Verify with `cargo run -p lawlint-eval --bin parity_capture -- --check`.
+- `inputs.jsonl`: every input text, keyed by sha256. Other files point at these through `inputId`.
+- `parse.jsonl`: block kinds and ranges, sentence ranges and citation flags. Tokens are not recorded.
+- `lint.jsonl`: full lint results. Plain corpus cases leave out `excerpt`.
+- `fix.jsonl`: text after `apply_fixes`. Corpus cases store only a hash and a `changed` flag.
+- `prompt.jsonl`: remediation prompts. In full for the fixtures and the first 25 corpus samples, as a hash and length for the rest.
+- `judge_plan.jsonl`, `judge_ground.jsonl`: judge requests, plus how findings are grounded or dropped.
+- `rules_meta.jsonl`, `loader_errors.jsonl`: rule metadata and rule loader errors.
+- `docx.jsonl`, `docx/`: extracted text and tracked-change output for each fixture in `fixtures/docx/` plus the crate's `tests/fixtures/sample.docx`.
 
-Any intended Rust behavior change must regenerate the affected goldens in the same PR.
+Regenerate: `cargo run --release -p lawlint-eval --bin parity_capture`
+Check: `cargo run --release -p lawlint-eval --bin parity_capture -- --check`
+
+If a PR changes Rust behavior on purpose, regenerate the goldens in that same PR.

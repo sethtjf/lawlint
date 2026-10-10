@@ -7,12 +7,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-
-use flate2::read::GzDecoder;
-use flate2::{Compression, GzBuilder};
 use std::time::Instant;
 
 fn canonical(value: Value) -> Value {
@@ -767,28 +763,14 @@ fn generate(root: &Path) -> (BTreeMap<String, Vec<u8>>, BTreeMap<String, usize>)
         input_lines.into_bytes(),
     );
     drop(inputs);
-    let uncompressed_size: usize = output.values().map(Vec::len).sum();
-    let compressed = uncompressed_size > 15 * 1024 * 1024;
-    if compressed {
-        for surface in ["parse", "lint"] {
-            let path = format!("parity/golden/{surface}.jsonl");
-            let contents = output.remove(&path).expect("surface golden exists");
-            let mut encoder = GzBuilder::new()
-                .mtime(0)
-                .write(Vec::new(), Compression::default());
-            encoder.write_all(&contents).expect("compress golden");
-            output.insert(format!("{path}.gz"), encoder.finish().expect("finish gzip"));
-        }
-    }
     let json_size: usize = output.values().map(Vec::len).sum();
     let docx_size: usize = binary_files.values().map(Vec::len).sum();
     println!(
-        "Captured {} corpus samples, {} surfaces, {:.1}s; golden bytes: JSONL={}{} docx={} total={}",
+        "Captured {} corpus samples, {} surfaces, {:.1}s; golden bytes: JSONL={} docx={} total={}",
         samples.len(),
         counts.len(),
         started.elapsed().as_secs_f64(),
         json_size,
-        if compressed { " (parse/lint gzip)" } else { "" },
         docx_size,
         json_size + docx_size
     );
@@ -843,20 +825,6 @@ fn main() {
         let path = root.join(relative);
         if check {
             match fs::read(&path) {
-                Ok(existing) if relative.ends_with(".gz") => {
-                    let mut existing_decoded = Vec::new();
-                    let mut expected_decoded = Vec::new();
-                    let old_result =
-                        GzDecoder::new(existing.as_slice()).read_to_end(&mut existing_decoded);
-                    let new_result =
-                        GzDecoder::new(bytes.as_slice()).read_to_end(&mut expected_decoded);
-                    if old_result.is_err()
-                        || new_result.is_err()
-                        || existing_decoded != expected_decoded
-                    {
-                        differences.extend(check_diff(&path, &existing_decoded, &expected_decoded));
-                    }
-                }
                 Ok(existing) if existing == *bytes => {}
                 Ok(existing) => differences.extend(check_diff(&path, &existing, bytes)),
                 Err(_) => differences.push(format!("{}: missing", path.display())),
@@ -866,18 +834,6 @@ fn main() {
         } else {
             fs::create_dir_all(path.parent().unwrap()).expect("create golden dir");
             fs::write(&path, bytes).expect("write golden JSONL");
-            if relative.ends_with(".jsonl.gz") {
-                let old_path = path.with_extension("");
-                if old_path.exists() {
-                    fs::remove_file(old_path).expect("remove obsolete uncompressed golden");
-                }
-            }
-            if relative.ends_with(".jsonl") {
-                let old_gz = PathBuf::from(format!("{}.gz", path.display()));
-                if old_gz.exists() {
-                    fs::remove_file(old_gz).expect("remove obsolete gzip golden");
-                }
-            }
         }
     }
     if check {
