@@ -3,7 +3,7 @@
 import type { Block, Document } from "../document";
 import { LoadError } from "../error";
 import type { RuleDef } from "../loader";
-import { compileRustRegex } from "../regex";
+import { compileRustRegex, rustFindIter } from "../regex";
 import type { Ctx, Interests, Rule, RuleMeta } from "../rule";
 import type { TextRange } from "../types";
 import { utf8Len } from "../utf8";
@@ -56,47 +56,20 @@ export class DensityEngine implements Rule {
 
   checkBlock(b: Block, ctx: Ctx): void {
     const text = ctx.slice(b.range);
-    const g = new RegExp(
-      this.re.source,
-      this.re.flags.includes("g") ? this.re.flags : `${this.re.flags}g`,
-    );
-    let m = g.exec(text);
-    while (m !== null) {
+    // The `d` flag sets `m.indices` so capture-group spans are exact rather
+    // than located by searching the match for the group's text.
+    const g = new RegExp(this.re.source, `${this.re.flags.replace("d", "")}d`);
+    for (const m of rustFindIter(g, text)) {
       this.count += 1;
       if (this.firstSpan === undefined) {
-        const group = m[1] !== undefined ? { s: m.index + m[0].indexOf(m[1]), e: 0 } : undefined;
-        // Capture group 1 marks the reportable part; find its offset inside m[0].
-        let startU16 = m.index;
-        let endU16 = m.index + m[0].length;
-        if (m[1] !== undefined) {
-          const idx = m.indices?.[1];
-          if (idx) {
-            startU16 = idx[0];
-            endU16 = idx[1];
-          } else {
-            const inner = m[0].indexOf(m[1]);
-            startU16 = m.index + inner;
-            endU16 = startU16 + m[1].length;
-          }
-        }
-        const prefixBytes = utf8Len(text.slice(0, startU16));
-        const start = b.range.start + prefixBytes;
-        const end = Math.max(
-          b.range.start +
-            prefixBytes +
-            utf8Len(
-              m.indices?.[1]
-                ? text.slice(m.indices[1][0], m.indices[1][1])
-                : m[1] !== undefined
-                  ? m[1]
-                  : m[0],
-            ),
-          start + 1,
-        );
+        // Capture group 1 marks the reportable part when the rule sets one.
+        const idx = m.indices?.[1];
+        const startU16 = idx?.[0] ?? m.index;
+        const endU16 = idx?.[1] ?? m.index + m[0].length;
+        const start = b.range.start + utf8Len(text.slice(0, startU16));
+        const end = Math.max(b.range.start + utf8Len(text.slice(0, endU16)), start + 1);
         this.firstSpan = { start, end };
       }
-      if (m[0].length === 0) g.lastIndex = m.index + 1;
-      m = g.exec(text);
     }
   }
 

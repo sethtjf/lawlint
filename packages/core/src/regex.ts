@@ -306,3 +306,35 @@ export function compileRustRegex(pattern: string, extraFlags = ""): RegExp {
     throw new InvalidRegexError(pattern, msg);
   }
 }
+
+/**
+ * Iterate matches of `re` over `text` with Rust `find_iter` semantics.
+ * A manual `exec` loop diverges on empty matches: JS does not advance
+ * `lastIndex`, so the loop either stalls or reports an empty match that
+ * Rust skips. Rust's rules, reproduced here:
+ *  - after an empty match, the next search starts one code point later;
+ *  - an empty match that starts exactly where the previous match ended is
+ *    not reported (Rust regex >= 1.9).
+ * A `g` flag is added to `re` if it is not already global.
+ */
+export function* rustFindIter(re: RegExp, text: string): Generator<RegExpExecArray> {
+  const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+  let prevEnd = -1;
+  let m = g.exec(text);
+  while (m !== null) {
+    if (m[0].length === 0) {
+      if (m.index !== prevEnd) {
+        yield m;
+        prevEnd = m.index;
+      }
+      // Advance by a full code point; the `u` flag only makes exec not split
+      // surrogate pairs when searching — it does not advance past them here.
+      const cp = text.codePointAt(m.index) ?? 0;
+      g.lastIndex = m.index + (cp > 0xffff ? 2 : 1);
+    } else {
+      yield m;
+      prevEnd = m.index + m[0].length;
+    }
+    m = g.exec(text);
+  }
+}

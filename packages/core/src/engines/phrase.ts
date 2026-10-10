@@ -3,7 +3,7 @@
 import type { Block } from "../document";
 import { LoadError } from "../error";
 import { type RuleDef, scanCaptureRefs, validateFixCaptureRefs } from "../loader";
-import { compileRustRegex } from "../regex";
+import { compileRustRegex, rustFindIter } from "../regex";
 import type { Ctx, Interests, Report, Rule, RuleMeta } from "../rule";
 import { Src, isAlphabetic, isUppercase, utf8Len } from "../utf8";
 
@@ -23,21 +23,15 @@ function* matches(
   re: RegExp,
   text: string,
 ): Generator<{ start: number; end: number; m: RegExpExecArray }> {
-  const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
-  let m = g.exec(text);
   let prefixBytes = 0;
   let prefixU16 = 0;
-  while (m !== null) {
+  for (const m of rustFindIter(re, text)) {
     // Convert match UTF-16 index to bytes relative to text.
     const byteStart = prefixBytes + utf8Len(text.slice(prefixU16, m.index));
     const byteEnd = byteStart + utf8Len(m[0]);
     yield { start: byteStart, end: byteEnd, m };
-    if (m.index === g.lastIndex) break; // zero-width guard
-    // Advance prefix bookkeeping lazily: recompute from match end next loop.
     prefixBytes = byteEnd;
     prefixU16 = m.index + m[0].length;
-    if (m[0].length === 0) g.lastIndex = m.index + 1;
-    m = g.exec(text);
   }
 }
 

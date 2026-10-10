@@ -9,7 +9,7 @@ import {
   metricAlternatives,
   metricFromString,
 } from "../loader";
-import { compileRustRegex } from "../regex";
+import { compileRustRegex, rustFindIter } from "../regex";
 import type { Ctx, Interests, Rule, RuleMeta } from "../rule";
 import type { Src } from "../utf8";
 
@@ -83,9 +83,8 @@ export function metricValue(metric: MetricName, src: Src, doc: Document): number
       const re = metric === "triad-density" ? TRIAD_RE : PAIR_RE;
       let count = 0;
       for (const s of sentences) {
-        re.lastIndex = 0;
         const slice = src.slice(s.range.start, s.range.end);
-        while (re.exec(slice) !== null) count += 1;
+        for (const _ of rustFindIter(re, slice)) count += 1;
       }
       return (count / words) * 1000;
     }
