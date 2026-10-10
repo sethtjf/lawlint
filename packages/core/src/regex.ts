@@ -33,7 +33,10 @@ function leadingFlags(pattern: string): { flags: Flags; body: string } {
         if (ch === "i") flags.i = true;
         else if (ch === "m") flags.m = true;
         else if (ch === "s") flags.s = true;
-        // (?u) is the Rust default; (?x) is unused in the rules
+        else if (ch === "x") {
+          throw new InvalidRegexError(pattern, "verbose mode is not supported");
+        }
+        // (?u) is the Rust default
       }
       rest = rest.slice(flagsGroup[0].length);
       continue;
@@ -141,20 +144,38 @@ export function translateRustRegex(pattern: string): { source: string; flags: st
           }
           break;
         }
+        case "a":
+          out.push("\\x07");
+          break;
+        case "x":
+          // Rust \x{...} is JS \u{...}; \xHH passes through.
+          if (body[i] === "{") {
+            const end = body.indexOf("}", i);
+            if (end === -1) fail("unterminated \\x{...}");
+            out.push(`\\u${body.slice(i, end + 1)}`);
+            i = end + 1;
+          } else {
+            out.push("\\x");
+          }
+          break;
         case "n":
         case "r":
         case "t":
         case "f":
         case "v":
-        case "a":
-        case "x":
         case "u":
           out.push(`\\${next}`);
           break;
         default:
           if (/[0-9]/.test(next)) fail("backreferences are not supported");
           if (/[A-Za-z]/.test(next)) fail(`unsupported escape \\${next}`);
-          out.push(`\\${next}`);
+          // Rust accepts \ before any non-alphanumeric char; JS u-mode only
+          // allows identity escapes for its syntax characters.
+          if (/^[\\^$.*+?(){}\[\]|/]$/.test(next) || (next === "-" && inClass)) {
+            out.push(`\\${next}`);
+          } else {
+            out.push(next);
+          }
           break;
       }
       continue;
@@ -174,7 +195,18 @@ export function translateRustRegex(pattern: string): { source: string; flags: st
       ) {
         fail("lookaround is not supported");
       }
-      if (after === "<" || after === "P") fail("named groups are not supported");
+      // Rust named groups (?P<name>...) and (?<name>...) → JS (?<name>...).
+      if (after === "<" || (after === "P" && body[i + 3] === "<")) {
+        const nameStart = i + (after === "P" ? 4 : 3);
+        const nameEnd = body.indexOf(">", nameStart);
+        if (nameEnd === -1) fail("unterminated group name");
+        const name = body.slice(nameStart, nameEnd);
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+          fail(`invalid group name ${JSON.stringify(name)}`);
+        out.push(`(?<${name}>`);
+        i = nameEnd + 1;
+        continue;
+      }
       fail("unsupported group syntax");
     }
 
@@ -193,9 +225,7 @@ export function translateRustRegex(pattern: string): { source: string; flags: st
           i += m[0].length;
           continue;
         }
-        out.push("\\[");
-        i += 1;
-        continue;
+        fail("nested character classes are not supported");
       }
       inClass = true;
       classNegated = false;
@@ -222,6 +252,13 @@ export function translateRustRegex(pattern: string): { source: string; flags: st
         out.splice(classStart, out.length - classStart, `(?:${cls}|${classComplements.join("|")})`);
       }
       continue;
+    }
+
+    if (
+      inClass &&
+      ((ch === "&" && body[i + 1] === "&") || ((ch === "-" || ch === "~") && body[i + 1] === ch))
+    ) {
+      fail("class set operations (&&, --, ~~) are not supported");
     }
 
     if (ch === "." && !inClass) {

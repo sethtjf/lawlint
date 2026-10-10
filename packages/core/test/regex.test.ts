@@ -117,4 +117,40 @@ describe("translation semantics", () => {
     const re = compileRustRegex(String.raw`[''’]s`);
     expect(re.test("it's".replace("'", "’"))).toBe(true);
   });
+  test("identity escapes: Rust accepts \\ before any non-alphanumeric char", () => {
+    // JS u-mode forbids \' \" \# \& \~ \: \space \’ — emit the literal.
+    for (const ch of ["'", '"', "#", "&", "~", ":", " ", "’"]) {
+      const re = compileRustRegex(`\\${ch}x`);
+      expect(re.test(`${ch}x`), ch).toBe(true);
+    }
+    // JS syntax characters stay escaped.
+    expect(compileRustRegex(String.raw`a\.b`).test("a.b")).toBe(true);
+    expect(compileRustRegex(String.raw`a\.b`).test("axb")).toBe(false);
+    // \- is a valid identity escape only inside a class.
+    expect(compileRustRegex(String.raw`[\-]`).test("-")).toBe(true);
+  });
+  test("\\x{...} maps to \\u{...}, \\xHH keeps, \\a becomes \\x07", () => {
+    expect(compileRustRegex(String.raw`\x{1F600}`).test("😀")).toBe(true);
+    expect(compileRustRegex(String.raw`\x41`).test("A")).toBe(true);
+    expect(compileRustRegex(String.raw`a\ab`).test("ab")).toBe(true);
+    expect(() => compileRustRegex(String.raw`\x{`)).toThrow(InvalidRegexError);
+  });
+  test("named groups (?P<name>) and (?<name>) pass through", () => {
+    const re = compileRustRegex(String.raw`(?P<word>delve)\s(?<n>[0-9]+)`);
+    expect(re.exec("delve 7")?.groups).toEqual({ word: "delve", n: "7" });
+    expect(compileRustRegex(String.raw`(?<w>x)`).test("x")).toBe(true);
+    expect(() => compileRustRegex(String.raw`(?P<>x)`)).toThrow(InvalidRegexError);
+  });
+  test("(?x) verbose mode throws", () => {
+    expect(() => compileRustRegex("(?x)a b")).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex("(?ix)a b")).toThrow(InvalidRegexError);
+  });
+  test("nested classes and set operations throw", () => {
+    expect(() => compileRustRegex(String.raw`[[a]]`)).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex(String.raw`[a&&b]`)).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex(String.raw`[a--b]`)).toThrow(InvalidRegexError);
+    expect(() => compileRustRegex(String.raw`[a~~b]`)).toThrow(InvalidRegexError);
+    // POSIX [:name:] inside a class still maps.
+    expect(compileRustRegex(String.raw`[[:digit:]]`).test("5")).toBe(true);
+  });
 });
