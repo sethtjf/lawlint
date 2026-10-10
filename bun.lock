@@ -34,6 +34,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "blume@1.7.3": "patches/blume@1.7.3.patch",
+  },
   "overrides": {
     "fast-uri": "3.1.8",
     "ip-address": "10.5.0",
