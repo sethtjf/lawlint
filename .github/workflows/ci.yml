@@ -47,6 +47,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: cargo run --locked --release -p lawlint-eval --bin parity_capture -- --check
       - run: cargo run --locked -p lawlint-cli -- rules test packages/simple-english --offline
       - uses: oven-sh/setup-bun@v2
         with:
