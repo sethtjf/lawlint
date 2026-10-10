@@ -1,4 +1,4 @@
-import { RuleSet, lintWith, remediationPrompt } from "@lawlint/core";
+import { builtInSet, lintWith, remediationPrompt } from "@lawlint/core";
 import { type DragEvent, type UIEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -157,7 +157,7 @@ export default function LawlintPlayground() {
     const timer = setTimeout(() => {
       if (cancelled) return;
       const options = markdown ? { markdown: true } : {};
-      const result = lintWith(text, options, RuleSet.builtIn());
+      const result = lintWith(text, options, builtInSet());
       const diagnostics = result.diagnostics as Diagnostic[];
       const starts = lineStartOffsets(text);
       const ranged = diagnostics
@@ -280,7 +280,7 @@ export default function LawlintPlayground() {
 
   async function copyPrompt() {
     const options = markdown ? { markdown: true } : {};
-    const rules = RuleSet.builtIn();
+    const rules = builtInSet();
     const result = lintWith(text, options, rules);
     const prompt = remediationPrompt({ kind: "text", text }, result, rules);
     if (!prompt) return;

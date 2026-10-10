@@ -55,6 +55,20 @@ test("load_dir_reads_markdown_rules_and_ignores_yaml", () => {
   rmSync(base, { recursive: true, force: true });
 });
 
+test("load_dir_wraps_rule_read_failures_in_io_error", () => {
+  const base = join(tmpdir(), `lawlint-registry-rule-io-${process.pid}`);
+  mkdirSync(join(base, "rules", "bad.md"), { recursive: true });
+  writeFileSync(join(base, "style.yaml"), "name: firm\nversion: 1.0.0\n");
+  // bad.md is a directory: reading it as a file fails.
+  try {
+    loadDir(base);
+    expect.unreachable();
+  } catch (e) {
+    expect((e as Error).message).toContain("bad.md");
+  }
+  rmSync(base, { recursive: true, force: true });
+});
+
 test("load_dir_missing_manifest_is_io_error", () => {
   const base = join(tmpdir(), `lawlint-registry-missing-${process.pid}`);
   mkdirSync(base, { recursive: true });

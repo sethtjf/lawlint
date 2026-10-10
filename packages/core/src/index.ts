@@ -69,8 +69,12 @@ export { Src } from "./utf8";
 
 const DEFAULT_CONFIDENCE_FLOOR = Math.fround(0.6);
 
+// The shared built-in set, like Rust's `&'static RuleSet` `built_in_set()`.
+// Read-only callers (lint, metas, the playground) should use this rather
+// than reparsing every rule per call. Callers that mutate — `merge` —
+// must construct a fresh set with `RuleSet.builtIn()` instead.
 let BUILTIN: RuleSet | undefined;
-function builtInSet(): RuleSet {
+export function builtInSet(): RuleSet {
   BUILTIN ??= RuleSet.builtIn();
   return BUILTIN;
 }

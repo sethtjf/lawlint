@@ -26,10 +26,22 @@ export function loadDir(path: string): RuleSet {
     isDir = false;
   }
   if (isDir) {
-    for (const name of readdirSync(rulesDir).sort()) {
+    let names: string[];
+    try {
+      names = readdirSync(rulesDir).sort();
+    } catch (e) {
+      throw LoadError.io(rulesDir, e instanceof Error ? e.message : String(e));
+    }
+    for (const name of names) {
       if (!name.endsWith(".md")) continue;
       const p = join(rulesDir, name);
-      rules.push([p, parseRule(p, readFileSync(p, "utf8"))]);
+      let markdown: string;
+      try {
+        markdown = readFileSync(p, "utf8");
+      } catch (e) {
+        throw LoadError.io(p, e instanceof Error ? e.message : String(e));
+      }
+      rules.push([p, parseRule(p, markdown)]);
     }
   }
   return RuleSet.fromParts(manifest, rules);
