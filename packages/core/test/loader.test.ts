@@ -503,3 +503,20 @@ test("enum_helpers", () => {
   expect(engineTier("inferential")).toBe("inferential");
   expect(engineTier("x")).toBeUndefined();
 });
+
+test("detailed_pattern_scalar_fields_must_be_strings", () => {
+  // Rust: serde Option<String> rejects non-string scalars with
+  // "data did not match any variant of untagged enum PatternDef".
+  expect(err('id: x\nengine: phrase\npatterns: [{pattern: "foo", fix: 100}]\n')).toContain(
+    "`fix` must be a string",
+  );
+  expect(err('id: x\nengine: phrase\npatterns: [{pattern: "foo", message: 100}]\n')).toContain(
+    "`message` must be a string",
+  );
+  expect(err('id: x\nengine: phrase\npatterns: [{pattern: "foo", suggestion: true}]\n')).toContain(
+    "`suggestion` must be a string",
+  );
+  expect(err('id: x\nengine: phrase\npatterns: [{pattern: "foo", fix_template: 7}]\n')).toContain(
+    "`fix_template` must be a string",
+  );
+});

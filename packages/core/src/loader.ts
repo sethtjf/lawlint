@@ -326,7 +326,20 @@ function parseFrontmatter(file: string, frontmatter: string): RuleDef {
             "invalid type: pattern entry needs a `pattern` string",
           );
         }
-        const s = (k: string) => (o[k] === undefined || o[k] === null ? undefined : String(o[k]));
+        const s = (k: string): string | undefined => {
+          const v = o[k];
+          if (v === undefined || v === null) {
+            return undefined;
+          }
+          if (typeof v !== "string") {
+            throw LoadError.invalidField(
+              file,
+              "patterns",
+              `invalid type: \`${k}\` must be a string`,
+            );
+          }
+          return v;
+        };
         patterns.push({
           kind: "detailed",
           pattern: o.pattern,

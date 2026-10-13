@@ -93,9 +93,9 @@ export function metricValue(metric: MetricName, src: Src, doc: Document): number
 
 type Direction = "above" | "below";
 
-function spelled(n: number): string {
+export function spelled(n: number): string {
   const names = ["", "", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
-  return n < names.length ? names[n] : String(n);
+  return n >= 2 && n <= 10 ? names[n] : String(n);
 }
 
 const LABELS: Partial<Record<MetricName, string>> = {
