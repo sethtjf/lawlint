@@ -43,10 +43,10 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - run: cargo install wasm-pack --locked
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: cargo run --locked --release -p lawlint-eval --bin parity_capture -- --check
       - run: cargo run --locked -p lawlint-cli -- rules test packages/simple-english --offline
       - uses: oven-sh/setup-bun@v2
         with:
@@ -59,6 +59,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
+      - run: bun run --cwd packages/core gen:builtin --check
+      - run: bun run test:ts
       - run: bun run --cwd apps/website check
       - run: bun run --cwd apps/website validate
       - run: bun run build
@@ -73,7 +75,9 @@ jobs:
           toolchain: stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      # RUSTSEC-2024-0449: unsafe-libyaml (via serde_yaml) is unmaintained, with no
+      # patched release. The Rust crates are being retired in favor of packages/core.
+      - run: cargo audit --deny warnings --ignore RUSTSEC-2024-0449
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14

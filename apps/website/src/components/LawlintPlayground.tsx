@@ -1,4 +1,4 @@
-import init, { lint, remediationPrompt } from "@/generated/wasm/lawlint_wasm.js";
+import { builtInSet, lintWith, remediationPrompt } from "@lawlint/core";
 import { type DragEvent, type UIEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,13 +29,6 @@ type Stats = {
   wordCount: number;
   sentenceCount: number;
 };
-
-let wasmReady: ReturnType<typeof init> | undefined;
-
-function getWasmReady() {
-  wasmReady ??= init();
-  return wasmReady;
-}
 
 const SAMPLE = `It is important to note that in today's fast-paced world, legal teams must delve into the landscape of regulatory obligations. Moreover, the aforementioned parties shall, pursuant to Section 4(b), cease and desist any and all conduct hereinafter described.
 
@@ -162,24 +155,23 @@ export default function LawlintPlayground() {
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
-      void getWasmReady().then(() => {
-        if (cancelled) return;
-        const result = lint(text, markdown ? { markdown: true } : {});
-        const diagnostics = result.diagnostics as Diagnostic[];
-        const starts = lineStartOffsets(text);
-        const ranged = diagnostics
-          .map((diagnostic) => ({
-            ...diagnostic,
-            ...toRange(diagnostic, starts, text.length),
-          }))
-          .sort((a, b) => a.start - b.start);
+      if (cancelled) return;
+      const options = markdown ? { markdown: true } : {};
+      const result = lintWith(text, options, builtInSet());
+      const diagnostics = result.diagnostics as Diagnostic[];
+      const starts = lineStartOffsets(text);
+      const ranged = diagnostics
+        .map((diagnostic) => ({
+          ...diagnostic,
+          ...toRange(diagnostic, starts, text.length),
+        }))
+        .sort((a, b) => a.start - b.start);
 
-        setStats(result.stats as Stats);
-        setRangedDiagnostics(ranged);
-        setLatestResult({
-          stats: result.stats as Stats,
-          diagnostics,
-        });
+      setStats(result.stats as Stats);
+      setRangedDiagnostics(ranged);
+      setLatestResult({
+        stats: result.stats as Stats,
+        diagnostics,
       });
     }, 120);
 
@@ -287,7 +279,10 @@ export default function LawlintPlayground() {
   }
 
   async function copyPrompt() {
-    const prompt = remediationPrompt(text, markdown ? { markdown: true } : {}) as string | null;
+    const options = markdown ? { markdown: true } : {};
+    const rules = builtInSet();
+    const result = lintWith(text, options, rules);
+    const prompt = remediationPrompt({ kind: "text", text }, result, rules);
     if (!prompt) return;
     if (!(await writeClipboard(prompt))) return;
     clearTimeout(promptCopyTimerRef.current);

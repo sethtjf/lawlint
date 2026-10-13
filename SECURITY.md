@@ -7,10 +7,13 @@ opening a public issue with exploit details.
 
 The active Rust workspace is checked with `cargo audit --deny warnings`. This
 intentionally gates on informational RustSec advisories (unmaintained,
-unsound, and yanked crates) as well as vulnerabilities; there is no Rust
-advisory exception list. A newly reported advisory therefore stops merges
-until the dependency is upgraded, removed, or the policy is deliberately
-revisited. The archived Tauri prototype is deliberately outside that
+unsound, and yanked crates) as well as vulnerabilities. There is one Rust
+advisory exception: RUSTSEC-2024-0449 (`unsafe-libyaml`, unmaintained),
+which comes in through `serde_yaml`. There is no patched release, and the Rust
+crates are being retired in favor of the TypeScript core in `packages/core`,
+so `.github/workflows/ci.yml` ignores it rather than replacing `serde_yaml`.
+Any other newly reported advisory stops merges until the dependency is
+upgraded, removed, or the policy is deliberately revisited. The archived Tauri prototype is deliberately outside that
 workspace, so its GTK dependency tree cannot affect the CLI, WASM, or website
 release artifacts.
 

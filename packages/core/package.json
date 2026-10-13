@@ -1,0 +1,26 @@
+{
+  "name": "@lawlint/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
+  "scripts": {
+    "gen:builtin": "bun run scripts/gen-builtin.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@noble/hashes": "1.8.0",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm-table": "2.0.0",
+    "micromark": "4.0.2",
+    "micromark-extension-gfm-table": "2.1.1",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2"
+  }
+}
