@@ -75,7 +75,9 @@ jobs:
           toolchain: stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      # RUSTSEC-2024-0449: unsafe-libyaml (via serde_yaml) is unmaintained, with no
+      # patched release. The Rust crates are being retired in favor of packages/core.
+      - run: cargo audit --deny warnings --ignore RUSTSEC-2024-0449
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
