@@ -311,3 +311,61 @@ test("redlines_never_overlap_within_a_run", () => {
   expect(xml).toContain('<w:t xml:space="preserve">A</w:t>');
   expect(xml).not.toContain('<w:t xml:space="preserve">B</w:t>');
 });
+
+const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+function runDoc(
+  documentXml: string,
+  edits: Map<number, RunEdit[]>,
+): { xml: string; out: RevisionOutput } {
+  const ids: Ids = { nextRev: 100, nextComment: 1 };
+  const out = apply(documentXml, edits, "lawlint", "2020-01-01T00:00:00Z", ids);
+  return { xml: new TextDecoder().decode(out.documentXml), out };
+}
+
+test("cdata_inside_wt_contributes_text", () => {
+  const inner = "<w:p><w:r><w:t><![CDATA[Hello]]></w:t></w:r></w:p>";
+  const edits = new Map([[0, [edit(1, 0, 0, "X")]]]);
+  const { xml, out } = run(inner, edits);
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain('<w:t xml:space="preserve">X</w:t>');
+  expect(xml).toContain('<w:t xml:space="preserve">Hello</w:t>');
+});
+
+test("cdata_run_text_can_be_redlined", () => {
+  const inner = "<w:p><w:r><w:t><![CDATA[Hello]]></w:t></w:r></w:p>";
+  const edits = new Map([[0, [edit(1, 1, 4, "ELL")]]]);
+  const { xml, out } = run(inner, edits);
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain('<w:t xml:space="preserve">H</w:t>');
+  expect(xml).toContain('<w:delText xml:space="preserve">ell</w:delText>');
+  expect(xml).toContain('<w:t xml:space="preserve">ELL</w:t>');
+  expect(xml).toContain('<w:t xml:space="preserve">o</w:t>');
+});
+
+test("unprefixed_document_gains_an_xmlns_binding", () => {
+  const doc = `<document xmlns="${W_NS}"><body><p><r><t>Hello</t></r></p></body></document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain(`xmlns:w="${W_NS}"`);
+  expect(xml).toContain("<w:ins");
+  expect(xml).toContain('<w:delText xml:space="preserve">ell</w:delText>');
+});
+
+test("non_w_prefix_is_reused_for_generated_markup", () => {
+  const doc = `<x:document xmlns:x="${W_NS}"><x:body><x:p><x:r><x:t>Hello</x:t></x:r></x:p></x:body></x:document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain("<x:ins");
+  expect(xml).toContain('<x:delText xml:space="preserve">ell</x:delText>');
+  expect(xml).toContain('<x:commentRangeStart x:id="1"/>');
+  expect(xml).not.toContain("w:");
+});
+
+test("w_bound_elsewhere_picks_a_free_prefix", () => {
+  const doc = `<document xmlns="${W_NS}" xmlns:w="http://other/ns"><body><p><r><t>Hello</t></r></p></body></document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain(`xmlns:lw="${W_NS}"`);
+  expect(xml).toContain("<lw:ins");
+});

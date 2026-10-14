@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import type { Diagnostic } from "@lawlint/core";
 import { unzipSync } from "fflate";
-import { applyTrackedChanges, defaultReviseOptions } from "../src/index";
+import { DocxError, applyTrackedChanges, defaultReviseOptions } from "../src/index";
 import { Package, strToBytes } from "../src/pkg";
 import type { Projection } from "../src/project";
 import { type Ids, apply } from "../src/revise";
@@ -130,11 +130,11 @@ const RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
 
 /** Minimal .docx with one run ("delve into it"); "delve" is bytes 0..5. */
-function makeDocx(extraParts: [string, string][] = []): Uint8Array {
+function makeDocx(extraParts: [string, string][] = [], docXml: string = DOC_XML): Uint8Array {
   const pkg = new Package();
   pkg.set("[Content_Types].xml", strToBytes(CONTENT_TYPES));
   pkg.set("word/_rels/document.xml.rels", strToBytes(RELS));
-  pkg.set("word/document.xml", strToBytes(DOC_XML));
+  pkg.set("word/document.xml", strToBytes(docXml));
   for (const [name, content] of extraParts) pkg.set(name, strToBytes(content));
   return pkg.write();
 }
@@ -223,4 +223,138 @@ test("zip_entry_order_and_new_parts_last", () => {
     "0",
     "word/comments.xml",
   ]);
+});
+
+function spanDiag(start: number, end: number, replacement: string): Diagnostic {
+  return {
+    ruleId: "test/rule",
+    severity: "warning",
+    tier: "static",
+    intent: "style",
+    span: { start, end },
+    message: "m",
+    line: 0,
+    column: 0,
+    excerpt: "",
+    fix: {
+      edits: [{ range: { start, end }, replacement }],
+      applicability: "machine-applicable",
+    },
+  };
+}
+
+function partText(bytes: Uint8Array, name: string): string {
+  const data = unzipSync(bytes)[name];
+  return data === undefined ? "" : new TextDecoder().decode(data);
+}
+
+// A run containing a text box (<w:drawing>) plus a plain body run. The
+// nested run's <w:t> still consumes ordinal 0 in the projection; "main" is
+// ordinal 1 at byte offset 5 ("box" + the inner paragraph's "\n\n").
+const TXBX_DOC = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W_NS}"><w:body><w:p><w:r><w:drawing><w:txbxContent><w:p><w:r><w:t>box</w:t></w:r></w:p></w:txbxContent></w:drawing></w:r><w:r><w:t>main</w:t></w:r></w:p></w:body></w:document>`;
+
+test("fix_inside_nested_textbox_run_is_untouchable", () => {
+  const docx = makeDocx([], TXBX_DOC);
+  const out = applyTrackedChanges(docx, [spanDiag(0, 3, "BOX")], FIXED_OPTS);
+  expect(out.applied).toBe(0);
+  // The nested run is inside a non-simple outer run: the whole document
+  // passes through verbatim.
+  expect(partText(out.bytes, "word/document.xml")).toBe(TXBX_DOC);
+});
+
+test("fix_on_body_run_after_textbox_lands_correctly", () => {
+  const docx = makeDocx([], TXBX_DOC);
+  // "mai" is at byte offset 5 in the projected "box\n\nmain".
+  const out = applyTrackedChanges(docx, [spanDiag(5, 8, "MAI")], FIXED_OPTS);
+  expect(out.applied).toBe(1);
+  const doc = partText(out.bytes, "word/document.xml");
+  expect(doc).toContain('<w:delText xml:space="preserve">mai</w:delText>');
+  // The text-box run is byte-for-byte unchanged.
+  expect(doc).toContain(
+    "<w:drawing><w:txbxContent><w:p><w:r><w:t>box</w:t></w:r></w:p></w:txbxContent></w:drawing>",
+  );
+});
+
+test("comments_xml_with_other_prefix_stays_consistent", () => {
+  // Existing comments.xml binds W_NS to "x": appended blocks use x: too.
+  const existing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<x:comments xmlns:x="${W_NS}"><x:comment x:id="4" x:author="a"><x:p><x:r><x:t>old</x:t></x:r></x:p></x:comment></x:comments>`;
+  const docx = makeDocx([["word/comments.xml", existing]]);
+  const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
+  const comments = commentsXmlOf(out.bytes);
+  expect(comments).toContain('<x:comment x:id="5"');
+  expect(comments).not.toContain("<w:comment ");
+});
+
+test("comments_xml_without_prefix_gains_binding", () => {
+  const existing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="${W_NS}"><comment id="2" author="a"><p><r><t>old</t></r></p></comment></comments>`;
+  const docx = makeDocx([["word/comments.xml", existing]]);
+  const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
+  const comments = commentsXmlOf(out.bytes);
+  expect(comments).toContain(`xmlns:w="${W_NS}"`);
+  expect(comments).toContain('<w:comment w:id="3"');
+});
+
+test("self_closing_rels_and_types_roots_are_expanded", () => {
+  const docx = makeDocx();
+  const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
+  // The fixture's document.xml.rels root is self-closing; it must be
+  // expanded (keeping attributes) with the comments relationship inside.
+  const rels = partText(out.bytes, "word/_rels/document.xml.rels");
+  expect(rels).toContain('Target="comments.xml"');
+  expect(rels).toContain("</Relationships>");
+  const ct = partText(out.bytes, "[Content_Types].xml");
+  expect(ct).toContain("/word/comments.xml");
+});
+
+test("self_closing_types_root_is_expanded", () => {
+  const typesSelfClosed = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`;
+  const pkg = new Package();
+  pkg.set("[Content_Types].xml", strToBytes(typesSelfClosed));
+  pkg.set("word/_rels/document.xml.rels", strToBytes(RELS));
+  pkg.set("word/document.xml", strToBytes(DOC_XML));
+  const out = applyTrackedChanges(pkg.write(), [delveDiag("m")], FIXED_OPTS);
+  const ct = partText(out.bytes, "[Content_Types].xml");
+  expect(ct).toContain("/word/comments.xml");
+  expect(ct).toContain("</Types>");
+});
+
+test("zip_entry_over_size_limit_is_rejected", () => {
+  const bytes = makeDocx();
+  // Patch the first central-directory record's uncompressed-size field
+  // (signature PK\x01\x02, size at +24, little-endian) past the 256 MiB cap.
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = 0; i + 4 < bytes.length; i++) {
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x01 &&
+      bytes[i + 3] === 0x02
+    ) {
+      view.setUint32(i + 24, 256 * 1024 * 1024 + 1, true);
+      break;
+    }
+  }
+  try {
+    Package.read(bytes);
+    expect.unreachable("should have thrown");
+  } catch (e) {
+    expect(e).toBeInstanceOf(DocxError);
+    expect((e as DocxError).kind).toBe("zip");
+  }
+});
+
+test("zip_over_max_entries_is_rejected", () => {
+  const pkg = new Package();
+  for (let i = 0; i < 10_001; i++) pkg.set(`f${i}`, strToBytes("x"));
+  try {
+    Package.read(pkg.write());
+    expect.unreachable("should have thrown");
+  } catch (e) {
+    expect(e).toBeInstanceOf(DocxError);
+    expect((e as DocxError).kind).toBe("zip");
+  }
 });

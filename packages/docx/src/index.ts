@@ -11,6 +11,7 @@ import { Package, strToBytes } from "./pkg";
 import { project } from "./project";
 import { type CommentOut, type Ids, apply } from "./revise";
 import { selectEdits } from "./select";
+import { replaceFirst, resolvePrefix, tokenize } from "./xml";
 
 const DOCUMENT = "word/document.xml";
 const COMMENTS = "word/comments.xml";
@@ -157,32 +158,43 @@ function initials(author: string): string {
   return inits === "" ? "L" : inits.toUpperCase();
 }
 
-function commentBlock(c: CommentOut): string {
-  let attrs = ` w:id="${c.id}" w:author="${xmlEscape(c.author)}" w:initials="${xmlEscape(initials(c.author))}"`;
-  if (c.date !== null) attrs += ` w:date="${xmlEscape(c.date)}"`;
-  return `<w:comment${attrs}><w:p><w:r><w:t xml:space="preserve">${xmlEscape(c.text)}</w:t></w:r></w:p></w:comment>`;
+function commentBlock(c: CommentOut, p: string): string {
+  let attrs = ` ${p}:id="${c.id}" ${p}:author="${xmlEscape(c.author)}" ${p}:initials="${xmlEscape(initials(c.author))}"`;
+  if (c.date !== null) attrs += ` ${p}:date="${xmlEscape(c.date)}"`;
+  return `<${p}:comment${attrs}><${p}:p><${p}:r><${p}:t xml:space="preserve">${xmlEscape(c.text)}</${p}:t></${p}:r></${p}:p></${p}:comment>`;
 }
 
 function buildCommentsXml(existing: string | undefined, comments: CommentOut[]): string {
-  const blocks = comments.map(commentBlock).join("");
-  if (existing?.includes("</w:comments>")) {
-    return replaceFirst(existing, "</w:comments>", `${blocks}</w:comments>`);
+  if (existing !== undefined) {
+    // Generated comment blocks use whatever prefix the existing file binds
+    // to W_NS; if none is bound, the root gains an xmlns binding.
+    const root = tokenize(existing).find((e) => e.kind === "start");
+    if (root === undefined || root.kind !== "start") {
+      throw new DocxError("malformed", `${COMMENTS} has no root element`);
+    }
+    const { prefix, patchedRaw } = resolvePrefix(root.raw, W_NS);
+    const blocks = comments.map((c) => commentBlock(c, prefix)).join("");
+    const closing = `</${root.name}>`;
+    const xml = patchedRaw === null ? existing : replaceFirst(existing, root.raw, patchedRaw);
+    if (xml.includes(closing)) {
+      return replaceFirst(xml, closing, `${blocks}${closing}`);
+    }
+    return xml;
   }
+  const blocks = comments.map((c) => commentBlock(c, "w")).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${W_NS}">${blocks}</w:comments>`;
 }
 
 function maxCommentId(commentsXml: string): number {
   let max = 0;
-  let rest = commentsXml;
-  let pos = rest.indexOf("<w:comment ");
-  while (pos !== -1) {
-    rest = rest.slice(pos);
-    const id = attrValue(rest, 'w:id="');
+  // Comment elements may carry any namespace prefix (`w:`, `x:`, …) or none.
+  const re = /<(?:[\w-]+:)?comment\s/g;
+  for (const m of commentsXml.matchAll(re)) {
+    const rest = commentsXml.slice(m.index);
+    const id = attrValue(rest, ':id="') ?? attrValue(rest, ' id="');
     // Rust id.parse::<usize>().unwrap_or(0): all digits (optional leading
     // `+`), nothing else — "12abc" and " 5" both parse to 0 there.
     if (id !== undefined && /^\+?[0-9]+$/.test(id)) max = Math.max(max, Number(id));
-    rest = rest.slice(1);
-    pos = rest.indexOf("<w:comment ");
   }
   return max;
 }
@@ -198,16 +210,6 @@ function attrValue(s: string, needle: string): string | undefined {
 }
 
 /**
- * Rust `replacen(needle, replacement, 1)`: first occurrence, replacement is
- * literal (String.replace would interpret `$&`, `$'`, `$$`, …).
- */
-function replaceFirst(haystack: string, needle: string, replacement: string): string {
-  const at = haystack.indexOf(needle);
-  if (at === -1) return haystack;
-  return haystack.slice(0, at) + replacement + haystack.slice(at + needle.length);
-}
-
-/**
  * Declare the comments part in `[Content_Types].xml` and relate it from
  * `document.xml.rels` if not already present.
  */
@@ -216,7 +218,7 @@ function wireCommentsPart(pkg: Package): void {
   if (ct === undefined) throw new DocxError("missing_part", CONTENT_TYPES);
   if (!ct.includes("/word/comments.xml")) {
     const overrideEl = `<Override PartName="/word/comments.xml" ContentType="${COMMENTS_CT}"/>`;
-    pkg.set(CONTENT_TYPES, strToBytes(replaceFirst(ct, "</Types>", `${overrideEl}</Types>`)));
+    pkg.set(CONTENT_TYPES, strToBytes(appendToRoot(ct, "Types", overrideEl, CONTENT_TYPES)));
   }
 
   const rels = pkg.getStr(DOC_RELS);
@@ -224,8 +226,23 @@ function wireCommentsPart(pkg: Package): void {
   if (!rels.includes(COMMENTS_REL)) {
     const rid = nextRelId(rels);
     const rel = `<Relationship Id="${rid}" Type="${COMMENTS_REL}" Target="comments.xml"/>`;
-    pkg.set(DOC_RELS, strToBytes(replaceFirst(rels, "</Relationships>", `${rel}</Relationships>`)));
+    pkg.set(DOC_RELS, strToBytes(appendToRoot(rels, "Relationships", rel, DOC_RELS)));
   }
+}
+
+/**
+ * Insert `child` as the last child of the document's root element — either
+ * before `</root>` or by expanding a self-closing `<root …/>` in place,
+ * keeping its attributes byte-for-byte.
+ */
+function appendToRoot(xml: string, root: string, child: string, part: string): string {
+  const closing = `</${root}>`;
+  if (xml.includes(closing)) return replaceFirst(xml, closing, `${child}${closing}`);
+  const m = new RegExp(`<${root}((?:"[^"]*"|'[^']*'|[^'">])*)\\/>`).exec(xml);
+  if (m !== null) {
+    return replaceFirst(xml, m[0], `<${root}${m[1] ?? ""}>${child}</${root}>`);
+  }
+  throw new DocxError("malformed", `${part}: no </${root}> or self-closing root`);
 }
 
 function nextRelId(rels: string): string {

@@ -204,3 +204,41 @@ export function escapeText(s: string): string {
 export function escapeAttr(s: string): string {
   return escapeText(s);
 }
+
+/**
+ * Rust `replacen(needle, replacement, 1)`: first occurrence, replacement is
+ * literal (String.replace would interpret `$&`, `$'`, `$$`, …).
+ */
+export function replaceFirst(haystack: string, needle: string, replacement: string): string {
+  const at = haystack.indexOf(needle);
+  if (at === -1) return haystack;
+  return haystack.slice(0, at) + replacement + haystack.slice(at + needle.length);
+}
+
+const XMLNS_ATTR = /xmlns(?::([\w.-]+))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
+/**
+ * Find the prefix bound to `nsUri` in a root start-tag raw slice. If a
+ * prefixed `xmlns:P="nsUri"` exists, return it. Otherwise choose a fresh
+ * prefix (`w`, else the first free of `lw`, `lw1`, `lw2`, …) and return the
+ * tag patched with ` xmlns:P="nsUri"` inserted before its `>`/`/>`.
+ */
+export function resolvePrefix(
+  rootRaw: string,
+  nsUri: string,
+): { prefix: string; patchedRaw: string | null } {
+  const bound = new Set<string>();
+  for (const m of rootRaw.matchAll(XMLNS_ATTR)) {
+    if (m[1] === undefined) continue; // default-namespace binding, not a prefix
+    bound.add(m[1]);
+    if ((m[2] ?? m[3]) === nsUri) return { prefix: m[1], patchedRaw: null };
+  }
+  let prefix = "w";
+  if (bound.has("w")) {
+    prefix = "lw";
+    for (let i = 1; bound.has(prefix); i++) prefix = `lw${i}`;
+  }
+  const insertAt = rootRaw.endsWith("/>") ? rootRaw.length - 2 : rootRaw.length - 1;
+  const patchedRaw = `${rootRaw.slice(0, insertAt)} xmlns:${prefix}="${nsUri}"${rootRaw.slice(insertAt)}`;
+  return { prefix, patchedRaw };
+}

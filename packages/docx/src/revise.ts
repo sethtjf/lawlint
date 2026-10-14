@@ -29,10 +29,14 @@ import {
   escapeAttr,
   escapeText,
   local,
+  replaceFirst,
   resolveCharRef,
   resolvePredefinedEntity,
+  resolvePrefix,
   tokenize,
 } from "./xml";
+
+const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 /**
  * A fix (or comment-only anchor) resolved to a run: `start`/`end` are byte
@@ -136,6 +140,8 @@ function analyzeRun(buffer: XmlEvent[]): RunInfo {
                 const value = resolvePredefinedEntity(child.name);
                 if (value !== undefined) text += value;
               }
+            } else if (child.kind === "cdata") {
+              text += child.content;
             }
           }
           wts.push({ text: encoder.encode(text) });
@@ -175,6 +181,20 @@ function isSimpleRun(runInRevision: boolean, info: RunInfo): boolean {
   return !runInRevision && info.wts.length === 1 && info.otherChildren === 0;
 }
 
+/**
+ * `<w:t>` elements anywhere in the buffered run, at any depth — matching
+ * `project`'s ordinal accounting (a `w:t` start, or an empty `<w:t/>`).
+ * Runs nested inside a text box count toward ordinals even though they are
+ * never touched directly.
+ */
+function countWt(buffer: XmlEvent[]): number {
+  let n = 0;
+  for (const ev of buffer) {
+    if ((ev.kind === "start" || ev.kind === "empty") && local(ev.name) === "t") n++;
+  }
+  return n;
+}
+
 // -- Generated markup (quick-xml serialization semantics) ------------------
 
 function emitRpr(out: string[], rpr: XmlEvent[]): void {
@@ -185,39 +205,40 @@ function textEl(tag: string, text: string): string {
   return `<${tag} xml:space="preserve">${escapeText(text)}</${tag}>`;
 }
 
-function keepRun(rpr: XmlEvent[], text: string): string {
-  const parts = ["<w:r>"];
+function keepRun(rpr: XmlEvent[], text: string, p: string): string {
+  const parts = [`<${p}:r>`];
   emitRpr(parts, rpr);
-  parts.push(textEl("w:t", text), "</w:r>");
+  parts.push(textEl(`${p}:t`, text), `</${p}:r>`);
   return parts.join("");
 }
 
 function revision(
-  wrap: string, // "w:ins" | "w:del"
-  runTextTag: string,
+  wrap: string, // "ins" | "del" (local name)
+  runTextTag: string, // "t" | "delText" (local name)
   rpr: XmlEvent[],
   text: string,
   id: number,
   author: string,
   date: string | null,
+  p: string,
 ): string {
-  let start = `<${wrap} w:id="${id}" w:author="${escapeAttr(author)}"`;
-  if (date !== null) start += ` w:date="${escapeAttr(date)}"`;
+  let start = `<${p}:${wrap} ${p}:id="${id}" ${p}:author="${escapeAttr(author)}"`;
+  if (date !== null) start += ` ${p}:date="${escapeAttr(date)}"`;
   start += ">";
-  const parts = [start, "<w:r>"];
+  const parts = [start, `<${p}:r>`];
   emitRpr(parts, rpr);
-  parts.push(textEl(runTextTag, text), "</w:r>", `</${wrap}>`);
+  parts.push(textEl(`${p}:${runTextTag}`, text), `</${p}:r>`, `</${p}:${wrap}>`);
   return parts.join("");
 }
 
-function commentMarker(tag: string, id: number): string {
-  return `<${tag} w:id="${id}"/>`;
+function commentMarker(tag: string, id: number, p: string): string {
+  return `<${p}:${tag} ${p}:id="${id}"/>`;
 }
 
-function commentReferenceRun(rpr: XmlEvent[], id: number): string {
-  const parts = ["<w:r>"];
+function commentReferenceRun(rpr: XmlEvent[], id: number, p: string): string {
+  const parts = [`<${p}:r>`];
   emitRpr(parts, rpr);
-  parts.push(`<w:commentReference w:id="${id}"/>`, "</w:r>");
+  parts.push(`<${p}:commentReference ${p}:id="${id}"/>`, `</${p}:r>`);
   return parts.join("");
 }
 
@@ -230,6 +251,8 @@ interface Ctx {
   author: string;
   date: string | null;
   ids: Ids;
+  /** Namespace prefix for generated elements/attributes (e.g. "w"). */
+  p: string;
   comments: CommentOut[];
   annotated: number;
   dropped: Set<number>;
@@ -249,6 +272,7 @@ function classify(documentXml: string, editsByOrdinal: Map<number, RunEdit[]>): 
   let revisionDepth = 0;
 
   let buffering = false;
+  let runDepth = 0;
   let buffer: XmlEvent[] = [];
   let runInRevision = false;
 
@@ -257,11 +281,13 @@ function classify(documentXml: string, editsByOrdinal: Map<number, RunEdit[]>): 
       case "start":
         if (buffering) {
           buffer.push(ev);
+          if (local(ev.name) === "r") runDepth++;
           continue;
         }
         switch (local(ev.name)) {
           case "r":
             buffering = true;
+            runDepth = 1;
             runInRevision = revisionDepth > 0;
             buffer = [ev];
             break;
@@ -275,16 +301,20 @@ function classify(documentXml: string, editsByOrdinal: Map<number, RunEdit[]>): 
         if (buffering) {
           buffer.push(ev);
           if (local(ev.name) === "r") {
-            const info = analyzeRun(buffer);
-            const baseOrdinal = wtCounter;
-            wtCounter += info.wts.length;
-            if (!isSimpleRun(runInRevision, info)) {
-              for (let k = 0; k < info.wts.length; k++) {
-                const es = editsByOrdinal.get(baseOrdinal + k);
-                if (es) for (const piece of es) voided.add(piece.commentId);
+            runDepth--;
+            if (runDepth === 0) {
+              const info = analyzeRun(buffer);
+              const wtCount = countWt(buffer);
+              const baseOrdinal = wtCounter;
+              wtCounter += wtCount;
+              if (!isSimpleRun(runInRevision, info)) {
+                for (let k = 0; k < wtCount; k++) {
+                  const es = editsByOrdinal.get(baseOrdinal + k);
+                  if (es) for (const piece of es) voided.add(piece.commentId);
+                }
               }
+              buffering = false;
             }
-            buffering = false;
           }
           continue;
         }
@@ -310,10 +340,20 @@ export function apply(
   const events = tokenize(documentXml);
   const out: string[] = [];
 
+  // Generated markup uses whatever prefix the document binds to W_NS; if
+  // none is bound, the root start tag gains an xmlns binding — but only
+  // when edits are actually emitted.
+  const root = events.find((e) => e.kind === "start");
+  const { prefix, patchedRaw } =
+    root !== undefined && root.kind === "start"
+      ? resolvePrefix(root.raw, W_NS)
+      : { prefix: "w", patchedRaw: null };
+
   const ctx: Ctx = {
     author,
     date,
     ids,
+    p: prefix,
     comments: [],
     annotated: 0,
     dropped: new Set(),
@@ -321,6 +361,7 @@ export function apply(
 
   const wt = { v: 0 };
   let buffering = false;
+  let runDepth = 0;
   let buffer: XmlEvent[] = [];
 
   for (const ev of events) {
@@ -328,10 +369,12 @@ export function apply(
       case "start":
         if (buffering) {
           buffer.push(ev);
+          if (local(ev.name) === "r") runDepth++;
           continue;
         }
         if (local(ev.name) === "r") {
           buffering = true;
+          runDepth = 1;
           buffer = [ev];
         } else {
           out.push(ev.raw);
@@ -341,8 +384,11 @@ export function apply(
         if (buffering) {
           buffer.push(ev);
           if (local(ev.name) === "r") {
-            finishRun(buffer, editsByOrdinal, voidedIds, ctx, out, wt);
-            buffering = false;
+            runDepth--;
+            if (runDepth === 0) {
+              finishRun(buffer, editsByOrdinal, voidedIds, ctx, out, wt);
+              buffering = false;
+            }
           }
           continue;
         }
@@ -354,8 +400,13 @@ export function apply(
     }
   }
 
+  let document = out.join("");
+  if (patchedRaw !== null && ctx.comments.length > 0 && root !== undefined) {
+    document = replaceFirst(document, root.raw, patchedRaw);
+  }
+
   return {
-    documentXml: encoder.encode(out.join("")),
+    documentXml: encoder.encode(document),
     comments: ctx.comments,
     annotated: ctx.annotated,
     skipped: ctx.dropped.size,
@@ -366,8 +417,13 @@ export function apply(
  * Write this piece's opening marker. For a redline this also arms
  * `activeRedline` so the segment walk treats the text as deleted.
  */
-function openPiece(out: string[], e: RunEdit, state: { activeRedline: RunEdit | null }): void {
-  out.push(commentMarker("w:commentRangeStart", e.commentId));
+function openPiece(
+  out: string[],
+  e: RunEdit,
+  ctx: Ctx,
+  state: { activeRedline: RunEdit | null },
+): void {
+  out.push(commentMarker("commentRangeStart", e.commentId, ctx.p));
   if (e.replacement !== null) state.activeRedline = e;
 }
 
@@ -386,14 +442,14 @@ function closePiece(
   if (e.replacement !== null) {
     if (e.replacement !== "") {
       const rid = ctx.ids.nextRev++;
-      out.push(revision("w:ins", "w:t", rpr, e.replacement, rid, ctx.author, ctx.date));
+      out.push(revision("ins", "t", rpr, e.replacement, rid, ctx.author, ctx.date, ctx.p));
     }
     state.activeRedline = null;
   } else {
     ctx.annotated++;
   }
-  out.push(commentMarker("w:commentRangeEnd", e.commentId));
-  out.push(commentReferenceRun(rpr, e.commentId));
+  out.push(commentMarker("commentRangeEnd", e.commentId, ctx.p));
+  out.push(commentReferenceRun(rpr, e.commentId, ctx.p));
   ctx.comments.push({
     id: e.commentId,
     author: ctx.author,
@@ -411,12 +467,15 @@ function finishRun(
   wt: { v: number },
 ): void {
   const info = analyzeRun(buffer);
+  const wtCount = countWt(buffer);
   const baseOrdinal = wt.v;
-  wt.v += info.wts.length;
+  wt.v += wtCount;
 
-  // Which of this run's <w:t> ordinals have edits?
+  // Which of this run's <w:t> ordinals have edits? Pieces on ordinals
+  // belonging to nested runs (text boxes) resolve here too — they were
+  // already voided by classify(), so they flow through the same drop path.
   const runEdits: RunEdit[] = [];
-  for (let k = 0; k < info.wts.length; k++) {
+  for (let k = 0; k < wtCount; k++) {
     const es = editsByOrdinal.get(baseOrdinal + k);
     if (es) runEdits.push(...es);
   }
@@ -507,7 +566,7 @@ function finishRun(
     // Zero-width pieces (open == close, e.g. a pure insertion).
     for (const e of finalPieces) {
       if (e.opensHere && e.closesHere && e.start === o && e.end === o) {
-        openPiece(out, e, state);
+        openPiece(out, e, ctx, state);
         closePiece(out, e, rpr, ctx, state);
       }
     }
@@ -515,7 +574,7 @@ function finishRun(
     // Opens at this offset (excluding the zero-width ones just handled).
     for (const e of finalPieces) {
       if (e.opensHere && e.start === o && !(e.closesHere && e.end === o)) {
-        openPiece(out, e, state);
+        openPiece(out, e, ctx, state);
       }
     }
 
@@ -525,9 +584,9 @@ function finishRun(
         const seg = decodeRange(text, o, nextO);
         if (state.activeRedline !== null) {
           const rid = ctx.ids.nextRev++;
-          out.push(revision("w:del", "w:delText", rpr, seg, rid, ctx.author, ctx.date));
+          out.push(revision("del", "delText", rpr, seg, rid, ctx.author, ctx.date, ctx.p));
         } else {
-          out.push(keepRun(rpr, seg));
+          out.push(keepRun(rpr, seg, ctx.p));
         }
       }
     }

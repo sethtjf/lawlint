@@ -13,23 +13,45 @@ interface Part {
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 
+export const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+export const MAX_ENTRIES = 10_000;
+
 export class Package {
   parts: Part[] = [];
 
   static read(bytes: Uint8Array): Package {
     // A plain-object result would reorder integer-like names ("0") to the
     // front and collapse duplicate names; the filter callback fires once per
-    // central-directory entry, in order, so collect the names there.
+    // central-directory entry, in order, so collect the names there. The
+    // filter runs before inflation (fflate sizes each entry's output buffer
+    // by its declared originalSize), which makes it the right place to
+    // enforce decompression limits.
     const names: string[] = [];
+    let declaredTotal = 0;
     let entries: Record<string, Uint8Array>;
     try {
       entries = unzipSync(bytes, {
         filter: (file) => {
+          if (names.length + 1 > MAX_ENTRIES) {
+            throw new DocxError("zip", `entry count exceeds size limit of ${MAX_ENTRIES}`);
+          }
+          if (file.originalSize > MAX_ENTRY_BYTES) {
+            throw new DocxError(
+              "zip",
+              `entry ${file.name} exceeds size limit of ${MAX_ENTRY_BYTES} bytes`,
+            );
+          }
+          declaredTotal += file.originalSize;
+          if (declaredTotal > MAX_TOTAL_BYTES) {
+            throw new DocxError("zip", `archive exceeds size limit of ${MAX_TOTAL_BYTES} bytes`);
+          }
           names.push(file.name);
           return true;
         },
       });
     } catch (e) {
+      if (e instanceof DocxError) throw e;
       throw new DocxError("zip", `not a valid .docx (zip) file: ${(e as Error).message}`);
     }
     const pkg = new Package();
