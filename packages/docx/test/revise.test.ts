@@ -411,3 +411,26 @@ test("w_bound_elsewhere_picks_a_free_prefix", () => {
   expect(xml).toContain("<lw:ins");
   assertWordNamespaces(xml);
 });
+
+test("run_tag_binding_does_not_leak_into_generated_markup", () => {
+  // The <x:r> tag declares x: itself, but generated siblings replace that
+  // tag — the prefix must come from the parent scope, so generated
+  // elements declare w: locally.
+  const doc = `<document xmlns="${W_NS}"><body><p><x:r xmlns:x="${W_NS}"><x:t>Hello</x:t></x:r></p></body></document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain("<w:ins ");
+  expect(xml).toContain(`xmlns:w="${W_NS}"`);
+  assertWordNamespaces(xml);
+});
+
+test("run_tag_rebinding_w_does_not_corrupt_scope", () => {
+  // <w:r xmlns:w="urn:other"> isn't really a Word run — project/classify
+  // use local names so it is still buffered, and the generated markup
+  // resolves w: from the parent scope (W_NS), ignoring the rebound tag.
+  const doc = `<w:document xmlns:w="${W_NS}"><w:body><w:p><w:r xmlns:w="urn:other"><w:t>Hello</w:t></w:r></w:p></w:body></w:document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain("<w:ins");
+  assertWordNamespaces(xml);
+});

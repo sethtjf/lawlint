@@ -367,20 +367,23 @@ export function apply(
   for (const ev of events) {
     switch (ev.kind) {
       case "start":
-        scope.push(ev.raw);
         if (buffering) {
+          scope.push(ev.raw);
           buffer.push(ev);
           if (local(ev.name) === "r") runDepth++;
           continue;
         }
         if (local(ev.name) === "r") {
+          // Resolve from the parent scope: the run tag is replaced by the
+          // generated markup, so its own bindings are not in scope for the
+          // siblings we emit.
+          runNs = scope.resolve(W_NS);
+          scope.push(ev.raw);
           buffering = true;
           runDepth = 1;
           buffer = [ev];
-          // Bindings on the <w:r> tag itself are in scope for the markup
-          // generated around it.
-          runNs = scope.resolve(W_NS);
         } else {
+          scope.push(ev.raw);
           out.push(ev.raw);
         }
         break;

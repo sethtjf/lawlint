@@ -408,3 +408,19 @@ test("self_closing_comments_root_is_expanded", () => {
   const doc = partText(out.bytes, "word/document.xml");
   expect(doc).toContain('<w:commentReference w:id="1"/>');
 });
+
+test("wrong_part_root_throws_malformed", () => {
+  const badTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Foo xmlns="http://example.com"/>`;
+  const pkg = new Package();
+  pkg.set("[Content_Types].xml", strToBytes(badTypes));
+  pkg.set("word/_rels/document.xml.rels", strToBytes(RELS));
+  pkg.set("word/document.xml", strToBytes(DOC_XML));
+  try {
+    applyTrackedChanges(pkg.write(), [delveDiag("m")], FIXED_OPTS);
+    expect.unreachable("should have thrown");
+  } catch (e) {
+    expect(e).toBeInstanceOf(DocxError);
+    expect((e as DocxError).kind).toBe("malformed");
+  }
+});

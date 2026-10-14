@@ -11,7 +11,7 @@ import { Package, strToBytes } from "./pkg";
 import { project } from "./project";
 import { type CommentOut, type Ids, apply } from "./revise";
 import { selectEdits } from "./select";
-import { type XmlEvent, choosePrefix, parseXmlnsBindings, tokenize } from "./xml";
+import { type XmlEvent, choosePrefix, local, parseXmlnsBindings, tokenize } from "./xml";
 
 const DOCUMENT = "word/document.xml";
 const COMMENTS = "word/comments.xml";
@@ -176,7 +176,7 @@ function buildCommentsXml(existing: string | undefined, comments: CommentOut[]):
     }
     const { prefix, decl } = choosePrefix([parseXmlnsBindings(root.raw)], W_NS);
     const blocks = comments.map((c) => commentBlock(c, prefix, decl)).join("");
-    return appendToRoot(existing, blocks, COMMENTS);
+    return appendToRoot(existing, blocks, COMMENTS, "comments");
   }
   const blocks = comments.map((c) => commentBlock(c, "w", "")).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${W_NS}">${blocks}</w:comments>`;
@@ -215,7 +215,7 @@ function wireCommentsPart(pkg: Package): void {
   if (ct === undefined) throw new DocxError("missing_part", CONTENT_TYPES);
   if (!ct.includes("/word/comments.xml")) {
     const overrideEl = `<Override PartName="/word/comments.xml" ContentType="${COMMENTS_CT}"/>`;
-    pkg.set(CONTENT_TYPES, strToBytes(appendToRoot(ct, overrideEl, CONTENT_TYPES)));
+    pkg.set(CONTENT_TYPES, strToBytes(appendToRoot(ct, overrideEl, CONTENT_TYPES, "Types")));
   }
 
   const rels = pkg.getStr(DOC_RELS);
@@ -223,7 +223,7 @@ function wireCommentsPart(pkg: Package): void {
   if (!rels.includes(COMMENTS_REL)) {
     const rid = nextRelId(rels);
     const rel = `<Relationship Id="${rid}" Type="${COMMENTS_REL}" Target="comments.xml"/>`;
-    pkg.set(DOC_RELS, strToBytes(appendToRoot(rels, rel, DOC_RELS)));
+    pkg.set(DOC_RELS, strToBytes(appendToRoot(rels, rel, DOC_RELS, "Relationships")));
   }
 }
 
@@ -232,9 +232,9 @@ function wireCommentsPart(pkg: Package): void {
  * before the root's end tag or by expanding a self-closing `<root …/>` in
  * place, keeping its attributes byte-for-byte. Positions are computed by
  * summing event raw lengths, so a prolog or trailing comment can never
- * capture the splice.
+ * capture the splice. The root's local name must match `expected`.
  */
-function appendToRoot(xml: string, child: string, part: string): string {
+function appendToRoot(xml: string, child: string, part: string, expected: string): string {
   const events = tokenize(xml);
   let offset = 0;
   let root: XmlEvent | undefined;
@@ -257,6 +257,9 @@ function appendToRoot(xml: string, child: string, part: string): string {
     offset += e.raw.length;
   }
   if (root === undefined) throw new DocxError("malformed", `${part}: no root element`);
+  if (rootName === "" || local(rootName) !== expected) {
+    throw new DocxError("malformed", `${part}: expected <${expected}> root, found <${rootName}>`);
+  }
   if (root.kind === "empty") {
     const expanded = `${root.raw.slice(0, -2)}>${child}</${rootName}>`;
     return xml.slice(0, rootOffset) + expanded + xml.slice(rootOffset + root.raw.length);
