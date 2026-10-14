@@ -168,18 +168,16 @@ function buildCommentsXml(existing: string | undefined, comments: CommentOut[]):
   if (existing !== undefined) {
     // Generated comment blocks use whatever prefix the existing file binds
     // to W_NS; if none is bound, the root gains an xmlns binding.
-    const root = tokenize(existing).find((e) => e.kind === "start");
-    if (root === undefined || root.kind !== "start") {
+    const root = tokenize(existing).find((e) => e.kind === "start" || e.kind === "empty");
+    if (root === undefined) {
       throw new DocxError("malformed", `${COMMENTS} has no root element`);
     }
     const { prefix, patchedRaw } = resolvePrefix(root.raw, W_NS);
     const blocks = comments.map((c) => commentBlock(c, prefix)).join("");
-    const closing = `</${root.name}>`;
     const xml = patchedRaw === null ? existing : replaceFirst(existing, root.raw, patchedRaw);
-    if (xml.includes(closing)) {
-      return replaceFirst(xml, closing, `${blocks}${closing}`);
-    }
-    return xml;
+    // The blocks must land inside the root even when it is self-closing —
+    // dropping them would orphan the comment references in document.xml.
+    return appendToRoot(xml, root.name, blocks, COMMENTS);
   }
   const blocks = comments.map((c) => commentBlock(c, "w")).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${W_NS}">${blocks}</w:comments>`;

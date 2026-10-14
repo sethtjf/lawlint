@@ -358,3 +358,17 @@ test("zip_over_max_entries_is_rejected", () => {
     expect((e as DocxError).kind).toBe("zip");
   }
 });
+
+test("self_closing_comments_root_is_expanded", () => {
+  // An existing self-closing <w:comments/> must gain the new block inside
+  // it — not have the block dropped while document.xml references its id.
+  const existing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="${W_NS}"/>`;
+  const docx = makeDocx([["word/comments.xml", existing]]);
+  const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
+  const comments = commentsXmlOf(out.bytes);
+  expect(comments).toContain('<w:comment w:id="1"');
+  expect(comments).toContain("</w:comments>");
+  const doc = partText(out.bytes, "word/document.xml");
+  expect(doc).toContain('<w:commentReference w:id="1"/>');
+});
