@@ -312,6 +312,8 @@ test("redlines_never_overlap_within_a_run", () => {
   expect(xml).not.toContain('<w:t xml:space="preserve">B</w:t>');
 });
 
+import { assertWordNamespaces } from "./helpers";
+
 const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 function runDoc(
@@ -343,13 +345,51 @@ test("cdata_run_text_can_be_redlined", () => {
   expect(xml).toContain('<w:t xml:space="preserve">o</w:t>');
 });
 
-test("unprefixed_document_gains_an_xmlns_binding", () => {
+test("unprefixed_document_declares_w_locally", () => {
   const doc = `<document xmlns="${W_NS}"><body><p><r><t>Hello</t></r></p></body></document>`;
   const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
   expect(out.skipped).toBe(0);
-  expect(xml).toContain(`xmlns:w="${W_NS}"`);
-  expect(xml).toContain("<w:ins");
+  // The root is not patched; generated top-level elements declare w:
+  // locally instead.
+  expect(xml).toContain(
+    `<w:ins w:id="101" w:author="lawlint" w:date="2020-01-01T00:00:00Z" xmlns:w="${W_NS}">`,
+  );
   expect(xml).toContain('<w:delText xml:space="preserve">ell</w:delText>');
+  assertWordNamespaces(xml);
+});
+
+test("prolog_comment_mimicking_root_is_untouched", () => {
+  const doc = `<!-- <document xmlns="${W_NS}"> --><document xmlns="${W_NS}"><body><p><r><t>Hello</t></r></p></body></document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  // The comment passes through byte-for-byte and the real root is not
+  // patched — the declaration lives on the generated elements.
+  expect(xml.startsWith(`<!-- <document xmlns="${W_NS}"> -->`)).toBe(true);
+  expect(xml).toContain(`<document xmlns="${W_NS}"><body>`);
+  assertWordNamespaces(xml);
+});
+
+test("descendant_rebinding_of_w_is_respected", () => {
+  // <body> rebinds w: to another URI, so the generated prefix must be a
+  // free one declared locally.
+  const doc = `<document xmlns="${W_NS}"><body xmlns:w="urn:other"><p><r><t>Hello</t></r></p></body></document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain(
+    `<lw:ins lw:id="101" lw:author="lawlint" lw:date="2020-01-01T00:00:00Z" xmlns:lw="${W_NS}">`,
+  );
+  expect(xml).not.toContain("<w:ins");
+  assertWordNamespaces(xml);
+});
+
+test("root_bound_w_needs_no_declarations", () => {
+  const doc = `<w:document xmlns:w="${W_NS}"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>`;
+  const { xml, out } = runDoc(doc, new Map([[0, [edit(1, 1, 4, "i")]]]));
+  expect(out.skipped).toBe(0);
+  expect(xml).toContain('<w:ins w:id="101" w:author="lawlint" w:date="2020-01-01T00:00:00Z">');
+  // No extra xmlns declarations on the generated markup.
+  expect(xml.match(/<w:ins[^>]*>/g)?.every((t) => !t.includes("xmlns"))).toBe(true);
+  assertWordNamespaces(xml);
 });
 
 test("non_w_prefix_is_reused_for_generated_markup", () => {
@@ -360,6 +400,7 @@ test("non_w_prefix_is_reused_for_generated_markup", () => {
   expect(xml).toContain('<x:delText xml:space="preserve">ell</x:delText>');
   expect(xml).toContain('<x:commentRangeStart x:id="1"/>');
   expect(xml).not.toContain("w:");
+  assertWordNamespaces(xml);
 });
 
 test("w_bound_elsewhere_picks_a_free_prefix", () => {
@@ -368,4 +409,5 @@ test("w_bound_elsewhere_picks_a_free_prefix", () => {
   expect(out.skipped).toBe(0);
   expect(xml).toContain(`xmlns:lw="${W_NS}"`);
   expect(xml).toContain("<lw:ins");
+  assertWordNamespaces(xml);
 });

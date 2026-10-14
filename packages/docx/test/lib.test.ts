@@ -8,6 +8,7 @@ import { Package, strToBytes } from "../src/pkg";
 import type { Projection } from "../src/project";
 import { type Ids, apply } from "../src/revise";
 import { selectEdits } from "../src/select";
+import { assertWordNamespaces } from "./helpers";
 
 function diag(start: number, end: number, replacement: string, message: string): Diagnostic {
   return {
@@ -287,14 +288,49 @@ test("comments_xml_with_other_prefix_stays_consistent", () => {
   expect(comments).not.toContain("<w:comment ");
 });
 
-test("comments_xml_without_prefix_gains_binding", () => {
+test("comments_xml_without_prefix_declares_w_locally", () => {
   const existing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <comments xmlns="${W_NS}"><comment id="2" author="a"><p><r><t>old</t></r></p></comment></comments>`;
   const docx = makeDocx([["word/comments.xml", existing]]);
   const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
   const comments = commentsXmlOf(out.bytes);
-  expect(comments).toContain(`xmlns:w="${W_NS}"`);
+  // The root is not patched; the generated block declares w: locally.
   expect(comments).toContain('<w:comment w:id="3"');
+  expect(comments).toContain(`xmlns:w="${W_NS}"`);
+  assertWordNamespaces(comments);
+});
+
+test("comments_xml_prolog_comment_does_not_capture_the_splice", () => {
+  const existing = `<!-- <comments xmlns="${W_NS}"> --><?xml version="1.0"?>
+<comments xmlns="${W_NS}"><comment id="2" author="a"><p><r><t>old</t></r></p></comment></comments>`;
+  const docx = makeDocx([["word/comments.xml", existing]]);
+  const out = applyTrackedChanges(docx, [delveDiag("m")], FIXED_OPTS);
+  const comments = commentsXmlOf(out.bytes);
+  // The new block lands inside the real root, after the prolog comment
+  // and before the root's closing tag.
+  const commentEnd = comments.indexOf("-->");
+  const blockAt = comments.indexOf('<w:comment w:id="3"');
+  const closeAt = comments.indexOf("</comments>");
+  expect(blockAt).toBeGreaterThan(commentEnd);
+  expect(blockAt).toBeLessThan(closeAt);
+  assertWordNamespaces(comments);
+});
+
+test("self_closing_rels_with_mimic_prolog_comment_expands_real_root", () => {
+  const rels = `<!-- <Relationships/> --><?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
+  const pkg = new Package();
+  pkg.set("[Content_Types].xml", strToBytes(CONTENT_TYPES));
+  pkg.set("word/_rels/document.xml.rels", strToBytes(rels));
+  pkg.set("word/document.xml", strToBytes(DOC_XML));
+  const out = applyTrackedChanges(pkg.write(), [delveDiag("m")], FIXED_OPTS);
+  const relsOut = partText(out.bytes, "word/_rels/document.xml.rels");
+  // The relationship is inside the real root, not the prolog comment.
+  const start = relsOut.indexOf("<Relationships ");
+  const comment = relsOut.indexOf("<!-- <Relationships/> -->");
+  expect(relsOut).toContain('Target="comments.xml"');
+  expect(comment).toBe(0);
+  expect(relsOut.indexOf('Target="comments.xml"')).toBeGreaterThan(start);
 });
 
 test("self_closing_rels_and_types_roots_are_expanded", () => {

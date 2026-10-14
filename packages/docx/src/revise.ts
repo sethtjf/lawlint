@@ -25,14 +25,13 @@
 
 import { DocxError } from "./index";
 import {
+  NsScope,
   type XmlEvent,
   escapeAttr,
   escapeText,
   local,
-  replaceFirst,
   resolveCharRef,
   resolvePredefinedEntity,
-  resolvePrefix,
   tokenize,
 } from "./xml";
 
@@ -205,10 +204,16 @@ function textEl(tag: string, text: string): string {
   return `<${tag} xml:space="preserve">${escapeText(text)}</${tag}>`;
 }
 
-function keepRun(rpr: XmlEvent[], text: string, p: string): string {
-  const parts = [`<${p}:r>`];
+/** A namespace prefix + the xmlns declaration to emit when it is needed. */
+interface Ns {
+  prefix: string;
+  decl: string;
+}
+
+function keepRun(rpr: XmlEvent[], text: string, ns: Ns): string {
+  const parts = [`<${ns.prefix}:r${ns.decl}>`];
   emitRpr(parts, rpr);
-  parts.push(textEl(`${p}:t`, text), `</${p}:r>`);
+  parts.push(textEl(`${ns.prefix}:t`, text), `</${ns.prefix}:r>`);
   return parts.join("");
 }
 
@@ -220,25 +225,26 @@ function revision(
   id: number,
   author: string,
   date: string | null,
-  p: string,
+  ns: Ns,
 ): string {
+  const p = ns.prefix;
   let start = `<${p}:${wrap} ${p}:id="${id}" ${p}:author="${escapeAttr(author)}"`;
   if (date !== null) start += ` ${p}:date="${escapeAttr(date)}"`;
-  start += ">";
+  start += `${ns.decl}>`;
   const parts = [start, `<${p}:r>`];
   emitRpr(parts, rpr);
   parts.push(textEl(`${p}:${runTextTag}`, text), `</${p}:r>`, `</${p}:${wrap}>`);
   return parts.join("");
 }
 
-function commentMarker(tag: string, id: number, p: string): string {
-  return `<${p}:${tag} ${p}:id="${id}"/>`;
+function commentMarker(tag: string, id: number, ns: Ns): string {
+  return `<${ns.prefix}:${tag} ${ns.prefix}:id="${id}"${ns.decl}/>`;
 }
 
-function commentReferenceRun(rpr: XmlEvent[], id: number, p: string): string {
-  const parts = [`<${p}:r>`];
+function commentReferenceRun(rpr: XmlEvent[], id: number, ns: Ns): string {
+  const parts = [`<${ns.prefix}:r${ns.decl}>`];
   emitRpr(parts, rpr);
-  parts.push(`<${p}:commentReference ${p}:id="${id}"/>`, `</${p}:r>`);
+  parts.push(`<${ns.prefix}:commentReference ${ns.prefix}:id="${id}"/>`, `</${ns.prefix}:r>`);
   return parts.join("");
 }
 
@@ -251,8 +257,8 @@ interface Ctx {
   author: string;
   date: string | null;
   ids: Ids;
-  /** Namespace prefix for generated elements/attributes (e.g. "w"). */
-  p: string;
+  /** Namespace for generated markup, resolved per run — set by finishRun. */
+  ns: Ns;
   comments: CommentOut[];
   annotated: number;
   dropped: Set<number>;
@@ -340,33 +346,28 @@ export function apply(
   const events = tokenize(documentXml);
   const out: string[] = [];
 
-  // Generated markup uses whatever prefix the document binds to W_NS; if
-  // none is bound, the root start tag gains an xmlns binding — but only
-  // when edits are actually emitted.
-  const root = events.find((e) => e.kind === "start");
-  const { prefix, patchedRaw } =
-    root !== undefined && root.kind === "start"
-      ? resolvePrefix(root.raw, W_NS)
-      : { prefix: "w", patchedRaw: null };
-
   const ctx: Ctx = {
     author,
     date,
     ids,
-    p: prefix,
+    ns: { prefix: "w", decl: "" },
     comments: [],
     annotated: 0,
     dropped: new Set(),
   };
 
   const wt = { v: 0 };
+  const scope = new NsScope();
   let buffering = false;
   let runDepth = 0;
   let buffer: XmlEvent[] = [];
+  // The namespace in effect at the buffered run's <w:r> start tag.
+  let runNs: Ns = { prefix: "w", decl: "" };
 
   for (const ev of events) {
     switch (ev.kind) {
       case "start":
+        scope.push(ev.raw);
         if (buffering) {
           buffer.push(ev);
           if (local(ev.name) === "r") runDepth++;
@@ -376,17 +377,21 @@ export function apply(
           buffering = true;
           runDepth = 1;
           buffer = [ev];
+          // Bindings on the <w:r> tag itself are in scope for the markup
+          // generated around it.
+          runNs = scope.resolve(W_NS);
         } else {
           out.push(ev.raw);
         }
         break;
       case "end":
+        scope.pop();
         if (buffering) {
           buffer.push(ev);
           if (local(ev.name) === "r") {
             runDepth--;
             if (runDepth === 0) {
-              finishRun(buffer, editsByOrdinal, voidedIds, ctx, out, wt);
+              finishRun(buffer, editsByOrdinal, voidedIds, ctx, out, wt, runNs);
               buffering = false;
             }
           }
@@ -400,13 +405,8 @@ export function apply(
     }
   }
 
-  let document = out.join("");
-  if (patchedRaw !== null && ctx.comments.length > 0 && root !== undefined) {
-    document = replaceFirst(document, root.raw, patchedRaw);
-  }
-
   return {
-    documentXml: encoder.encode(document),
+    documentXml: encoder.encode(out.join("")),
     comments: ctx.comments,
     annotated: ctx.annotated,
     skipped: ctx.dropped.size,
@@ -423,7 +423,7 @@ function openPiece(
   ctx: Ctx,
   state: { activeRedline: RunEdit | null },
 ): void {
-  out.push(commentMarker("commentRangeStart", e.commentId, ctx.p));
+  out.push(commentMarker("commentRangeStart", e.commentId, ctx.ns));
   if (e.replacement !== null) state.activeRedline = e;
 }
 
@@ -442,14 +442,14 @@ function closePiece(
   if (e.replacement !== null) {
     if (e.replacement !== "") {
       const rid = ctx.ids.nextRev++;
-      out.push(revision("ins", "t", rpr, e.replacement, rid, ctx.author, ctx.date, ctx.p));
+      out.push(revision("ins", "t", rpr, e.replacement, rid, ctx.author, ctx.date, ctx.ns));
     }
     state.activeRedline = null;
   } else {
     ctx.annotated++;
   }
-  out.push(commentMarker("commentRangeEnd", e.commentId, ctx.p));
-  out.push(commentReferenceRun(rpr, e.commentId, ctx.p));
+  out.push(commentMarker("commentRangeEnd", e.commentId, ctx.ns));
+  out.push(commentReferenceRun(rpr, e.commentId, ctx.ns));
   ctx.comments.push({
     id: e.commentId,
     author: ctx.author,
@@ -465,7 +465,9 @@ function finishRun(
   ctx: Ctx,
   out: string[],
   wt: { v: number },
+  ns: Ns,
 ): void {
+  ctx.ns = ns;
   const info = analyzeRun(buffer);
   const wtCount = countWt(buffer);
   const baseOrdinal = wt.v;
@@ -584,9 +586,9 @@ function finishRun(
         const seg = decodeRange(text, o, nextO);
         if (state.activeRedline !== null) {
           const rid = ctx.ids.nextRev++;
-          out.push(revision("del", "delText", rpr, seg, rid, ctx.author, ctx.date, ctx.p));
+          out.push(revision("del", "delText", rpr, seg, rid, ctx.author, ctx.date, ctx.ns));
         } else {
-          out.push(keepRun(rpr, seg, ctx.p));
+          out.push(keepRun(rpr, seg, ctx.ns));
         }
       }
     }

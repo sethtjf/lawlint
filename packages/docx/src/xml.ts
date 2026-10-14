@@ -217,28 +217,59 @@ export function replaceFirst(haystack: string, needle: string, replacement: stri
 
 const XMLNS_ATTR = /xmlns(?::([\w.-]+))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
+/** The xmlns prefix→URI bindings declared on one tag's raw slice ("" = default). */
+export function parseXmlnsBindings(raw: string): Map<string, string> {
+  const b = new Map<string, string>();
+  for (const m of raw.matchAll(XMLNS_ATTR)) b.set(m[1] ?? "", (m[2] ?? m[3]) || "");
+  return b;
+}
+
 /**
- * Find the prefix bound to `nsUri` in a root start-tag raw slice. If a
- * prefixed `xmlns:P="nsUri"` exists, return it. Otherwise choose a fresh
- * prefix (`w`, else the first free of `lw`, `lw1`, `lw2`, …) and return the
- * tag patched with ` xmlns:P="nsUri"` inserted before its `>`/`/>`.
+ * Choose a prefix for `uri` given a scope stack (outermost first; the
+ * innermost binding of each prefix wins). If some prefix's innermost binding
+ * is `uri`, reuse it — preferring `w`, then others innermost-first — with no
+ * declaration. Otherwise pick a prefix unbound at every level (`w`, else the
+ * first free of `lw`, `lw1`, …) and return the ` xmlns:P="uri"` declaration
+ * to emit on generated top-level elements.
  */
-export function resolvePrefix(
-  rootRaw: string,
-  nsUri: string,
-): { prefix: string; patchedRaw: string | null } {
-  const bound = new Set<string>();
-  for (const m of rootRaw.matchAll(XMLNS_ATTR)) {
-    if (m[1] === undefined) continue; // default-namespace binding, not a prefix
-    bound.add(m[1]);
-    if ((m[2] ?? m[3]) === nsUri) return { prefix: m[1], patchedRaw: null };
+export function choosePrefix(
+  scopes: readonly Map<string, string>[],
+  uri: string,
+): { prefix: string; decl: string } {
+  const seen = new Set<string>();
+  const qualifying: string[] = [];
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    for (const [p, u] of scopes[i]) {
+      if (p === "" || seen.has(p)) continue;
+      seen.add(p);
+      if (u === uri) qualifying.push(p);
+    }
   }
+  const bound = qualifying.includes("w") ? "w" : qualifying[0];
+  if (bound !== undefined) return { prefix: bound, decl: "" };
   let prefix = "w";
-  if (bound.has("w")) {
+  if (seen.has(prefix)) {
     prefix = "lw";
-    for (let i = 1; bound.has(prefix); i++) prefix = `lw${i}`;
+    for (let i = 1; seen.has(prefix); i++) prefix = `lw${i}`;
   }
-  const insertAt = rootRaw.endsWith("/>") ? rootRaw.length - 2 : rootRaw.length - 1;
-  const patchedRaw = `${rootRaw.slice(0, insertAt)} xmlns:${prefix}="${nsUri}"${rootRaw.slice(insertAt)}`;
-  return { prefix, patchedRaw };
+  return { prefix, decl: ` xmlns:${prefix}="${uri}"` };
+}
+
+/** The stack of live xmlns bindings while streaming a document's events. */
+export class NsScope {
+  private stack: Map<string, string>[] = [new Map()];
+
+  /** Push the bindings declared on a start tag's raw slice. */
+  push(raw: string): void {
+    this.stack.push(parseXmlnsBindings(raw));
+  }
+
+  pop(): void {
+    this.stack.pop();
+  }
+
+  /** Resolve `uri` in the current scope; see `choosePrefix`. */
+  resolve(uri: string): { prefix: string; decl: string } {
+    return choosePrefix(this.stack, uri);
+  }
 }
