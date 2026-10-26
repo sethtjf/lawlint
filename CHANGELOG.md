@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.0](https://github.com/sethtjf/lawlint/compare/v0.11.0...v0.12.0) (2026-10-26)
+
+
+### Features
+
+* **core-ts:** port lawlint-core to TypeScript with golden parity ([6ee09b3](https://github.com/sethtjf/lawlint/commit/6ee09b398b3b7877d955905fd8131cc0aaa2bad3))
+* **core-ts:** port lawlint-core to TypeScript with golden parity ([c770a92](https://github.com/sethtjf/lawlint/commit/c770a92c7f2dd3ce6b5fcf7803f098e1949525dd))
+* **core-ts:** scaffold @lawlint/core with the Rust-to-JS regex translator ([46a6c0d](https://github.com/sethtjf/lawlint/commit/46a6c0d6c9dda83dc3749dabd61654670f551632))
+* **docx:** port lawlint-docx to TypeScript with golden parity ([#83](https://github.com/sethtjf/lawlint/issues/83)) ([c6089a9](https://github.com/sethtjf/lawlint/commit/c6089a975e807910f7a99a69c54d93adcd282177))
+* **playground:** switch the playground from wasm to @lawlint/core ([f13ac4c](https://github.com/sethtjf/lawlint/commit/f13ac4cd6728ee9ee25be498f69a4e595a75b43d))
+
+
+### Bug Fixes
+
+* **core-ts:** close Rust/JS regex dialect gaps ([58e7436](https://github.com/sethtjf/lawlint/commit/58e74368d8b2438986fa2d813d081089b3e0447c))
+* **core-ts:** reproduce Rust find_iter semantics in match iteration ([1c772a8](https://github.com/sethtjf/lawlint/commit/1c772a89de6d2118403d27f0b07e662f50444aca))
+* **core-ts:** restrict mid-pattern flag sets and reject verbose mode explicitly ([0ccd616](https://github.com/sethtjf/lawlint/commit/0ccd61699bc36cc0e67d6bbfaa9e8ce791b08187))
+* **core-ts:** share the built-in rule set and wrap load_dir read errors ([02c3b94](https://github.com/sethtjf/lawlint/commit/02c3b9482a802c074500cb34348545939c8e431b))
+* **core:** bump mdast-util-from-markdown to 2.1.0 to dedupe with gfm-table ([d981f89](https://github.com/sethtjf/lawlint/commit/d981f89887e800a4a46b6ef40f9c201e8676b6d2))
+* **core:** match Rust for spelled counts and pattern field types ([ab46d9c](https://github.com/sethtjf/lawlint/commit/ab46d9c7d148e7cfe9a3f51b0d568d6602c28b71))
+* **deps:** bump quinn-proto for cargo-audit ([6243bf4](https://github.com/sethtjf/lawlint/commit/6243bf47b4cbd7e50ed58a761793bc5d047e3bc8))
+* **deps:** resolve website security advisories ([#81](https://github.com/sethtjf/lawlint/issues/81)) ([56ea92a](https://github.com/sethtjf/lawlint/commit/56ea92ae900c867efbdb7f5295621ba5a3ba38a9))
+
 ## [0.11.0](https://github.com/sethtjf/lawlint/compare/v0.10.0...v0.11.0) (2026-08-18)
 
 
