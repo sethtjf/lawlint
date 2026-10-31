@@ -282,9 +282,10 @@ mod tests {
     fn registry() {
         // 20 bespoke rules; +2 inferential, +2 document-level statistical
         // rules (#37), +5 Orwell/AI-voice writing rules (#47), +8 no-slop
-        // rules, +13 voice/style rules, and +8 inferential voice rules = 57.
+        // rules, +13 voice/style rules, +8 inferential voice rules, and
+        // no-ai-tracking-links = 58.
         let rs = RuleSet::built_in();
-        assert_eq!(rs.metas().len(), 57);
+        assert_eq!(rs.metas().len(), 58);
         assert!(rs.metas().iter().all(|m| m.id.0.starts_with("core/")));
         assert!(rs.metas().iter().all(|m| !m.description.is_empty()));
     }

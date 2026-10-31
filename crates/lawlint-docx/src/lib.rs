@@ -11,10 +11,12 @@ use std::collections::HashMap;
 
 use lawlint_core::{Applicability, Diagnostic};
 
+mod links;
 mod pkg;
 mod project;
 mod revise;
 
+pub use links::{strip_ai_tracking, TrackedLink, AI_UTM_SOURCES};
 use pkg::Package;
 use project::{Projection, RunText};
 use revise::{Ids, RunEdit};
@@ -102,6 +104,28 @@ pub fn extract(docx_bytes: &[u8]) -> Result<String, DocxError> {
         .get_str(DOCUMENT)?
         .ok_or(DocxError::MissingPart(DOCUMENT))?;
     Ok(project::project(&xml)?.text)
+}
+
+/// Hyperlink targets tagged with an AI assistant's `utm_source` (ChatGPT's
+/// `utm_source=chatgpt.com`). These live in relationship parts, outside the
+/// text [`extract`] returns, so the lint rules cannot report them.
+pub fn find_ai_tracking_links(docx_bytes: &[u8]) -> Result<Vec<TrackedLink>, DocxError> {
+    links::find(&Package::read(docx_bytes)?)
+}
+
+/// Remove AI `utm_source` tags from every hyperlink target, returning the new
+/// package bytes and the links changed. These are direct edits, not tracked
+/// changes: Word does not track hyperlink targets. With no tagged links the
+/// input bytes come back unchanged.
+pub fn strip_ai_tracking_links(
+    docx_bytes: &[u8],
+) -> Result<(Vec<u8>, Vec<TrackedLink>), DocxError> {
+    let mut pkg = Package::read(docx_bytes)?;
+    let changed = links::strip(&mut pkg)?;
+    if changed.is_empty() {
+        return Ok((docx_bytes.to_vec(), changed));
+    }
+    Ok((pkg.write()?, changed))
 }
 
 /// Apply MachineApplicable fixes from `diagnostics` to the `.docx` as tracked
