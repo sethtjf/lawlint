@@ -7,6 +7,7 @@
 // runs and leaving every other part of the package untouched.
 
 import type { Diagnostic } from "@lawlint/core";
+import { type TrackedLink, find as findLinks, strip as stripLinks } from "./links";
 import { Package, strToBytes } from "./pkg";
 import { project } from "./project";
 import { type CommentOut, type Ids, apply } from "./revise";
@@ -69,6 +70,30 @@ export function extract(docx: Uint8Array): string {
   const xml = pkg.getStr(DOCUMENT);
   if (xml === undefined) throw new DocxError("missing_part", DOCUMENT);
   return project(xml).text;
+}
+
+export { AI_UTM_SOURCES, type TrackedLink, stripAiTracking } from "./links";
+
+/**
+ * Hyperlink targets tagged with an AI assistant's `utm_source` (ChatGPT's
+ * `utm_source=chatgpt.com`). They live outside the text `extract` returns.
+ */
+export function findAiTrackingLinks(docx: Uint8Array): TrackedLink[] {
+  return findLinks(Package.read(docx));
+}
+
+/**
+ * Remove AI `utm_source` tags from every hyperlink target. Direct edits, not
+ * tracked changes: Word does not track hyperlink targets. With no tagged
+ * links the input bytes come back unchanged.
+ */
+export function stripAiTrackingLinks(docx: Uint8Array): {
+  bytes: Uint8Array;
+  links: TrackedLink[];
+} {
+  const pkg = Package.read(docx);
+  const links = stripLinks(pkg);
+  return { bytes: links.length === 0 ? docx : pkg.write(), links };
 }
 
 /**

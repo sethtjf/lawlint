@@ -621,6 +621,10 @@ fn is_docx_path(file: &str) -> bool {
 /// tracked changes with a review comment per fix.
 fn apply_docx_fixes(file: &str, diagnostics: &[Diagnostic]) -> Result<(), String> {
     let bytes = fs::read(file).map_err(|error| format!("failed to read {file}: {error}"))?;
+    // Link targets first: they sit outside the projected text, so stripping
+    // them leaves the diagnostics' byte offsets valid for the redline pass.
+    let (bytes, links) = lawlint_docx::strip_ai_tracking_links(&bytes)
+        .map_err(|error| format!("failed to clean links in {file}: {error}"))?;
     let result = lawlint_docx::apply_tracked_changes(
         &bytes,
         diagnostics,
@@ -631,9 +635,19 @@ fn apply_docx_fixes(file: &str, diagnostics: &[Diagnostic]) -> Result<(), String
     // threw away a document whose findings were all comment-only — the
     // common case, since most rules have no machine-applicable fix — while
     // still reporting the comments as written.
-    if result.applied > 0 || result.annotated > 0 {
+    if result.applied > 0 || result.annotated > 0 || !links.is_empty() {
         fs::write(file, &result.bytes)
             .map_err(|error| format!("failed to write {file}: {error}"))?;
+    }
+    if !links.is_empty() {
+        // Word does not track hyperlink targets, so say exactly what changed.
+        eprintln!(
+            "Removed ChatGPT tracking tags from {} (not tracked changes):",
+            ui::plural(links.len(), "hyperlink")
+        );
+        for link in &links {
+            eprintln!("  {} → {}", link.url, link.cleaned);
+        }
     }
     let mut parts = vec![format!(
         "{} tracked change{}",
@@ -846,6 +860,30 @@ pub(crate) fn coverage(
 /// how to see more. Findings themselves live behind `--list`, because 33
 /// findings each quoting its containing paragraph is not something anyone
 /// reads.
+/// Hyperlinks in a `.docx` whose targets carry ChatGPT's `utm_source` tag.
+/// They are not diagnostics (the URL is not in the linted text), so they get
+/// their own block rather than a line in the findings list.
+fn format_tracked_links(links: &[lawlint_docx::TrackedLink], fixing: bool, color: bool) -> String {
+    let warn = |v: String| if color { v.yellow().to_string() } else { v };
+    let dim = |v: String| if color { v.dimmed().to_string() } else { v };
+    let mut lines = vec![format!(
+        "  {}",
+        warn(format!(
+            "{} {} a ChatGPT tracking tag (utm_source), visible on hover",
+            ui::plural(links.len(), "hyperlink"),
+            if links.len() == 1 { "carries" } else { "carry" }
+        ))
+    )];
+    for link in links {
+        lines.push(format!("    {}", dim(link.url.clone())));
+    }
+    if !fixing {
+        lines.push(format!("  {}", dim("--fix removes the tags".to_string())));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 pub(crate) fn format_summary(
     result: &LintResult,
     cov: &Coverage,
@@ -1344,10 +1382,13 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
         return Err("--fix and --diff require --format pretty".into());
     }
     let is_docx = is_docx_path(&cli.file);
+    let mut tracked_links = Vec::new();
     let (text, file_markdown) = if is_docx {
         let bytes =
             fs::read(&cli.file).map_err(|error| format!("failed to read {}: {error}", cli.file))?;
         let text = lawlint_docx::extract(&bytes)
+            .map_err(|error| format!("failed to read {}: {error}", cli.file))?;
+        tracked_links = lawlint_docx::find_ai_tracking_links(&bytes)
             .map_err(|error| format!("failed to read {}: {error}", cli.file))?;
         (text, false)
     } else {
@@ -1424,6 +1465,9 @@ fn lint_command(cli: &Cli) -> Result<i32, String> {
                         color
                     )
                 );
+                if !tracked_links.is_empty() {
+                    println!("{}", format_tracked_links(&tracked_links, cli.fix, color));
+                }
                 if cli.list {
                     println!("{}", format_findings(&result, &text, color));
                 }
