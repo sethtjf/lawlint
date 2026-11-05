@@ -60,17 +60,23 @@ See [Setting up AI features](/docs/guides/ai-setup).
 
 ## `lawlint learn <path>`
 
-Mines a personal rule package from your own prior writing: a local statistical
-pass over the full corpus, an AI mining pass over a small sample, and a
-self-check so no generated rule flags your own text.
+Mines a style rule package from source writing, your own or exemplars you want
+drafts to match. It profiles the full corpus, drafts AI versions of sampled
+passages as a contrast set, mines hard and soft rules from the difference, and
+keeps only rules that never flag the corpus and (for mined rules) flag at least
+one AI draft. The package also carries `profile.json` and a `STYLE.md` drafting
+brief.
 
 <TypeTable type={{
-  "PATH": { type: "path", required: true, description: "A file or directory of your writing (.docx, .md, .txt)." },
+  "PATH": { type: "path", required: true, description: "A file or directory of source writing (.docx, .md, .txt)." },
   "--out": { type: "DIR", default: ".lawlint/rules/personal", description: "Where to write the generated rule package." },
   "--model": { type: "MODEL", description: "Mining model, overriding the lawlint init AI preferences." },
+  "--workers": { type: "N", default: "4", description: "Concurrent mining workers (1-4), overriding learn.concurrency." },
+  "--contrast": { type: "N", default: "6", description: "AI drafts of sampled passages to mine against; 0 disables the contrast set and the discrimination check." },
+  "--no-soft": { type: "flag", description: "Skip soft (AI-judge) rules and the judge calls that verify them." },
 }} />
 
-See [Learning your voice](/docs/guides/learn).
+See [Learning a style](/docs/guides/learn).
 
 ## `lawlint rules`
 

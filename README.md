@@ -137,7 +137,7 @@ lawlint --fix brief.docx           # apply fixes (tracked changes + comments in 
 lawlint --diff draft.md            # preview what --fix would change
 lawlint --no-ai brief.docx         # hard rules only, even when AI is configured
 lawlint --format prompt draft.md   # emit an AI revision brief for your assistant
-lawlint learn ~/my-writing/        # mine a personal rule package from your prose
+lawlint learn ~/my-writing/        # mine a style rule package + STYLE.md from source prose
 lawlint rules --json               # built-in rule metadata
 ```
 
@@ -163,9 +163,13 @@ The human-likeness score (0–100) aggregates only `detection`-intent rules —
 the ones corpus-validated to distinguish AI from human legal prose. `style`
 rules (Oxford comma, semicolons, sentence length, Orwell rules, …) still
 report findings and participate in `--fix`, but never move the score.
-`lawlint learn` generates rules from *your* writing: a statistical pass over
-the full corpus, an AI mining pass over a small sample, and a self-consistency
-gate so no generated rule flags your own prose.
+`lawlint learn` generates rules from source writing: your own, or exemplars
+you want agent drafts to match. It profiles the full corpus, has the model
+draft its own versions of sampled passages as a contrast set, and mines hard
+rules and soft (AI-judge) rules for tone, cohesion, clarity, and reasoning from
+the difference. Gates run in both directions: no kept rule flags the corpus,
+and every mined rule flags at least one AI draft. The package ships with a
+`STYLE.md` drafting brief for agents.
 
 ### Hard rules and soft rules
 

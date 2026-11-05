@@ -105,9 +105,12 @@ enum Command {
         #[arg(long, value_name = "MODEL")]
         ai: Option<String>,
     },
-    /// Mine a personal rule package from your own prior writing: a local
-    /// statistical pass over the full corpus, then an AI mining pass over a
-    /// small sample, self-checked so no generated rule flags your own text.
+    /// Mine a style rule package from source writing (your own, or exemplars
+    /// you want drafts to match): a style profile over the full corpus, AI
+    /// drafts of sampled passages as a contrast set, hard and soft rules mined
+    /// from the difference, and gates so no rule flags the corpus and every
+    /// mined rule flags at least one AI draft. Also writes STYLE.md, a
+    /// drafting brief for agents.
     Learn {
         /// A file or directory of your writing (.docx, .md, .txt).
         #[arg(value_name = "PATH")]
@@ -123,6 +126,14 @@ enum Command {
         /// Concurrent mining lenses (1-4), overriding `learn.concurrency`.
         #[arg(long, value_name = "N")]
         workers: Option<usize>,
+        /// AI drafts of sampled corpus passages to mine against (default 6;
+        /// 0 disables). Mined rules must fire on at least one draft.
+        #[arg(long, value_name = "N")]
+        contrast: Option<usize>,
+        /// Skip soft (AI-judge) rules for tone, cohesion, clarity, and
+        /// reasoning, and the judge calls that verify them.
+        #[arg(long)]
+        no_soft: bool,
     },
     /// List rules, or test rule packages.
     Rules {
@@ -1941,7 +1952,19 @@ fn run(cli: Cli) -> Result<i32, String> {
             out,
             model,
             workers,
-        }) => learn::learn_command(path, out, model.as_deref(), *workers, cli.quiet),
+            contrast,
+            no_soft,
+        }) => learn::learn_command(
+            path,
+            out,
+            model.as_deref(),
+            *workers,
+            learn::LearnFlags {
+                contrast: *contrast,
+                no_soft: *no_soft,
+            },
+            cli.quiet,
+        ),
         Some(Command::Rules { json, action }) => match action {
             Some(RulesAction::Test {
                 path,

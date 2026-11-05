@@ -27,7 +27,9 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use lawlint_core::{lint_with, loader, LintOptions, RuleDef, RuleExample, RuleSet, TokenKind};
+use lawlint_core::{
+    lint_with, loader, Judge, LintOptions, RuleDef, RuleExample, RuleSet, TokenKind,
+};
 use lawlint_eval::{evaluate_with, per_rule_metrics, Label, Sample};
 use lawlint_judge::AxAIClient;
 use regex::Regex;
@@ -35,6 +37,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::progress::MultiSpinner;
+
+mod contrast;
+mod guide;
+mod profile;
+mod soft;
 
 /// Below this many corpus words, "the corpus never does X" is noise, not
 /// signal — pass 1 emits no candidates (pass 2 still runs).
@@ -395,6 +402,15 @@ struct RuleYaml {
     metric: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<BTreeMap<String, f64>>,
+    /// `style` for rules that measure distance from the corpus rather than
+    /// corpus-validated AI detection; `None` keeps the loader default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent: Option<String>,
+    /// Document-level statistical rules: the flag boundary and its side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    direction: Option<String>,
 }
 
 /// A generated rule that parsed and validated as a real `RuleDef`.
@@ -532,6 +548,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     }
 
@@ -561,6 +580,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     }
 
@@ -595,6 +617,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     } else if stats.oxford_with == 0 && stats.oxford_without >= 3 {
         let patterns = vec![PatternYaml {
@@ -624,6 +649,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     }
 
@@ -662,6 +690,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     }
 
@@ -687,6 +718,9 @@ fn statistical_candidates(files: &[CorpusFile], stats: &CorpusStats) -> Vec<Cand
             patterns: Vec::new(),
             metric: Some("sentence-length".to_string()),
             params: Some([("max_words".to_string(), max_words)].into_iter().collect()),
+            intent: None,
+            threshold: None,
+            direction: None,
         });
     }
 
@@ -855,7 +889,21 @@ fn stats_block(stats: &CorpusStats) -> String {
     block
 }
 
-fn mining_prompt(stats: &CorpusStats, sample: &[Passage], lens: &Lens) -> String {
+/// Evidence beyond the pass-1 counts that every mining prompt carries: the
+/// style profile (compared against the AI drafts when a contrast set ran)
+/// and the matched pairs themselves. Empty = the original prompt.
+#[derive(Default)]
+struct PromptEvidence<'a> {
+    profile_block: String,
+    pairs: &'a [contrast::ContrastPair],
+}
+
+fn mining_prompt(
+    stats: &CorpusStats,
+    sample: &[Passage],
+    lens: &Lens,
+    evidence: &PromptEvidence<'_>,
+) -> String {
     let mut prompt = String::new();
     let _ = write!(
         prompt,
@@ -870,6 +918,10 @@ fn mining_prompt(stats: &CorpusStats, sample: &[Passage], lens: &Lens) -> String
         lens.name, lens.focus
     );
     prompt.push_str(&stats_block(stats));
+    if !evidence.profile_block.is_empty() {
+        prompt.push_str("\nStyle profile:\n");
+        prompt.push_str(&evidence.profile_block);
+    }
     prompt.push_str("\nSample passages:\n");
     for (index, passage) in sample.iter().enumerate() {
         let _ = writeln!(
@@ -880,6 +932,28 @@ fn mining_prompt(stats: &CorpusStats, sample: &[Passage], lens: &Lens) -> String
             passage.register,
             passage.text
         );
+    }
+    if !evidence.pairs.is_empty() {
+        prompt.push_str(
+            "\nMatched pairs: a passage of the writer's and an AI-written version of the \
+             same content. Prefer rules that flag what the AI drafts do and the writer \
+             never does; a rule's bad example may quote an AI draft.\n",
+        );
+        for (index, pair) in evidence
+            .pairs
+            .iter()
+            .take(soft::MAX_PROMPT_PAIRS)
+            .enumerate()
+        {
+            let _ = writeln!(
+                prompt,
+                "--- pair {n}: writer ({}) ---\n{}\n--- pair {n}: AI draft ---\n{}",
+                pair.source,
+                truncate_chars(&pair.original, PROMPT_PASSAGE_CHARS),
+                truncate_chars(&pair.draft, PROMPT_PASSAGE_CHARS),
+                n = index + 1
+            );
+        }
     }
     let _ = write!(
         prompt,
@@ -960,7 +1034,14 @@ fn strip_code_fences(s: &str) -> &str {
 
 /// Parse the agent's response into mined rules. Tolerates code fences and
 /// prose around the JSON array (same posture as the judge's finding parse).
+#[cfg(test)]
 fn parse_mined(content: &str) -> Result<Vec<MinedRule>, String> {
+    parse_json_array(content)
+}
+
+/// Parse a JSON array of `T` out of a model response, tolerating code fences
+/// and prose around the array.
+fn parse_json_array<T: serde::de::DeserializeOwned>(content: &str) -> Result<Vec<T>, String> {
     let stripped = strip_code_fences(content.trim());
     let mut candidates: Vec<&str> = vec![stripped];
     if let (Some(start), Some(end)) = (stripped.find('['), stripped.rfind(']')) {
@@ -969,7 +1050,7 @@ fn parse_mined(content: &str) -> Result<Vec<MinedRule>, String> {
         }
     }
     for candidate in candidates {
-        if let Ok(rules) = serde_json::from_str::<Vec<MinedRule>>(candidate) {
+        if let Ok(rules) = serde_json::from_str::<Vec<T>>(candidate) {
             return Ok(rules);
         }
     }
@@ -1086,6 +1167,9 @@ fn mined_candidate(
             patterns,
             metric: None,
             params: None,
+            intent: None,
+            threshold: None,
+            direction: None,
         },
         "pass 2 (mining agent)",
     )
@@ -1298,6 +1382,15 @@ fn write_package(
 /// The mining chat round-trip: one retry on malformed output (same posture
 /// as the judge), errors degrade to "no mined candidates" upstream.
 fn mine(client: &mut dyn AxAIClient, prompt: &str) -> Result<Vec<MinedRule>, String> {
+    request_json_array(client, prompt)
+}
+
+/// One chat round-trip expecting a JSON array of `T`, retried once on
+/// malformed output.
+fn request_json_array<T: serde::de::DeserializeOwned>(
+    client: &mut dyn AxAIClient,
+    prompt: &str,
+) -> Result<Vec<T>, String> {
     let request = json!({
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
@@ -1315,7 +1408,7 @@ fn mine(client: &mut dyn AxAIClient, prompt: &str) -> Result<Vec<MinedRule>, Str
             );
             continue;
         };
-        match parse_mined(&content) {
+        match parse_json_array(&content) {
             Ok(rules) => return Ok(rules),
             Err(error) => last_error = error,
         }
@@ -1398,6 +1491,50 @@ fn mine_concurrent(jobs: Vec<MiningJob>, progress: &MultiSpinner) -> Vec<MiningO
     })
 }
 
+/// Run `work` over `items` on a pool of clients: one scoped thread per
+/// client, each pulling the next item off a shared cursor, so a slow call
+/// never idles the rest of the pool. Results come back in item order and
+/// progress line `i` tracks item `i`. A panicking backend fails its item
+/// only (same posture as `mine_concurrent`).
+fn fan_out<T: Sync, R: Send>(
+    clients: &mut [Box<dyn AxAIClient + Send>],
+    items: &[T],
+    progress: &MultiSpinner,
+    work: &(dyn Fn(&mut dyn AxAIClient, &T) -> Result<R, String> + Sync),
+    summary: &(dyn Fn(&R) -> String + Sync),
+) -> Vec<Result<R, String>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let cursor = AtomicUsize::new(0);
+    let results: Mutex<Vec<Option<Result<R, String>>>> =
+        Mutex::new((0..items.len()).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for client in clients.iter_mut() {
+            let (cursor, results) = (&cursor, &results);
+            scope.spawn(move || loop {
+                let index = cursor.fetch_add(1, Ordering::SeqCst);
+                let Some(item) = items.get(index) else { break };
+                progress.set_running(index, "running…");
+                let result =
+                    std::panic::catch_unwind(AssertUnwindSafe(|| work(client.as_mut(), item)))
+                        .unwrap_or_else(|_| Err("worker panicked".to_string()));
+                match &result {
+                    Ok(value) => progress.set_done(index, summary(value)),
+                    Err(error) => progress.set_failed(index, truncate_chars(error, 60)),
+                }
+                results.lock().expect("fan_out results lock")[index] = Some(result);
+            });
+        }
+    });
+    results
+        .into_inner()
+        .expect("fan_out results lock")
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| Err("no client available".to_string())))
+        .collect()
+}
+
 /// Whether a gate-rejection reason is a content problem the agent could
 /// plausibly fix by rewriting the rule. "duplicate rule id" is a naming
 /// collision with an unrelated candidate, not a rule-quality problem — a
@@ -1468,6 +1605,41 @@ fn repair_prompt(items: &[(&Candidate, &str)], examples: &BTreeMap<String, Strin
     prompt
 }
 
+/// Stages beyond the original two passes. `Default` runs none of them,
+/// which is the original behavior the pass-1/pass-2 unit tests pin.
+#[derive(Default)]
+struct Stages<'a> {
+    /// Client pool for contrast drafting and soft mining, separate from the
+    /// hard-mining lens clients (clients are cheap and stateless).
+    extra_clients: Vec<Box<dyn AxAIClient + Send>>,
+    /// Matched pairs to draft; 0 skips the contrast set.
+    contrast_passages: usize,
+    /// Judge for the soft-rule gate. `None` skips soft mining: an unverified
+    /// soft rule never ships.
+    judge: Option<&'a dyn Judge>,
+}
+
+/// Origins whose only justification is separating AI drafts from the
+/// corpus. With a contrast set, they must fire on at least one draft.
+/// Pass-1 absence rules are exempt: "the corpus never writes `utilize`" is
+/// worth enforcing even if six drafts happen not to use it either.
+fn requires_contrast_evidence(origin: &str) -> bool {
+    origin == "pass 2 (mining agent)" || origin == profile::CALIBRATED_ORIGIN
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileFile<'a> {
+    generated_by: &'static str,
+    corpus: &'a str,
+    source: &'a profile::StyleProfile,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_drafts: Option<&'a profile::StyleProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_draft_model: Option<&'a str>,
+}
+
+#[cfg(test)]
 fn run_learn(
     files: &[CorpusFile],
     corpus_label: &str,
@@ -1476,6 +1648,29 @@ fn run_learn(
     model_id: &str,
     quiet: bool,
     output: &mut dyn Write,
+) -> Result<i32, String> {
+    run_learn_with(
+        files,
+        corpus_label,
+        out,
+        clients,
+        model_id,
+        quiet,
+        output,
+        Stages::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_learn_with(
+    files: &[CorpusFile],
+    corpus_label: &str,
+    out: &Path,
+    clients: Vec<Box<dyn AxAIClient + Send>>,
+    model_id: &str,
+    quiet: bool,
+    output: &mut dyn Write,
+    stages: Stages<'_>,
 ) -> Result<i32, String> {
     let say = |output: &mut dyn Write, line: &str| -> Result<(), String> {
         writeln!(output, "{line}").map_err(|error| error.to_string())
@@ -1503,7 +1698,60 @@ fn run_learn(
         )?;
     }
     let mut candidates = statistical_candidates(files, &stats);
+
+    // Style profile over the full corpus: the "never opens with" transition
+    // rule and document-level rules calibrated to the corpus's own range.
+    let style = profile::measure_files(files);
+    if let Some(rule) = profile::transition_candidate(files, &style, &stats) {
+        candidates.push(rule);
+    }
+    candidates.extend(profile::calibrated_candidates(&style, &stats));
     let pass1_count = candidates.len();
+
+    // Contrast set: the mining model's own drafts of sampled passages.
+    let mut extra_clients = stages.extra_clients;
+    let mut pairs: Vec<contrast::ContrastPair> = Vec::new();
+    if stages.contrast_passages > 0 && !extra_clients.is_empty() {
+        let sources = contrast::select_sources(files, stages.contrast_passages);
+        if sources.is_empty() {
+            say(
+                output,
+                "Contrast set: skipped (no corpus passage is long enough to redraft)",
+            )?;
+        } else {
+            let chars: usize = sources.iter().map(|s| s.text.len()).sum();
+            say(
+                output,
+                &format!(
+                    "Contrast set: drafting {} passage{} (~{} tokens) -> {model_id}",
+                    sources.len(),
+                    if sources.len() == 1 { "" } else { "s" },
+                    chars / 4
+                ),
+            )?;
+            let (drafted, failures) =
+                contrast::generate(&mut extra_clients, &sources, model_id, quiet);
+            for (source, error) in &failures {
+                say(
+                    output,
+                    &format!("lawlint: warning: contrast draft of {source} unusable ({error})"),
+                )?;
+            }
+            pairs = drafted;
+            say(
+                output,
+                &format!("  {} of {} drafts usable", pairs.len(), sources.len()),
+            )?;
+        }
+    }
+    let contrast_profile = (!pairs.is_empty()).then(|| {
+        let drafts: Vec<(&str, bool)> = pairs.iter().map(|p| (p.draft.as_str(), false)).collect();
+        profile::measure(&drafts)
+    });
+    let evidence = PromptEvidence {
+        profile_block: profile::profile_block(&style, contrast_profile.as_ref()),
+        pairs: &pairs,
+    };
 
     // Pass 2: stratified sample → mining agent over the ax boundary, fanned
     // out across up to `clients.len()` lenses concurrently (`zip` clamps to
@@ -1538,7 +1786,7 @@ fn run_learn(
         .map(|(client, lens)| MiningJob {
             client,
             lens,
-            prompt: mining_prompt(&stats, &sample, lens),
+            prompt: mining_prompt(&stats, &sample, lens, &evidence),
         })
         .collect();
     let outcomes = mine_concurrent(jobs, &spinner);
@@ -1607,6 +1855,85 @@ fn run_learn(
             "lawlint: warning: every mining lens was unavailable; keeping pass-1 candidates only",
         )?;
     }
+    // Soft rules: judgment-level lenses, each proposing inferential rules
+    // whose pass examples must quote the corpus. Mined only when a judge can
+    // gate them.
+    let mut soft_candidates: Vec<Candidate> = Vec::new();
+    if let (Some(_), false) = (stages.judge, extra_clients.is_empty()) {
+        let lenses: Vec<&'static soft::SoftLens> = soft::SOFT_LENSES.iter().collect();
+        say(
+            output,
+            &format!(
+                "Soft rules (mining agent): {} lenses -> {model_id}",
+                lenses.len()
+            ),
+        )?;
+        let spinner = MultiSpinner::new(
+            &format!("Soft rules (mining agent) -> {model_id}"),
+            lenses.iter().map(|lens| lens.name.to_string()).collect(),
+            quiet,
+        );
+        let results = fan_out(
+            &mut extra_clients,
+            &lenses,
+            &spinner,
+            &|client, lens| {
+                request_json_array::<soft::MinedSoftRule>(
+                    client,
+                    &soft::soft_prompt(&evidence.profile_block, &sample, &pairs, lens),
+                )
+            },
+            &|rules: &Vec<soft::MinedSoftRule>| {
+                format!(
+                    "{} candidate{}",
+                    rules.len(),
+                    if rules.len() == 1 { "" } else { "s" }
+                )
+            },
+        );
+        spinner.finish();
+        let corpus_text = soft::normalized_corpus(files);
+        for (lens, result) in lenses.iter().zip(results) {
+            match result {
+                Ok(rules) => {
+                    for (index, rule) in rules
+                        .into_iter()
+                        .take(soft::MAX_SOFT_RULES_PER_LENS)
+                        .enumerate()
+                    {
+                        match soft::soft_candidate(
+                            rule,
+                            index,
+                            model_id,
+                            lens.name,
+                            &used_ids,
+                            &corpus_text,
+                        ) {
+                            Ok(candidate) => {
+                                used_ids.insert(candidate.id.clone());
+                                soft_candidates.push(candidate);
+                            }
+                            Err((id, reason)) => invalid.push((id, soft::SOFT_ORIGIN, reason)),
+                        }
+                    }
+                }
+                Err(error) => say(
+                    output,
+                    &format!(
+                        "lawlint: warning: soft lens {:?} unavailable ({error}); \
+                         other lenses still ran",
+                        lens.name
+                    ),
+                )?,
+            }
+        }
+    }
+    let soft_count = soft_candidates.len()
+        + invalid
+            .iter()
+            .filter(|(_, origin, _)| *origin == soft::SOFT_ORIGIN)
+            .count();
+
     let dedup_note = if duplicate_count > 0 {
         format!(", {duplicate_count} duplicate merged")
     } else {
@@ -1615,8 +1942,13 @@ fn run_learn(
     say(
         output,
         &format!(
-            "Candidates: {} ({pass1_count} statistical, {agent_count} agent{dedup_note})",
-            candidates.len() + invalid.len()
+            "Candidates: {} ({pass1_count} statistical, {agent_count} agent{}{dedup_note})",
+            candidates.len() + soft_candidates.len() + invalid.len(),
+            if soft_count > 0 {
+                format!(", {soft_count} soft")
+            } else {
+                String::new()
+            }
         ),
     )?;
 
@@ -1750,20 +2082,108 @@ fn run_learn(
         )?;
     }
 
-    say(
-        output,
-        &format!(
-            "Self-consistency gate over {} corpus passage{}:",
-            report.gate_samples,
-            if report.gate_samples == 1 { "" } else { "s" }
-        ),
-    )?;
-    for candidate in &report.kept {
+    // Discrimination check: mined and calibrated rules exist to separate AI
+    // drafts from the corpus, so with a contrast set they must fire on at
+    // least one draft. A rule that matches nothing passes the self gate and
+    // adds nothing.
+    let mut draft_hits: BTreeMap<String, usize> = BTreeMap::new();
+    if !pairs.is_empty() {
+        draft_hits = contrast::contrast_hits(&package, &report.kept, &pairs)?;
+        let (keep, dead): (Vec<Candidate>, Vec<Candidate>) =
+            std::mem::take(&mut report.kept).into_iter().partition(|c| {
+                !requires_contrast_evidence(c.origin)
+                    || draft_hits.get(&c.id).copied().unwrap_or(0) > 0
+            });
+        report.kept = keep;
+        for candidate in dead {
+            report.dropped.push((
+                candidate.id,
+                candidate.origin,
+                format!("never fired on the {} AI contrast drafts", pairs.len()),
+            ));
+        }
+    }
+
+    // Judge gate for soft rules.
+    let mut soft_findings: BTreeMap<String, Option<usize>> = BTreeMap::new();
+    if let (Some(judge), false) = (stages.judge, soft_candidates.is_empty()) {
+        let corpus_doc = soft::gate_corpus_document(files);
+        let contrast_doc = (!pairs.is_empty()).then(|| {
+            pairs
+                .iter()
+                .map(|p| p.draft.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        });
         say(
             output,
             &format!(
-                "  kept    {package}/{:<28} self-fire 0/{} [{}]",
-                candidate.id, report.gate_samples, candidate.origin
+                "Judge gate: {} soft candidate{} over ~{} corpus words{} -> {}",
+                soft_candidates.len(),
+                if soft_candidates.len() == 1 { "" } else { "s" },
+                corpus_doc.split_whitespace().count(),
+                if contrast_doc.is_some() {
+                    format!(" and {} AI drafts", pairs.len())
+                } else {
+                    String::new()
+                },
+                judge.model_id()
+            ),
+        )?;
+        for verdict in soft::gate(
+            judge,
+            &package,
+            std::mem::take(&mut soft_candidates),
+            &corpus_doc,
+            contrast_doc.as_deref(),
+        ) {
+            match verdict.outcome {
+                Ok(hits) => {
+                    soft_findings.insert(verdict.candidate.id.clone(), hits);
+                    report.kept.push(verdict.candidate);
+                }
+                Err(reason) => {
+                    report
+                        .dropped
+                        .push((verdict.candidate.id, verdict.candidate.origin, reason))
+                }
+            }
+        }
+    }
+
+    say(
+        output,
+        &format!(
+            "Self-consistency gate over {} corpus passage{}{}:",
+            report.gate_samples,
+            if report.gate_samples == 1 { "" } else { "s" },
+            if pairs.is_empty() {
+                String::new()
+            } else {
+                format!(", discrimination over {} AI drafts", pairs.len())
+            }
+        ),
+    )?;
+    for candidate in &report.kept {
+        let evidence = match soft_findings.get(&candidate.id) {
+            Some(hits) => format!(
+                "judge: 0 corpus findings{}",
+                hits.map(|h| format!(", {h} on AI drafts"))
+                    .unwrap_or_default()
+            ),
+            None if pairs.is_empty() => format!("self-fire 0/{}", report.gate_samples),
+            None => format!(
+                "self-fire 0/{}, AI drafts {}/{}",
+                report.gate_samples,
+                draft_hits.get(&candidate.id).copied().unwrap_or(0),
+                pairs.len()
+            ),
+        };
+        say(
+            output,
+            &format!(
+                "  kept    {package}/{:<28} {evidence} [{}]",
+                candidate.id, candidate.origin
             ),
         )?;
     }
@@ -1801,10 +2221,31 @@ fn run_learn(
         return Ok(0);
     }
     write_package(out, &package, corpus_label, &report.kept)?;
+    let profile_json = serde_json::to_string_pretty(&ProfileFile {
+        generated_by: "lawlint learn",
+        corpus: corpus_label,
+        source: &style,
+        ai_drafts: contrast_profile.as_ref(),
+        ai_draft_model: contrast_profile.as_ref().map(|_| model_id),
+    })
+    .map_err(|error| error.to_string())?;
+    let guide = guide::style_guide(
+        &package,
+        corpus_label,
+        out,
+        &style,
+        contrast_profile.as_ref(),
+        &report.kept,
+    );
+    for (name, contents) in [("profile.json", profile_json), ("STYLE.md", guide)] {
+        let path = out.join(name);
+        fs::write(&path, contents)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
     say(
         output,
         &format!(
-            "Wrote {} (style.yaml + {} rule{})",
+            "Wrote {} (style.yaml + {} rule{}, profile.json, STYLE.md)",
             out.display(),
             report.kept.len(),
             if report.kept.len() == 1 { "" } else { "s" }
@@ -1814,9 +2255,11 @@ fn run_learn(
         output,
         &format!(
             "Next:\n  lawlint rules test {}   check the generated rules\n  \
-             add {:?} to ruleDirs in .lawlint/config.json to lint with them",
+             add {:?} to ruleDirs in .lawlint/config.json to lint with them\n  \
+             give {} to drafting agents as their style brief",
             out.display(),
-            out.display().to_string()
+            out.display().to_string(),
+            out.join("STYLE.md").display()
         ),
     )?;
     Ok(0)
@@ -1848,11 +2291,20 @@ fn resolve_concurrency(workers_flag: Option<usize>, config: &LintOptions) -> usi
     configured.unwrap_or(LENSES.len()).clamp(1, LENSES.len())
 }
 
+/// `lawlint learn` flags beyond path/out/model/workers.
+pub(crate) struct LearnFlags {
+    /// Matched AI drafts to generate; `None` uses the default, 0 disables.
+    pub contrast: Option<usize>,
+    /// Skip soft-rule mining (and its judge calls).
+    pub no_soft: bool,
+}
+
 pub(crate) fn learn_command(
     path: &Path,
     out: &Path,
     model_flag: Option<&str>,
     workers_flag: Option<usize>,
+    flags: LearnFlags,
     quiet: bool,
 ) -> Result<i32, String> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
@@ -1870,20 +2322,47 @@ pub(crate) fn learn_command(
         eprintln!("{notice}");
     }
     let workers = resolve_concurrency(workers_flag, &config);
-    let mut clients: Vec<Box<dyn AxAIClient + Send>> = Vec::with_capacity(workers);
     let mut model_id = String::new();
     // Clients are cheap and stateless (lawlint_judge::create_client's own
     // doc comment: "clients are independent, so this costs a little setup
     // and no network traffic") — building `workers` of them up front is the
     // same pattern `create_judge` already uses for the lint judge's pool.
-    for _ in 0..workers {
-        let (client, id) =
-            lawlint_judge::create_client(&spec).map_err(|error| error.to_string())?;
-        model_id = id;
-        clients.push(client);
-    }
+    let mut build_pool = |size: usize| -> Result<Vec<Box<dyn AxAIClient + Send>>, String> {
+        (0..size)
+            .map(|_| {
+                let (client, id) =
+                    lawlint_judge::create_client(&spec).map_err(|error| error.to_string())?;
+                model_id = id;
+                Ok(client)
+            })
+            .collect()
+    };
+    let clients = build_pool(workers)?;
+    let contrast_passages = flags
+        .contrast
+        .unwrap_or(contrast::DEFAULT_CONTRAST_PASSAGES);
+    let wants_extra = contrast_passages > 0 || !flags.no_soft;
+    let extra_clients = if wants_extra {
+        build_pool(workers)?
+    } else {
+        Vec::new()
+    };
+    // The soft-rule gate runs the real judge path with the mining model, so
+    // a kept soft rule has been applied by a judge at least once. The
+    // judge's token cap follows `judge.maxTokens` (reasoning models).
+    let judge = if flags.no_soft {
+        None
+    } else {
+        let judge_options = lawlint_core::JudgeOptions {
+            model: Some(spec.clone()),
+            concurrency: Some(workers),
+            max_tokens: config.judge.as_ref().and_then(|judge| judge.max_tokens),
+            ..lawlint_core::JudgeOptions::default()
+        };
+        Some(lawlint_judge::create_judge(&judge_options).map_err(|error| error.to_string())?)
+    };
     let stdout = io::stdout();
-    run_learn(
+    run_learn_with(
         &files,
         &path.display().to_string(),
         out,
@@ -1891,6 +2370,11 @@ pub(crate) fn learn_command(
         &model_id,
         quiet,
         &mut stdout.lock(),
+        Stages {
+            extra_clients,
+            contrast_passages,
+            judge: judge.as_deref(),
+        },
     )
 }
 
@@ -2284,6 +2768,9 @@ mod tests {
                 }],
                 metric: None,
                 params: None,
+                intent: None,
+                threshold: None,
+                direction: None,
             },
             "pass 2 (mining agent)",
         )
@@ -2339,6 +2826,157 @@ mod tests {
          "patterns": ["(?i)\\bshort\\b"],
          "examples": [{"bad": "A short one.", "good": "A brief one."}]}
     ]"#;
+
+    /// One machine draft of a corpus passage: same substance, stock
+    /// connectives and abstraction the corpus never uses.
+    fn machine_draft() -> String {
+        (0..24)
+            .map(|i| {
+                format!(
+                    "Moreover, the witness comprehensively addressed inquiry number {i} \
+                     posed by counsel."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    const SOFT_JSON: &str = r#"[
+        {"id": "abstract-gloss", "granularity": "sentence", "severity": "warning",
+         "description": "States what happened, not an abstract gloss of it",
+         "message": "Say what the witness actually did.",
+         "rubric": "Flag a sentence that characterizes testimony or conduct with an abstract gloss (comprehensively addressed, thoroughly engaged) instead of stating what happened. Do not flag plain statements of what a person did.",
+         "flag_examples": ["Moreover, the witness comprehensively addressed each inquiry.",
+                           "Counsel thoroughly engaged with the evidentiary record.",
+                           "The court meaningfully grappled with the arguments."],
+         "pass_examples": ["The witness answered question 3 directly, and the record shows it.",
+                           "The court denied the motion, and the case proceeded to trial.",
+                           "We use the standard form for every filing.",
+                           "The court weighed many subtle considerations."],
+         "mined_from": "pair 1"}
+    ]"#;
+
+    #[test]
+    fn run_learn_with_contrast_and_soft_rules_end_to_end() {
+        let dir = temp_dir("stages");
+        let corpus = dir.join("corpus");
+        fs::create_dir_all(&corpus).unwrap();
+        fs::write(corpus.join("memo.txt"), sample_corpus()).unwrap();
+        let out = dir.join("out").join("personal");
+        let files = ingest(&corpus).unwrap();
+
+        // Hard lens: one rule the drafts trip, one that matches nothing.
+        let hard = r#"[
+            {"id": "no-moreover", "engine": "leading", "patterns": ["Moreover"],
+             "description": "Never opens with Moreover",
+             "examples": [{"bad": "Moreover, the court agreed.", "good": "The court agreed."}]},
+            {"id": "no-heretofore", "engine": "phrase", "patterns": ["(?i)\\bheretofore\\b"],
+             "description": "Never writes heretofore",
+             "examples": [{"bad": "As heretofore noted.", "good": "As noted."}]}
+        ]"#;
+        let (client, _) = FakeClient::boxed(vec![choices_response(hard)]);
+        // Extra pool (one client): contrast drafts first, then the four soft
+        // lenses in order.
+        let contrast_count = contrast::select_sources(&files, 2).len();
+        assert_eq!(contrast_count, 2);
+        let mut extra = vec![
+            choices_response(&machine_draft()),
+            choices_response(&machine_draft()),
+            choices_response("[]"),
+            choices_response(SOFT_JSON),
+        ];
+        extra.extend((0..2).map(|_| choices_response("[]")));
+        let (extra_client, extra_requests) = FakeClient::boxed(extra);
+        let judge = lawlint_core::MockJudge::new().respond(
+            "Moreover, the witness",
+            vec![lawlint_core::JudgeFinding {
+                rule: "personal/abstract-gloss".into(),
+                quote: "Moreover, the witness comprehensively addressed inquiry number 0 posed by counsel."
+                    .into(),
+                explanation: "abstract gloss".into(),
+                confidence: 0.9,
+                suggested_rewrite: None,
+            }],
+        );
+
+        let mut output = Vec::new();
+        run_learn_with(
+            &files,
+            "corpus",
+            &out,
+            vec![client],
+            "m",
+            true,
+            &mut output,
+            Stages {
+                extra_clients: vec![extra_client],
+                contrast_passages: 2,
+                judge: Some(&judge),
+            },
+        )
+        .unwrap();
+        let transcript = String::from_utf8(output).unwrap();
+
+        // The mining prompt saw the pairs and the profile comparison.
+        let sent = extra_requests.lock().unwrap();
+        assert_eq!(sent.len(), 6, "2 contrast drafts + 4 soft lenses");
+        let soft_prompt = sent[3]["messages"][0]["content"].as_str().unwrap();
+        assert!(soft_prompt.contains("pair 1: AI draft"), "{soft_prompt}");
+        assert!(soft_prompt.contains("(AI drafts:"), "{soft_prompt}");
+        drop(sent);
+
+        assert!(transcript.contains("2 of 2 drafts usable"), "{transcript}");
+        assert!(
+            transcript.contains("kept    personal/no-moreover")
+                && transcript.contains("AI drafts 2/2"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("dropped personal/no-heretofore")
+                && transcript.contains("never fired on the 2 AI contrast drafts"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/abstract-gloss")
+                && transcript.contains("judge: 0 corpus findings, 1 on AI drafts"),
+            "{transcript}"
+        );
+        assert!(
+            transcript.contains("kept    personal/transitions-never-used"),
+            "{transcript}"
+        );
+
+        // The package loads with the soft rule, and ships the profile and the
+        // drafting brief.
+        let set = RuleSet::load_dir(&out).unwrap();
+        let ids: Vec<String> = set.metas().iter().map(|m| m.id.0.clone()).collect();
+        assert!(
+            ids.contains(&"personal/abstract-gloss".to_string()),
+            "{ids:?}"
+        );
+        assert!(
+            !ids.contains(&"personal/no-heretofore".to_string()),
+            "{ids:?}"
+        );
+        let profile: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out.join("profile.json")).unwrap()).unwrap();
+        assert!(
+            profile["source"]["sentenceWords"]["median"]
+                .as_f64()
+                .unwrap()
+                > 0.0
+        );
+        assert!(profile["aiDrafts"]["rates"]["emDash"].is_number());
+        let guide = fs::read_to_string(out.join("STYLE.md")).unwrap();
+        assert!(
+            guide.contains("| Measure | Source | AI drafts |"),
+            "{guide}"
+        );
+        assert!(guide.contains("### abstract-gloss"), "{guide}");
+        assert!(guide.contains("Never opens a sentence with: "), "{guide}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn run_learn_end_to_end_gates_and_writes_package() {
