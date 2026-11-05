@@ -1,11 +1,14 @@
 ---
-title: Learning your voice
-description: Mining a personal rule package from writing you have already done.
+title: Learning a style
+description: Mining a rule package and a drafting brief from writing you want drafts to match.
 icon: graduation-cap
 ---
 
-The built-in rules encode general advice. `lawlint learn` encodes *yours* —
-generating a rule package from prose you have already written.
+The built-in rules encode general advice. `lawlint learn` encodes a specific
+style: yours, your firm's, or a body of exemplars such as a judge's opinions or
+your best briefs. It reads the source writing, works out how it differs from
+what an AI model writes about the same content, and turns that difference into
+rules lawlint enforces on agent drafts.
 
 ```sh
 lawlint learn ~/my-writing/
@@ -18,26 +21,44 @@ configured model; see [Setting up AI features](/docs/guides/ai-setup).
 
 <Steps>
 
-<Step title="A statistical pass over the whole corpus">
+<Step title="A style profile over the whole corpus">
 
-Local and deterministic. Measures the distributions that characterize your
-writing — sentence length, opener variety, punctuation habits — across
-everything you gave it.
-
-</Step>
-
-<Step title="An AI mining pass over a small sample">
-
-Only a sample goes to the model, and only to name the patterns the statistical
-pass surfaced. The bulk of your corpus is never uploaded.
+Local and deterministic. Measures sentence and paragraph length
+distributions, punctuation, person, contraction, passive, and nominalization
+rates, which connectives open sentences, and the per-passage range of every
+document-level rhythm metric. Hard rules come straight from it: terms and
+connectives the corpus never uses, and rhythm, triad, and pairing ceilings set
+just outside the corpus's own range.
 
 </Step>
 
-<Step title="A self-consistency gate">
+<Step title="A contrast set of AI drafts">
 
-Every generated rule is run back against your own corpus, and any rule that
-flags your own prose is discarded. A rule package derived from your writing
-that fires on your writing would be worse than useless.
+The configured model writes its own version of a handful of sampled passages:
+same facts and conclusions, written fresh. Content is held constant, so what
+differs between each pair is style. The profile is measured on the drafts too.
+
+</Step>
+
+<Step title="Mining from the difference">
+
+Parallel mining agents see the profile (source versus drafts), a sample of
+passages, and the matched pairs. Hard-rule lenses propose patterns:
+punctuation, word choice, sentence shape, openers. Soft-rule lenses propose
+rubrics for the AI judge on tone and register, transitions and cohesion,
+clarity and concision, and reasoning and structure. A soft rule's pass
+examples must quote the corpus verbatim, or the rule is rejected.
+
+</Step>
+
+<Step title="Gates in both directions">
+
+Every hard rule runs back over the whole corpus, and any rule that flags it is
+discarded (one repair attempt is allowed). Mined and calibrated rules must
+also flag at least one AI draft: a rule that matches nothing passes the first
+gate and adds nothing. Soft rules go through the real judge over corpus
+passages and the drafts, with the same two requirements; a judge error drops
+the rule rather than shipping it unverified.
 
 </Step>
 
@@ -47,31 +68,56 @@ that fires on your writing would be worse than useless.
 
 ```sh
 lawlint learn ~/my-writing/ --out .lawlint/rules/house
-lawlint learn draft.docx --model anthropic:<model>
+lawlint learn opinions/ --contrast 10      # more pairs, stronger evidence
+lawlint learn draft.docx --contrast 0 --no-soft   # hard rules from statistics only
 ```
 
 <TypeTable type={{
-  "PATH": { type: "path", required: true, description: "A file or directory of your writing (.docx, .md, .txt)." },
+  "PATH": { type: "path", required: true, description: "A file or directory of source writing (.docx, .md, .txt)." },
   "--out": { type: "path", default: ".lawlint/rules/personal", description: "Where to write the generated rule package." },
   "--model": { type: "string", description: "Mining model, overriding the lawlint init AI preferences." },
+  "--workers": { type: "N", default: "4", description: "Concurrent mining workers (1-4)." },
+  "--contrast": { type: "N", default: "6", description: "AI drafts to mine against. 0 disables the contrast set and the discrimination check." },
+  "--no-soft": { type: "flag", description: "Skip soft rules and their judge calls." },
 }} />
+
+:::note
+What leaves your machine: the mining sample (about 16,000 characters), the
+contrast passages (about 2,000 characters each, six by default), and, for the
+soft-rule gate, about 12,000 characters of corpus passages. `--contrast 0
+--no-soft` restores the smaller footprint of the sample alone. Point the model
+at a server you run to keep all of it local.
+:::
 
 ## Using the result
 
-The output is an ordinary rule package — a `style.yaml` manifest and a
-`rules/` directory of Markdown files, exactly as if you had [written it by
-hand](/docs/guides/authoring-rules). Read it, edit it, delete the rules you
-disagree with, and commit it.
+The output is an ordinary rule package (a `style.yaml` manifest and a `rules/`
+directory of Markdown files, exactly as if you had [written it by
+hand](/docs/guides/authoring-rules)) plus two files:
 
-`lawlint init`'s default config already lists `.lawlint/rules` in `ruleDirs`, so
-a package written to the default `--out` is picked up automatically. Otherwise:
+- `STYLE.md`: the measured profile, the AI-draft comparison, and every kept
+  rule with its examples, written as a brief for drafting agents.
+- `profile.json`: the same measurements in machine-readable form.
+
+Learned rules that measure distance from the corpus carry `intent: style`, so
+they report findings and feed revision briefs without moving the
+human-likeness score.
+
+The intended loop for agent-drafted work product:
 
 ```sh
-lawlint --rule-dir .lawlint/rules/house draft.md
+# 1. The agent drafts with .lawlint/rules/personal/STYLE.md in context.
+# 2. Lint the draft against the learned package.
+lawlint --rule-dir .lawlint/rules/personal draft.md
+# 3. Hand the findings back as a revision brief, then re-lint.
+lawlint --rule-dir .lawlint/rules/personal --format prompt draft.md
 ```
 
+`lawlint init`'s default config already lists `.lawlint/rules` in `ruleDirs`, so
+a package written to the default `--out` is picked up automatically.
+
 :::tip
-Generated rules are a starting point, not an oracle. Run `lawlint rules test` on
-the package to see each rule evaluated against its own examples before you rely
-on it.
+Generated rules are a starting point, not an oracle. Read them, delete the ones
+you disagree with, and run `lawlint rules test` on the package to see each rule
+evaluated against its own examples before you rely on it.
 :::
